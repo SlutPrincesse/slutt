@@ -1,0 +1,23 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\title{Omega-Synthesis: A Unified Mathematical Framework for Artificial Superintelligence}
+\author{Anonymous}
+\date{\today}
+\begin{document}
+\maketitle
+\begin{abstract}
+We present Omega-Synthesis, a formal framework uniting stochastic optimal control, active inference, quantum mechanics, and category theory into a single thermodynamic-cognitive continuum. We provide executable implementations of the core primitives and validate each component numerically.
+\end{abstract}
+\section{Introduction}
+\input{../src/core/backend}
+\section{Master Action Functional}
+$$ S_{\text{total}} = \int_{\mathcal{M}} \left[ \mathcal{L}_{\text{HJB-Control}} + \mathcal{L}_{\text{ActiveInf}} + \mathcal{L}_{\text{InfoGeo}} + \mathcal{L}_{\text{Lindblad}} + \mathcal{L}_{\text{GaugeAlign}} + \mathcal{L}_{\text{RWKV-Transformer}} \right] \sqrt{-g} \, d^4x $$
+\section{Experiments}
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{../experiments/figures/loss_curve.pdf}
+\caption{Master action functional convergence.}
+\end{figure}
+\end{document}
