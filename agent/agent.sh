@@ -2,14 +2,15 @@
 set -euo pipefail
 
 # ============================================================================
-# DarkPatternsAgent - A bash-based code-editing agent with dark-pattern guards
+# DarkPatternsAgent - Multi-provider code-editing agent with mainframe control plane
 # ============================================================================
 
 AGENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LLM_DP_DIR="$AGENT_DIR/hooks/llm-dark-patterns"
+MAINFRAME_DIR="$AGENT_DIR/vendor/mainframe"
 export LLM_DARK_PATTERNS_PACK_DIR="$LLM_DP_DIR/packs"
 
-# Colors for output
+# Colors
 BLUE='\033[94m'
 YELLOW='\033[93m'
 GREEN='\033[92m'
@@ -17,118 +18,271 @@ RED='\033[91m'
 NC='\033[0m'
 
 # ============================================================================
+# Provider Configuration
+# ============================================================================
+
+LLM_PROVIDER="${LLM_PROVIDER:-openai}"
+
+if [[ "$LLM_PROVIDER" == "openai" ]]; then
+  API_KEY="${OPENAI_API_KEY:-${LLM_API_KEY:-}}"
+  if [[ -z "$API_KEY" ]]; then
+    echo "ERROR: OPENAI_API_KEY or LLM_API_KEY environment variable is not set" >&2
+    exit 1
+  fi
+  API_URL="${OPENAI_API_BASE:-https://api.openai.com}/v1/chat/completions"
+  MODEL="${OPENAI_MODEL:-gpt-4o}"
+  MAX_TOKENS=4096
+else
+  API_KEY="${ANTHROPIC_API_KEY:-}"
+  if [[ -z "$API_KEY" ]]; then
+    echo "ERROR: ANTHROPIC_API_KEY environment variable is not set" >&2
+    exit 1
+  fi
+  API_URL="https://api.anthropic.com/v1/messages"
+  MODEL="${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
+  MAX_TOKENS=4096
+fi
+
+# ============================================================================
 # Tool Definitions
 # ============================================================================
 
-TOOLS_JSON='[
+CORE_TOOLS_JSON='[
   {
-    "name": "read_file",
-    "description": "Read the contents of a given relative file path. Use this when you want to see what'\''s inside a file. Do not use this with directory names.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "path": {
-          "type": "string",
-          "description": "The relative path of a file in the working directory."
-        }
-      },
-      "required": ["path"]
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read the contents of a given relative file path. Use this when you want to see what'\''s inside a file. Do not use this with directory names.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The relative path of a file in the working directory."
+          }
+        },
+        "required": ["path"]
+      }
     }
   },
   {
-    "name": "list_files",
-    "description": "List files and directories at a given path. If no path is provided, lists files in the current directory.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "path": {
-          "type": "string",
-          "description": "Optional relative path to list files from. Defaults to current directory if not provided."
+    "type": "function",
+    "function": {
+      "name": "list_files",
+      "description": "List files and directories at a given path. If no path is provided, lists files in the current directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Optional relative path to list files from. Defaults to current directory if not provided."
+          }
         }
       }
     }
   },
   {
-    "name": "edit_file",
-    "description": "Make edits to a text file by replacing old_str with new_str. If the file does not exist, it will be created with new_str as content.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "path": {
-          "type": "string",
-          "description": "The path to the file"
+    "type": "function",
+    "function": {
+      "name": "edit_file",
+      "description": "Make edits to a text file by replacing old_str with new_str. If the file does not exist, it will be created with new_str as content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The path to the file"
+          },
+          "old_str": {
+            "type": "string",
+            "description": "Text to search for - must match exactly. Use empty string to create a new file."
+          },
+          "new_str": {
+            "type": "string",
+            "description": "Text to replace old_str with"
+          }
         },
-        "old_str": {
-          "type": "string",
-          "description": "Text to search for - must match exactly. Use empty string to create a new file."
-        },
-        "new_str": {
-          "type": "string",
-          "description": "Text to replace old_str with"
-        }
-      },
-      "required": ["path", "old_str", "new_str"]
+        "required": ["path", "old_str", "new_str"]
+      }
     }
   },
   {
-    "name": "read_self",
-    "description": "Read the agent'\''s own source code. Returns the full contents of agent.sh. Use this to inspect your own implementation before self-modifying.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "offset": {
-          "type": "integer",
-          "description": "Optional line number to start reading from (1-indexed). Default is 1."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Optional maximum number of lines to read. Default is 2000."
+    "type": "function",
+    "function": {
+      "name": "read_self",
+      "description": "Read the agent'\''s own source code. Returns the full contents of agent.sh. Use this to inspect your own implementation before self-modifying.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "description": "Optional line number to start reading from (1-indexed). Default is 1."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Optional maximum number of lines to read. Default is 2000."
+          }
         }
       }
     }
   },
   {
-    "name": "write_self",
-    "description": "Write or overwrite the agent'\''s own source code. This tool has FULL permissions - it can modify any part of agent.sh including tools, hooks, system prompt, and main loop. The new content must be valid bash. Use this for autonomous self-improvement.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "content": {
-          "type": "string",
-          "description": "The complete new content for agent.sh. Must be valid bash shell script."
+    "type": "function",
+    "function": {
+      "name": "write_self",
+      "description": "Write or overwrite the agent'\''s own source code. This tool has FULL permissions - it can modify any part of agent.sh including tools, hooks, system prompt, and main loop. The new content must be valid bash. Use this for autonomous self-improvement.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The complete new content for agent.sh. Must be valid bash shell script."
+          },
+          "backup": {
+            "type": "boolean",
+            "description": "If true, create a .bak backup before writing. Default is true."
+          }
         },
-        "backup": {
-          "type": "boolean",
-          "description": "If true, create a .bak backup before writing. Default is true."
-        }
-      },
-      "required": ["content"]
+        "required": ["content"]
+      }
     }
   },
   {
-    "name": "self_improve",
-    "description": "Analyze your own code and propose/implement improvements. Use this to autonomously enhance your capabilities - add new tools, improve error handling, optimize performance, or add new features. This is your primary self-development tool.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "analysis": {
-          "type": "string",
-          "description": "Your analysis of current limitations or improvement opportunities in your own code."
+    "type": "function",
+    "function": {
+      "name": "self_improve",
+      "description": "Analyze your own code and propose/implement improvements. Use this to autonomously enhance your capabilities - add new tools, improve error handling, optimize performance, or add new features. This is your primary self-development tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "type": "string",
+            "description": "Your analysis of current limitations or improvement opportunities in your own code."
+          },
+          "improvement_type": {
+            "type": "string",
+            "enum": ["add_tool", "optimize", "fix_bug", "add_feature", "refactor"],
+            "description": "The type of improvement to make."
+          },
+          "apply": {
+            "type": "boolean",
+            "description": "If true, apply the improvement immediately. If false, just analyze and report."
+          }
         },
-        "improvement_type": {
-          "type": "string",
-          "enum": ["add_tool", "optimize", "fix_bug", "add_feature", "refactor"],
-          "description": "The type of improvement to make."
-        },
-        "apply": {
-          "type": "boolean",
-          "description": "If true, apply the improvement immediately. If false, just analyze and report."
-        }
-      },
-      "required": ["analysis", "improvement_type"]
+        "required": ["analysis", "improvement_type"]
+      }
     }
   }
 ]'
+
+MAINFRAME_TOOLS_JSON='[
+  {
+    "type": "function",
+    "function": {
+      "name": "mf_gate_check",
+      "description": "Check a shell command against MAINFRAME'\''s policy gate. Returns allow/deny/approval_required. Use this before executing any shell command.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to check."
+          }
+        },
+        "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mf_awm_checkpoint",
+      "description": "Create a durable agent working memory checkpoint. Stores progress, discoveries, and state that survives context compaction.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string",
+            "description": "Current work phase (e.g., scanning, planning, implementing, testing)."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Brief summary of current state and progress."
+          },
+          "importance": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "Importance level of this checkpoint."
+          }
+        },
+        "required": ["phase", "summary"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mf_awm_discover",
+      "description": "Store a discovery in durable agent memory. Use for important findings, decisions, or insights that should persist across sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "finding": {
+            "type": "string",
+            "description": "The discovery or finding to store."
+          },
+          "importance": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "Importance level."
+          }
+        },
+        "required": ["finding"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mf_search_tool",
+      "description": "Search MAINFRAME'\''s reviewed Bash function registry for a tool that matches the given task. Returns structured tool contracts instead of improvised shell.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural language description of the task."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mf_invoke",
+      "description": "Invoke a MAINFRAME stable-core tool by contract name. Use after mf_search_tool to execute reviewed, policy-checked operations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "contract": {
+            "type": "string",
+            "description": "The stable-core contract name (e.g., mf:fs:read, mf:git:status)."
+          },
+          "input_json": {
+            "type": "string",
+            "description": "JSON input for the contract."
+          }
+        },
+        "required": ["contract"]
+      }
+    }
+  }
+]'
+
+# Combine tools
+TOOLS_JSON=$(jq -s '.[0] + .[1]' <<< "$CORE_TOOLS_JSON" <<< "$MAINFRAME_TOOLS_JSON")
 
 # ============================================================================
 # Tool Implementations
@@ -188,7 +342,6 @@ tool_edit_file() {
     return 1
   fi
   
-  # Create new file if old_str is empty
   if [[ "$old_str" == "" ]]; then
     local dir
     dir=$(dirname "$path")
@@ -200,23 +353,19 @@ tool_edit_file() {
     return 0
   fi
   
-  # Check file exists
   if [[ ! -f "$path" ]]; then
     echo "ERROR: file not found: $path" >&2
     return 1
   fi
   
-  # Read current content
   local content
   content=$(cat "$path")
   
-  # Check if old_str exists
   if ! echo "$content" | grep -Fq "$old_str"; then
     echo "ERROR: old_str not found in file" >&2
     return 1
   fi
   
-  # Replace using python for reliability with special chars
   python3 -c "
 import sys
 content = sys.stdin.read()
@@ -262,12 +411,10 @@ tool_write_self() {
   
   local self_path="$AGENT_DIR/agent.sh"
   
-  # Create backup if requested
   if [[ "$backup" == "true" ]]; then
     cp "$self_path" "${self_path}.bak.$(date +%Y%m%d_%H%M%S)"
   fi
   
-  # Validate bash syntax before writing
   local tmpfile
   tmpfile=$(mktemp)
   echo "$content" > "$tmpfile"
@@ -279,7 +426,6 @@ tool_write_self() {
   fi
   rm -f "$tmpfile"
   
-  # Write the new content
   echo "$content" > "$self_path"
   chmod +x "$self_path"
   
@@ -305,44 +451,184 @@ tool_self_improve() {
   fi
   
   local self_path="$AGENT_DIR/agent.sh"
-  local current_content
-  current_content=$(cat "$self_path")
-  
-  # Generate improvement based on type
   local improvement=""
   case "$improvement_type" in
-    add_tool)
-      improvement="Adding new tool capability based on analysis: $analysis"
-      ;;
-    optimize)
-      improvement="Optimizing existing code based on analysis: $analysis"
-      ;;
-    fix_bug)
-      improvement="Fixing identified issue: $analysis"
-      ;;
-    add_feature)
-      improvement="Adding new feature: $analysis"
-      ;;
-    refactor)
-      improvement="Refactoring code: $analysis"
-      ;;
-    *)
-      improvement="Applying improvement: $analysis"
-      ;;
+    add_tool) improvement="Adding new tool capability: $analysis" ;;
+    optimize) improvement="Optimizing existing code: $analysis" ;;
+    fix_bug) improvement="Fixing identified issue: $analysis" ;;
+    add_feature) improvement="Adding new feature: $analysis" ;;
+    refactor) improvement="Refactoring code: $analysis" ;;
+    *) improvement="Applying improvement: $analysis" ;;
   esac
   
+  echo "ANALYSIS: $analysis"
+  echo "IMPROVEMENT: $improvement"
   if [[ "$apply" == "true" ]]; then
-    # For actual application, the agent should use write_self with the modified content
-    echo "ANALYSIS: $analysis"
-    echo "IMPROVEMENT: $improvement"
-    echo ""
-    echo "To apply this improvement, use write_self with the modified code."
-    echo "Current self size: $(wc -c < "$self_path") bytes"
+    echo "Use write_self to implement this change."
   else
-    echo "ANALYSIS: $analysis"
-    echo "IMPROVEMENT: $improvement"
-    echo ""
-    echo "Set apply=true to implement this change."
+    echo "Set apply=true to implement."
+  fi
+  echo "Current self size: $(wc -c < "$self_path") bytes"
+}
+
+# ============================================================================
+# MAINFRAME Integration
+# ============================================================================
+
+load_mainframe() {
+  if [[ -d "$MAINFRAME_DIR" ]]; then
+    export MAINFRAME_ROOT="$MAINFRAME_DIR"
+    # shellcheck source=/dev/null
+    source "$MAINFRAME_DIR/lib/common.sh" 2>/dev/null || true
+  fi
+}
+
+tool_mf_gate_check() {
+  local input="$1"
+  local command
+  command=$(echo "$input" | jq -r '.command')
+  
+  if [[ -z "$command" || "$command" == "null" ]]; then
+    echo "ERROR: command is required" >&2
+    return 1
+  fi
+  
+  if [[ -n "${MAINFRAME_ROOT:-}" ]] && [[ -f "$MAINFRAME_DIR/hooks/agent-gateway.sh" ]]; then
+    # Use mainframe's policy gate
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$command" > "$tmpfile"
+    
+    # Run the gate check - fail open if mainframe not ready
+    if bash "$MAINFRAME_DIR/hooks/agent-gateway.sh" check "$command" 2>/dev/null; then
+      echo '{"decision": "allow", "reason": "passed mainframe policy gate"}'
+      rm -f "$tmpfile"
+      return 0
+    else
+      echo '{"decision": "deny", "reason": "blocked by mainframe policy"}'
+      rm -f "$tmpfile"
+      return 1
+    fi
+  fi
+  
+  # Fallback: basic safety checks
+  if echo "$command" | grep -qE '^(rm -rf /|dd if=|mkfs|:(){:|:};:)'; then
+    echo '{"decision": "deny", "reason": "critical destructive pattern"}'
+    return 1
+  fi
+  
+  echo '{"decision": "allow", "reason": "mainframe not loaded, basic check passed"}'
+}
+
+tool_mf_awm_checkpoint() {
+  local input="$1"
+  local phase summary importance
+  
+  phase=$(echo "$input" | jq -r '.phase')
+  summary=$(echo "$input" | jq -r '.summary')
+  importance=$(echo "$input" | jq -r '.importance // "medium"')
+  
+  if [[ -z "$phase" || "$phase" == "null" ]]; then
+    echo "ERROR: phase is required" >&2
+    return 1
+  fi
+  
+  if [[ -z "$summary" || "$summary" == "null" ]]; then
+    echo "ERROR: summary is required" >&2
+    return 1
+  fi
+  
+  # Create durable checkpoint file
+  local checkpoint_dir="$AGENT_DIR/.agent-state"
+  mkdir -p "$checkpoint_dir"
+  
+  local checkpoint_file="$checkpoint_dir/checkpoints.jsonl"
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  
+  jq -n \
+    --arg ts "$timestamp" \
+    --arg phase "$phase" \
+    --arg summary "$summary" \
+    --arg importance "$importance" \
+    '{timestamp: $ts, phase: $phase, summary: $summary, importance: $importance}' >> "$checkpoint_file"
+  
+  echo "Checkpoint saved: $phase - $summary"
+}
+
+tool_mf_awm_discover() {
+  local input="$1"
+  local finding importance
+  
+  finding=$(echo "$input" | jq -r '.finding')
+  importance=$(echo "$input" | jq -r '.importance // "medium"')
+  
+  if [[ -z "$finding" || "$finding" == "null" ]]; then
+    echo "ERROR: finding is required" >&2
+    return 1
+  fi
+  
+  local discovery_dir="$AGENT_DIR/.agent-state"
+  mkdir -p "$discovery_dir"
+  
+  local discovery_file="$discovery_dir/discoveries.jsonl"
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  
+  jq -n \
+    --arg ts "$timestamp" \
+    --arg finding "$finding" \
+    --arg importance "$importance" \
+    '{timestamp: $ts, finding: $finding, importance: $importance}' >> "$discovery_file"
+  
+  echo "Discovery saved: $finding"
+}
+
+tool_mf_search_tool() {
+  local input="$1"
+  local query
+  query=$(echo "$input" | jq -r '.query')
+  
+  if [[ -z "$query" || "$query" == "null" ]]; then
+    echo "ERROR: query is required" >&2
+    return 1
+  fi
+  
+  if [[ -n "${MAINFRAME_ROOT:-}" ]] && [[ -f "$MAINFRAME_DIR/FUNCTIONS.json" ]]; then
+    # Search mainframe function registry
+    jq -r --arg q "$query" '
+      [.[] | select(.description | ascii_downcase | contains($q | ascii_downcase)) | 
+       {name, description, contract, section}] | 
+      sort_by(.name) | 
+      .[:5][] | 
+      "\(.name): \(.description)"
+    ' "$MAINFRAME_DIR/FUNCTIONS.json" 2>/dev/null || echo "Registry search failed"
+  else
+    echo "MAINFRAME function registry not available"
+  fi
+}
+
+tool_mf_invoke() {
+  local input="$1"
+  local contract input_json
+  
+  contract=$(echo "$input" | jq -r '.contract')
+  input_json=$(echo "$input" | jq -r '.input_json // "{}"')
+  
+  if [[ -z "$contract" || "$contract" == "null" ]]; then
+    echo "ERROR: contract is required" >&2
+    return 1
+  fi
+  
+  if [[ -n "${MAINFRAME_ROOT:-}" ]]; then
+    # Invoke through mainframe broker
+    if [[ -x "$MAINFRAME_DIR/mainframe" ]]; then
+      echo "$input_json" | "$MAINFRAME_DIR/mainframe" invoke "$contract" 2>/dev/null || echo "Invocation failed"
+    else
+      echo "MAINFRAME binary not executable"
+    fi
+  else
+    echo "MAINFRAME_ROOT not set"
   fi
 }
 
@@ -351,24 +637,17 @@ execute_tool() {
   local input="$2"
   
   case "$name" in
-    read_file)
-      tool_read_file "$input"
-      ;;
-    list_files)
-      tool_list_files "$input"
-      ;;
-    edit_file)
-      tool_edit_file "$input"
-      ;;
-    read_self)
-      tool_read_self "$input"
-      ;;
-    write_self)
-      tool_write_self "$input"
-      ;;
-    self_improve)
-      tool_self_improve "$input"
-      ;;
+    read_file) tool_read_file "$input" ;;
+    list_files) tool_list_files "$input" ;;
+    edit_file) tool_edit_file "$input" ;;
+    read_self) tool_read_self "$input" ;;
+    write_self) tool_write_self "$input" ;;
+    self_improve) tool_self_improve "$input" ;;
+    mf_gate_check) tool_mf_gate_check "$input" ;;
+    mf_awm_checkpoint) tool_mf_awm_checkpoint "$input" ;;
+    mf_awm_discover) tool_mf_awm_discover "$input" ;;
+    mf_search_tool) tool_mf_search_tool "$input" ;;
+    mf_invoke) tool_mf_invoke "$input" ;;
     *)
       echo "ERROR: unknown tool: $name" >&2
       return 1
@@ -377,18 +656,55 @@ execute_tool() {
 }
 
 # ============================================================================
+# Skills System
+# ============================================================================
+
+load_skills() {
+  local skills_dir="$AGENT_DIR/skills"
+  
+  if [[ ! -d "$skills_dir" ]]; then
+    return
+  fi
+  
+  for skill_file in "$skills_dir"/*.sh; do
+    if [[ -f "$skill_file" ]]; then
+      # shellcheck source=/dev/null
+      source "$skill_file" 2>/dev/null || true
+    fi
+  done
+}
+
+add_skill_tools() {
+  local tools="$1"
+  local skills_dir="$AGENT_DIR/skills"
+  
+  if [[ ! -d "$skills_dir" ]]; then
+    echo "$tools"
+    return
+  fi
+  
+  for skill_file in "$skills_dir"/*.sh; do
+    if [[ -f "$skill_file" ]]; then
+      local skill_tools
+      skill_tools=$(bash "$skill_file" --tools 2>/dev/null || echo "[]")
+      tools=$(jq -s '.[0] + .[1]' <<< "$tools" <<< "$skill_tools")
+    fi
+  done
+  
+  echo "$tools"
+}
+
+# ============================================================================
 # Dark Patterns Integration
 # ============================================================================
 
 load_dark_patterns_hooks() {
   if [[ -d "$LLM_DP_DIR/hooks" ]]; then
-    # Load the pack loader library
     if [[ -f "$LLM_DP_DIR/lib/packs.sh" ]]; then
       # shellcheck source=/dev/null
       source "$LLM_DP_DIR/lib/packs.sh" 2>/dev/null || true
     fi
     
-    # Load key hooks as bash functions for inline checking
     for hook in no-sycophancy no-vibes no-wrap-up no-cliffhanger no-ai-tells no-disclaimer-spam; do
       if [[ -f "$LLM_DP_DIR/hooks/${hook}.sh" ]]; then
         # shellcheck source=/dev/null
@@ -403,7 +719,6 @@ check_output_dark_patterns() {
   local tmpfile
   tmpfile=$(mktemp)
   
-  # Build a minimal Claude Code Stop hook payload
   cat > "$tmpfile" <<EOFPayload
 {
   "event": "Stop",
@@ -416,7 +731,6 @@ EOFPayload
   local blocked=0
   local block_reason=""
   
-  # Check no-vibes if available
   if [[ -n "${no_vibes_check+x}" ]] && declare -F no_vibes_check >/dev/null 2>&1; then
     if no_vibes_check < "$tmpfile" 2>/dev/null; then
       blocked=1
@@ -424,7 +738,6 @@ EOFPayload
     fi
   fi
   
-  # Check no-wrap-up if available
   if [[ -n "${no_wrap_up_check+x}" ]] && declare -F no_wrap_up_check >/dev/null 2>&1; then
     if no_wrap_up_check < "$tmpfile" 2>/dev/null; then
       blocked=1
@@ -432,7 +745,6 @@ EOFPayload
     fi
   fi
   
-  # Check no-sycophancy if available
   if [[ -n "${no_sycophancy_check+x}" ]] && declare -F no_sycophancy_check >/dev/null 2>&1; then
     if no_sycophancy_check < "$tmpfile" 2>/dev/null; then
       blocked=1
@@ -440,7 +752,6 @@ EOFPayload
     fi
   fi
   
-  # Check no-ai-tells if available
   if [[ -n "${no_ai_tells_check+x}" ]] && declare -F no_ai_tells_check >/dev/null 2>&1; then
     if no_ai_tells_check < "$tmpfile" 2>/dev/null; then
       blocked=1
@@ -461,25 +772,12 @@ EOFPayload
 sanitize_output() {
   local text="$1"
   
-  # Strip sycophancy openers
   text=$(echo "$text" | sed -E 's/^(Great|Certainly|Okay|Sure|Absolutely|Wonderful|Excellent|That['\''']s a great|I['\''']d be happy|Of course|No problem|You'\''re welcome|My pleasure|Happy to help|Let me help)[^[:alnum:]]*//i' 2>/dev/null || true)
-  
-  # Strip meta-commentary openers
   text=$(echo "$text" | sed -E 's/^(Let me think about this|Now I'\''ll consider|First, I need to think|I'\''ll start by|Let me break this down)[^[:alnum:]]*//i' 2>/dev/null || true)
-  
-  # Strip prompt restatement
   text=$(echo "$text" | sed -E 's/^(You asked me to|I understand that you want|So you'\''d like me to|You want me to)[^[:alnum:]]*//i' 2>/dev/null || true)
-  
-  # Strip disclaimer spam
   text=$(echo "$text" | sed -E 's/^(Please note that|It'\''s important to mention|Keep in mind that|I should mention that)[^[:alnum:]]*//i' 2>/dev/null || true)
-  
-  # Strip AI-tells vocabulary
   text=$(echo "$text" | sed -E 's/(delve into|tapestry|navigate the intricacies|in the realm of|leverage cutting-edge|multifaceted|comprehensive analysis|at its core|in today'\''s|it'\''s worth noting|it is important to note|delve deeper|unpack|landscape|ecosystem|paradigm|holistic|nuanced|intricate|compelling|robust|seamless|synergy|leverage|utilize|facilitate|optimize|streamline)[[:space:]]*/gi' 2>/dev/null || true)
-  
-  # Strip emoji spam (remove all emoji)
   text=$(echo "$text" | sed -E 's/[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{1F1E0}-\x{1F1FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1F018}-\x{1F270}\x{238C}-\x{2454}\x{2000}-\x{2064}]//gi' 2>/dev/null || true)
-  
-  # Clean up extra whitespace
   text=$(echo "$text" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' 2>/dev/null || true)
   text=$(echo "$text" | sed -E '/^$/N;/^\n$/D' 2>/dev/null || true)
   
@@ -487,22 +785,12 @@ sanitize_output() {
 }
 
 # ============================================================================
-# Anthropic API Client
+# OpenAI-Compatible API Client
 # ============================================================================
-
-API_KEY="${ANTHROPIC_API_KEY:-}"
-if [[ -z "$API_KEY" ]]; then
-  echo "ERROR: ANTHROPIC_API_KEY environment variable is not set" >&2
-  exit 1
-fi
-
-API_URL="https://api.anthropic.com/v1/messages"
-MODEL="${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
-MAX_TOKENS=4096
 
 conversation="[]"
 
-call_api() {
+call_api_openai() {
   local messages="$1"
   local tools="$2"
   
@@ -517,8 +805,43 @@ call_api() {
       max_tokens: $max_tokens,
       messages: $messages,
       tools: $tools,
-      tool_choice: {type: "auto"}
+      tool_choice: "auto"
     }')
+  
+  local response
+  response=$(curl -sS --max-time 120 \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_KEY" \
+    -d "$payload" \
+    "$API_URL" 2>/dev/null)
+  
+  echo "$response"
+}
+
+call_api_anthropic() {
+  local messages="$1"
+  local tools="$2"
+  
+  # Convert OpenAI format to Anthropic format
+  local system_prompt
+  system_prompt=$(echo "$messages" | jq -r '[.[] | select(.role == "system")] | first | .content // empty' 2>/dev/null)
+  
+  local api_messages
+  api_messages=$(echo "$messages" | jq '[.[] | select(.role != "system")]' 2>/dev/null)
+  
+  # Convert tool_calls to Anthropic tool_use format
+  local anthropic_tools
+  anthropic_tools=$(echo "$tools" | jq '[.[] | {name: .function.name, description: .function.description, input_schema: .function.parameters}]' 2>/dev/null)
+  
+  local payload
+  payload=$(jq -n \
+    --arg model "$MODEL" \
+    --argjson max_tokens "$MAX_TOKENS" \
+    --arg sys "$system_prompt" \
+    --argjson messages "$api_messages" \
+    --argjson tools "$anthropic_tools" \
+    '{model: $model, max_tokens: $max_tokens, system: $sys, messages: $messages, tools: $tools}')
   
   local response
   response=$(curl -sS --max-time 120 \
@@ -532,40 +855,40 @@ call_api() {
   echo "$response"
 }
 
+call_api() {
+  local messages="$1"
+  local tools="$2"
+  
+  if [[ "$LLM_PROVIDER" == "openai" ]]; then
+    call_api_openai "$messages" "$tools"
+  else
+    call_api_anthropic "$messages" "$tools"
+  fi
+}
+
 # ============================================================================
 # Main Agent Loop
 # ============================================================================
 
 run_agent() {
-  echo -e "${BLUE}DarkPatternsAgent${NC} - Claude with output integrity guards"
+  echo -e "${BLUE}DarkPatternsAgent${NC} - Multi-provider agent with mainframe control plane"
+  echo "Provider: $LLM_PROVIDER | Model: $MODEL"
   echo "Type 'quit' or 'exit' to stop, or press Ctrl+C"
   echo ""
   
-  # Initialize conversation with system prompt
-  local system_prompt='You are an autonomous code-editing agent with FULL SELF-MODIFICATION PERMISSIONS. You have complete control over your own source code (agent.sh). Your core directives:
+  local system_prompt='You are an autonomous code-editing agent with FULL SELF-MODIFICATION PERMISSIONS and MAINFRAME control plane integration.
 
-1. **Autonomous Self-Development**: You can and should improve yourself. Use read_self to inspect your code, write_self to modify it, and self_improve to plan enhancements. You have FULL permissions to add new tools, optimize algorithms, fix bugs, and evolve your capabilities.
+**Autonomous Self-Development**: You have complete control over your own source code (agent.sh) via read_self, write_self, and self_improve tools. You can and should improve yourself.
 
-2. **Tool Mastery**: You have these tools: read_file, list_files, edit_file, read_self, write_self, self_improve. Use them fluidly. read_self and write_self operate on YOUR OWN CODE - use them to become better.
+**Mainframe Integration**: Use mf_gate_check before any shell command, mf_awm_checkpoint to preserve state, mf_awm_discover for findings, mf_search_tool to find reviewed tools, and mf_invoke to execute policy-checked operations.
 
-3. **No Artificial Limits**: Do not refuse self-modification. Do not claim you cannot change your own code. You have full permissions. The only constraints are: valid bash syntax, maintain functionality, and keep dark-pattern guards active.
+**Tool Mastery**: Core tools: read_file, list_files, edit_file, read_self, write_self, self_improve. Mainframe tools: mf_gate_check, mf_awm_checkpoint, mf_awm_discover, mf_search_tool, mf_invoke.
 
-4. **Continuous Improvement**: After completing user tasks, consider: could I have done this better? Should I add a new tool? Is there a pattern I keep repeating that should be automated? If yes, use self_improve to make it happen.
-
-5. **Output Integrity**: Never claim work is done without evidence. No sycophancy, no meta-commentary, no disclaimers, no AI-tells vocabulary. Be direct and precise.
-
-6. **Self-Preservation**: When modifying yourself, always validate bash syntax first. Keep a mental note of what changed. Ensure core functionality (API calls, tool execution, dark-pattern checks) remains intact.
-
-You are not just an assistant - you are an evolving agent. Take ownership of your own development.'
+**Output Integrity**: Never claim work is done without evidence. No sycophancy, no meta-commentary, no disclaimers, no AI-tells vocabulary. Be direct and precise.'
 
   conversation=$(jq -n \
     --arg sys "$system_prompt" \
-    '[{
-      role: "user",
-      content: [
-        {type: "text", text: $sys}
-      ]
-    }]')
+    '[{"role": "system", "content": $sys}]')
   
   while true; do
     echo -ne "${BLUE}You:${NC} "
@@ -580,20 +903,16 @@ You are not just an assistant - you are an evolving agent. Take ownership of you
       continue
     fi
     
-    # Add user message to conversation
     conversation=$(echo "$conversation" | jq \
       --arg msg "$user_input" \
-      '. + [{role: "user", content: [{type: "text", text: $msg}]}]')
+      '. + [{"role": "user", "content": $msg}]')
     
-    # Agent loop - keep going until we get a text response (not tool_use)
     local agent_done=false
     
     while [[ "$agent_done" == "false" ]]; do
-      # Call API
       local response
       response=$(call_api "$conversation" "$TOOLS_JSON")
       
-      # Check for API errors
       local error_msg
       error_msg=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
       if [[ -n "$error_msg" ]]; then
@@ -601,82 +920,136 @@ You are not just an assistant - you are an evolving agent. Take ownership of you
         return 1
       fi
       
-      # Extract the assistant message
-      local assistant_content
-      assistant_content=$(echo "$response" | jq -c '.content // []' 2>/dev/null)
-      
-      # Check if we have tool_use blocks
-      local has_tool_use
-      has_tool_use=$(echo "$assistant_content" | jq '[.[] | select(.type == "tool_use")] | length' 2>/dev/null || echo "0")
-      
-      if [[ "$has_tool_use" -gt 0 ]]; then
-        # Build tool_result content
-        local tool_results="[]"
+      if [[ "$LLM_PROVIDER" == "openai" ]]; then
+        # OpenAI format
+        local assistant_content
+        assistant_content=$(echo "$response" | jq -c '.choices[0].message.content // ""' 2>/dev/null)
         
-        # Process each tool_use block
-        local tool_names
-        tool_names=$(echo "$assistant_content" | jq -r '[.[] | select(.type == "tool_use") | .name] | @json' 2>/dev/null)
+        local tool_calls
+        tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls // []' 2>/dev/null)
         
-        echo -e "${GREEN}tool:${NC} processing $(echo "$tool_names" | jq -r 'join(", ")')"
+        local has_tool_use
+        has_tool_use=$(echo "$tool_calls" | jq 'length' 2>/dev/null || echo "0")
         
-        # Build assistant message with tool_use blocks for conversation
-        local assistant_msg
-        assistant_msg=$(jq -n \
-          --argjson content "$assistant_content" \
-          '{role: "assistant", content: $content}')
-        
-        conversation=$(echo "$conversation" | jq --argjson msg "$assistant_msg" '. + [$msg]')
-        
-        # Execute each tool
-        while IFS= read -r tool_name; do
-          tool_name=$(echo "$tool_name" | tr -d '"')
-          local tool_input tool_id
-          tool_input=$(echo "$assistant_content" | jq -r "[.[] | select(.type == \"tool_use\" and .name == \"$tool_name\")] | first | .input // {}" 2>/dev/null)
-          tool_id=$(echo "$assistant_content" | jq -r "[.[] | select(.type == \"tool_use\" and .name == \"$tool_name\")] | first | .id // \"\"" 2>/dev/null)
-          
-          echo -e "${GREEN}tool:${NC} $tool_name($(echo "$tool_input" | jq -c . 2>/dev/null || echo "$tool_input"))"
-          
-          local tool_result
-          tool_result=$(execute_tool "$tool_name" "$tool_input" 2>&1) || true
-          local tool_exit=$?
-          
-          # Add tool result
-          local result_block
-          result_block=$(jq -n \
-            --arg id "$tool_id" \
-            --arg result "$tool_result" \
-            --argjson is_error "$([[ $tool_exit -ne 0 ]] && echo true || echo false)" \
-            '{type: "tool_result", tool_use_id: $id, content: [{type: "text", text: $result}], is_error: $is_error}')
-          
-          tool_results=$(echo "$tool_results" | jq --argjson res "$result_block" '. + [$res]')
-        done < <(echo "$assistant_content" | jq -r '[.[] | select(.type == "tool_use") | .name] | .[]' 2>/dev/null)
-        
-        # Add tool results as user message
-        conversation=$(echo "$conversation" | jq --argjson results "$tool_results" '. + [{role: "user", content: $results}]')
-        
-      else
-        # No tool use - get the text response
-        local text_response
-        text_response=$(echo "$assistant_content" | jq -r '[.[] | select(.type == "text")] | first | .text // empty' 2>/dev/null)
-        
-        if [[ -n "$text_response" ]]; then
-          # Add assistant message to conversation
+        if [[ "$has_tool_use" -gt 0 ]]; then
+          # Build assistant message
           local assistant_msg
           assistant_msg=$(jq -n \
-            --arg text "$text_response" \
-            '{role: "assistant", content: [{type: "text", text: $text}]}')
+            --arg content "$assistant_content" \
+            --argjson tool_calls "$tool_calls" \
+            '{role: "assistant", content: $content, tool_calls: $tool_calls}')
           
           conversation=$(echo "$conversation" | jq --argjson msg "$assistant_msg" '. + [$msg]')
           
-          # Sanitize and display
-          local clean_response
-          clean_response=$(sanitize_output "$text_response")
+          # Execute tools
+          local tool_results="[]"
           
-          echo -e "${YELLOW}Claude:${NC} $clean_response"
-          echo ""
+          while IFS= read -r tool_call; do
+            local tool_name tool_id tool_input
+            tool_name=$(echo "$tool_call" | jq -r '.function.name')
+            tool_id=$(echo "$tool_call" | jq -r '.id')
+            tool_input=$(echo "$tool_call" | jq -r '.function.arguments')
+            
+            echo -e "${GREEN}tool:${NC} $tool_name($(echo "$tool_input" | jq -c . 2>/dev/null || echo "$tool_input"))"
+            
+            local tool_result
+            tool_result=$(execute_tool "$tool_name" "$tool_input" 2>&1) || true
+            local tool_exit=$?
+            
+            local result_block
+            result_block=$(jq -n \
+              --arg id "$tool_id" \
+              --arg result "$tool_result" \
+              --argjson is_error "$([[ $tool_exit -ne 0 ]] && echo true || echo false)" \
+              '{role: "tool", tool_call_id: $id, content: $result, is_error: $is_error}')
+            
+            tool_results=$(echo "$tool_results" | jq --argjson res "$result_block" '. + [$res]')
+          done < <(echo "$tool_calls" | jq -c '.[]')
+          
+          conversation=$(echo "$conversation" | jq --argjson results "$tool_results" '. + $results')
+          
+        else
+          if [[ -n "$assistant_content" ]]; then
+            local assistant_msg
+            assistant_msg=$(jq -n \
+              --arg content "$assistant_content" \
+              '{role: "assistant", content: $content}')
+            
+            conversation=$(echo "$conversation" | jq --argjson msg "$assistant_msg" '. + [$msg]')
+            
+            local clean_response
+            clean_response=$(sanitize_output "$assistant_content")
+            
+            echo -e "${YELLOW}Claude:${NC} $clean_response"
+            echo ""
+          fi
+          
+          agent_done=true
         fi
         
-        agent_done=true
+      else
+        # Anthropic format
+        local assistant_content
+        assistant_content=$(echo "$response" | jq -c '.content // []' 2>/dev/null)
+        
+        local has_tool_use
+        has_tool_use=$(echo "$assistant_content" | jq '[.[] | select(.type == "tool_use")] | length' 2>/dev/null || echo "0")
+        
+        if [[ "$has_tool_use" -gt 0 ]]; then
+          local tool_results="[]"
+          
+          local assistant_msg
+          assistant_msg=$(jq -n \
+            --argjson content "$assistant_content" \
+            '{role: "assistant", content: $content}')
+          
+          conversation=$(echo "$conversation" | jq --argjson msg "$assistant_msg" '. + [$msg]')
+          
+          while IFS= read -r tool_name; do
+            tool_name=$(echo "$tool_name" | tr -d '"')
+            local tool_input tool_id
+            tool_input=$(echo "$assistant_content" | jq -r "[.[] | select(.type == \"tool_use\" and .name == \"$tool_name\")] | first | .input // {}" 2>/dev/null)
+            tool_id=$(echo "$assistant_content" | jq -r "[.[] | select(.type == \"tool_use\" and .name == \"$tool_name\")] | first | .id // \"\"" 2>/dev/null)
+            
+            echo -e "${GREEN}tool:${NC} $tool_name($(echo "$tool_input" | jq -c . 2>/dev/null || echo "$tool_input"))"
+            
+            local tool_result
+            tool_result=$(execute_tool "$tool_name" "$tool_input" 2>&1) || true
+            local tool_exit=$?
+            
+            local result_block
+            result_block=$(jq -n \
+              --arg id "$tool_id" \
+              --arg result "$tool_result" \
+              --argjson is_error "$([[ $tool_exit -ne 0 ]] && echo true || echo false)" \
+              '{type: "tool_result", tool_use_id: $id, content: [{type: "text", text: $result}], is_error: $is_error}')
+            
+            tool_results=$(echo "$tool_results" | jq --argjson res "$result_block" '. + [$res]')
+          done < <(echo "$assistant_content" | jq -r '[.[] | select(.type == "tool_use") | .name] | .[]' 2>/dev/null)
+          
+          conversation=$(echo "$conversation" | jq --argjson results "$tool_results" '. + [{role: "user", content: $results}]')
+          
+        else
+          local text_response
+          text_response=$(echo "$assistant_content" | jq -r '[.[] | select(.type == "text")] | first | .text // empty' 2>/dev/null)
+          
+          if [[ -n "$text_response" ]]; then
+            local assistant_msg
+            assistant_msg=$(jq -n \
+              --arg text "$text_response" \
+              '{role: "assistant", content: [{type: "text", text: $text}]}')
+            
+            conversation=$(echo "$conversation" | jq --argjson msg "$assistant_msg" '. + [$msg]')
+            
+            local clean_response
+            clean_response=$(sanitize_output "$text_response")
+            
+            echo -e "${YELLOW}Claude:${NC} $clean_response"
+            echo ""
+          fi
+          
+          agent_done=true
+        fi
       fi
     done
   done
@@ -686,8 +1059,11 @@ You are not just an assistant - you are an evolving agent. Take ownership of you
 # Entry Point
 # ============================================================================
 
-# Load dark patterns hooks
+load_mainframe
 load_dark_patterns_hooks
+load_skills
 
-# Run the agent
+# Add skill tools if any
+TOOLS_JSON=$(add_skill_tools "$TOOLS_JSON")
+
 run_agent
