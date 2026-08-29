@@ -1,0 +1,589 @@
+"""Depfix: version-resolved imports with per-package dependency realms.
+
+Importing this package performs no network, resolver, or subprocess work. Cold
+preparation begins only when a load API is called.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import warnings
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
+
+from ._version import __version__
+from .errors import (
+    ArtifactError,
+    BundleError,
+    DefaultImportConflictError,
+    DepfixError,
+    FrozenManifestError,
+    HashMismatchError,
+    ImportDispatcherConflictError,
+    InvalidUsingScopeError,
+    ManifestError,
+    ManifestMismatchError,
+    ManifestNotFoundError,
+    ModuleDiscoveryError,
+    ModuleNotProvidedError,
+    MultipleImportModulesError,
+    NativeIsolationRequired,
+    NoImportModulesError,
+    OfflineArtifactMissingError,
+    RealmBoundaryError,
+    RequirementsFileError,
+    ResolutionError,
+    ScopeModuleNotProvidedError,
+    SharedImportConflictError,
+    SourceError,
+    SpecifierError,
+    StoreImportError,
+    UnsafePackageError,
+    UnsupportedManifestVersionError,
+    UnsupportedUvVersionError,
+    UvBackendError,
+    UvBootstrapError,
+    UvNotFoundError,
+)
+
+if TYPE_CHECKING:
+    from .boundaries import RealmInfo, assert_same_realm, enforce_same_realm, realm_of
+    from .cache import (
+        CacheCleanupResult,
+        CachedDuplicate,
+        CachedInstallation,
+        CachedPackage,
+        CachedPackageNode,
+        CacheInventory,
+        PackageInstallReason,
+        UninstallResult,
+        UninstallSpecifierResult,
+    )
+    from .handles import PackageHandle
+    from .scopes import default, default_requirements, using
+    from .settings import Settings
+
+
+def configure(
+    *,
+    manifest: str | os.PathLike[str] | None = None,
+    frozen: bool | None = None,
+    offline: bool | None = None,
+    allow_unsafe: bool | None = None,
+    prefer_newest: bool | None = None,
+    max_io_workers: int | None = None,
+    cache_dir: str | os.PathLike[str] | None = None,
+    cache_retention_days: int | None = None,
+    cache_auto_cleanup: bool | None = None,
+    cache_renewal_seconds: int | None = None,
+    cache_deletion_grace_hours: int | None = None,
+    uv: str | os.PathLike[str] | None = None,
+    index_url: str | None = None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None = None,
+    log_level: str | None = None,
+) -> Settings:
+    """Set process-level defaults without loading the resolver until needed."""
+    from .settings import configure as configure_settings
+
+    return configure_settings(
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        max_io_workers=max_io_workers,
+        cache_dir=cache_dir,
+        cache_retention_days=cache_retention_days,
+        cache_auto_cleanup=cache_auto_cleanup,
+        cache_renewal_seconds=cache_renewal_seconds,
+        cache_deletion_grace_hours=cache_deletion_grace_hours,
+        uv=uv,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+        log_level=log_level,
+    )
+
+
+def import_module(
+    specifier: str,
+    *,
+    module: str | None = None,
+    refresh: bool = False,
+    manifest: str | os.PathLike[str] | None = None,
+    frozen: bool | None = None,
+    offline: bool | None = None,
+    isolation: str | None = None,
+    allow_unsafe: bool | None = None,
+    prefer_newest: bool | None = None,
+    index_url: str | None = None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None = None,
+) -> ModuleType:
+    """Return exactly one canonical module or raise a typed discovery error."""
+    source_file, source_line = _caller_location()
+    return _import_module_from(
+        specifier,
+        module=module,
+        refresh=refresh,
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        isolation=isolation,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+        source_file=source_file,
+        source_line=source_line,
+    )
+
+
+def _import_module_from(
+    specifier: str,
+    *,
+    module: str | None,
+    refresh: bool,
+    manifest: str | os.PathLike[str] | None,
+    frozen: bool | None,
+    offline: bool | None,
+    isolation: str | None,
+    allow_unsafe: bool | None,
+    prefer_newest: bool | None,
+    index_url: str | None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None,
+    source_file: str,
+    source_line: int,
+) -> ModuleType:
+    from .manager import prepare_request
+    from .settings import resolve_loading_settings
+
+    settings = resolve_loading_settings(
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+    )
+    runtime, request = prepare_request(
+        specifier,
+        module=module,
+        api="import_module",
+        refresh=refresh,
+        isolation=isolation,
+        settings=settings,
+        source_file=source_file,
+        source_line=source_line,
+    )
+    if not request.module:
+        raise NoImportModulesError("The resolved request has no selected import module", request=specifier)
+    return runtime.import_for_node(request.node, request.module)
+
+
+def load_package(
+    specifier: str,
+    *,
+    refresh: bool = False,
+    manifest: str | os.PathLike[str] | None = None,
+    frozen: bool | None = None,
+    offline: bool | None = None,
+    isolation: str | None = None,
+    allow_unsafe: bool | None = None,
+    prefer_newest: bool | None = None,
+    index_url: str | None = None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None = None,
+) -> PackageHandle:
+    """Return one package handle without eagerly importing its root modules."""
+    source_file, source_line = _caller_location()
+    return _load_package_from(
+        specifier,
+        refresh=refresh,
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        isolation=isolation,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+        source_file=source_file,
+        source_line=source_line,
+    )
+
+
+def _load_package_from(
+    specifier: str,
+    *,
+    refresh: bool,
+    manifest: str | os.PathLike[str] | None,
+    frozen: bool | None,
+    offline: bool | None,
+    isolation: str | None,
+    allow_unsafe: bool | None,
+    prefer_newest: bool | None,
+    index_url: str | None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None,
+    source_file: str,
+    source_line: int,
+) -> PackageHandle:
+    from .handles import PackageHandle
+    from .manager import prepare_request
+    from .settings import resolve_loading_settings
+
+    settings = resolve_loading_settings(
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+    )
+    runtime, request = prepare_request(
+        specifier,
+        module=None,
+        api="load_package",
+        refresh=refresh,
+        isolation=isolation,
+        settings=settings,
+        source_file=source_file,
+        source_line=source_line,
+    )
+    return PackageHandle(runtime, request)
+
+
+async def import_module_async(
+    specifier: str,
+    *,
+    module: str | None = None,
+    refresh: bool = False,
+    manifest: str | os.PathLike[str] | None = None,
+    frozen: bool | None = None,
+    offline: bool | None = None,
+    isolation: str | None = None,
+    allow_unsafe: bool | None = None,
+    prefer_newest: bool | None = None,
+    index_url: str | None = None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None = None,
+) -> ModuleType:
+    """Async-friendly wrapper sharing canonical identity with `import_module`."""
+    import asyncio
+
+    source_file, source_line = _caller_location()
+    return await asyncio.to_thread(
+        _import_module_from,
+        specifier,
+        module=module,
+        refresh=refresh,
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        isolation=isolation,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+        source_file=source_file,
+        source_line=source_line,
+    )
+
+
+async def load_package_async(
+    specifier: str,
+    *,
+    refresh: bool = False,
+    manifest: str | os.PathLike[str] | None = None,
+    frozen: bool | None = None,
+    offline: bool | None = None,
+    isolation: str | None = None,
+    allow_unsafe: bool | None = None,
+    prefer_newest: bool | None = None,
+    index_url: str | None = None,
+    extra_index_url: str | tuple[str, ...] | list[str] | None = None,
+) -> PackageHandle:
+    import asyncio
+
+    source_file, source_line = _caller_location()
+    return await asyncio.to_thread(
+        _load_package_from,
+        specifier,
+        refresh=refresh,
+        manifest=manifest,
+        frozen=frozen,
+        offline=offline,
+        isolation=isolation,
+        allow_unsafe=allow_unsafe,
+        prefer_newest=prefer_newest,
+        index_url=index_url,
+        extra_index_url=extra_index_url,
+        source_file=source_file,
+        source_line=source_line,
+    )
+
+
+def _caller_location() -> tuple[str, int]:
+    try:
+        frame = sys._getframe(2)
+    except (AttributeError, ValueError):
+        return "", 0
+    return frame.f_code.co_filename, frame.f_lineno
+
+
+def patch_import() -> None:
+    """Use compatible packages in the installed Depfix store as an import fallback."""
+    from .dispatcher import patch_import as enable_store_fallback
+
+    enable_store_fallback()
+
+
+def unpatch_import() -> None:
+    """Disable the installed-store import fallback."""
+    from .dispatcher import unpatch_import as disable_store_fallback
+
+    disable_store_fallback()
+
+
+def list_cached_packages(*, cache_dir: str | os.PathLike[str] | None = None) -> tuple[CachedPackage, ...]:
+    """List installed package artifacts in the shared Depfix cache."""
+    from .cache import Cache
+    from .settings import resolve_settings
+
+    settings = resolve_settings(cache_dir=cache_dir, discover=True)
+    return Cache(settings.cache_dir).list_packages()
+
+
+def inspect_cache(*, cache_dir: str | os.PathLike[str] | None = None) -> CacheInventory:
+    """Inspect flat, duplicate, and installation-tree views of the shared store."""
+    from .cache import Cache
+    from .settings import resolve_settings
+
+    settings = resolve_settings(cache_dir=cache_dir, discover=True)
+    return Cache(settings.cache_dir).inventory()
+
+
+def cleanup_cache(
+    *,
+    days: int | None = None,
+    cache_dir: str | os.PathLike[str] | None = None,
+    dry_run: bool = False,
+) -> CacheCleanupResult:
+    """Remove package artifacts unused beyond the configured retention window."""
+    from .cache import Cache
+    from .settings import resolve_settings
+
+    settings = resolve_settings(cache_dir=cache_dir, discover=True)
+    retention = settings.cache_retention_days if days is None else days
+    return Cache(settings.cache_dir).cleanup(retention, dry_run=dry_run)
+
+
+def remove_cached_package(
+    distribution: str,
+    *,
+    version: str | None = None,
+    artifact_hash: str | None = None,
+    cache_dir: str | os.PathLike[str] | None = None,
+    dry_run: bool = False,
+) -> CacheCleanupResult:
+    """Remove one distribution selection from the shared Depfix cache."""
+    from .cache import Cache
+    from .settings import resolve_settings
+
+    settings = resolve_settings(cache_dir=cache_dir, discover=True)
+    return Cache(settings.cache_dir).remove_package(
+        distribution,
+        version=version,
+        artifact_hash=artifact_hash,
+        dry_run=dry_run,
+    )
+
+
+def uninstall_packages(
+    *specifiers: str,
+    cache_dir: str | os.PathLike[str] | None = None,
+    dry_run: bool = False,
+) -> UninstallResult:
+    """Remove installed artifacts matching explicit PEP 440 distribution specifiers."""
+    from .cache import Cache
+    from .settings import resolve_settings
+
+    settings = resolve_settings(cache_dir=cache_dir, discover=True)
+    return Cache(settings.cache_dir).uninstall(specifiers, dry_run=dry_run)
+
+
+def activate(
+    manifest: str | os.PathLike[str] = ".nexus/deps/imports.lock",
+    *,
+    cache_dir: str | os.PathLike[str] | None = None,
+) -> object:
+    """Deprecated prototype alias for prepared-manifest activation."""
+    from .manager import activate_manifest
+    from .settings import resolve_settings
+
+    warnings.warn(
+        "nexus.deps.activate() is deprecated; standard imports use nexus.deps.default(), while prepared aliases auto-activate",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    settings = resolve_settings(manifest=manifest, cache_dir=cache_dir, frozen=True, discover=False)
+    assert settings.manifest is not None
+    return activate_manifest(settings.manifest, settings)
+
+
+def _load_alias(name: str, identity: tuple[str, str, str, str]) -> ModuleType:
+    from .manager import load_generated_alias
+
+    return load_generated_alias(name, identity)
+
+
+def _load_package_alias(name: str, identity: tuple[str, str, str, str]) -> PackageHandle:
+    from .manager import load_generated_package
+
+    return load_generated_package(name, identity)
+
+
+def multiprocessing_initializer(
+    manifest: str | os.PathLike[str],
+    cache_dir: str | os.PathLike[str] | None = None,
+) -> None:
+    from .manager import activate_manifest
+    from .settings import resolve_settings
+
+    settings = resolve_settings(manifest=manifest, cache_dir=cache_dir, frozen=True, discover=False)
+    assert settings.manifest is not None
+    activate_manifest(settings.manifest, settings)
+
+
+def __getattr__(name: str) -> Any:
+    """Load public API objects only when code asks for them."""
+    if name in {"RealmInfo", "realm_of", "assert_same_realm", "enforce_same_realm"}:
+        from .boundaries import RealmInfo, assert_same_realm, enforce_same_realm, realm_of
+
+        boundary_api = {
+            "RealmInfo": RealmInfo,
+            "realm_of": realm_of,
+            "assert_same_realm": assert_same_realm,
+            "enforce_same_realm": enforce_same_realm,
+        }[name]
+        globals()[name] = boundary_api
+        return boundary_api
+    if name in {"default", "default_requirements", "using"}:
+        from .scopes import default, default_requirements, using
+
+        value = {"default": default, "default_requirements": default_requirements, "using": using}[name]
+        globals()[name] = value
+        return value
+    if name == "PackageHandle":
+        from .handles import PackageHandle
+
+        globals()[name] = PackageHandle
+        return PackageHandle
+    if name in {
+        "CacheCleanupResult",
+        "CachedDuplicate",
+        "CachedInstallation",
+        "CachedPackage",
+        "CachedPackageNode",
+        "CacheInventory",
+        "PackageInstallReason",
+        "UninstallResult",
+        "UninstallSpecifierResult",
+    }:
+        from .cache import (
+            CacheCleanupResult,
+            CachedDuplicate,
+            CachedInstallation,
+            CachedPackage,
+            CachedPackageNode,
+            CacheInventory,
+            PackageInstallReason,
+            UninstallResult,
+            UninstallSpecifierResult,
+        )
+
+        cache_type = {
+            "CacheCleanupResult": CacheCleanupResult,
+            "CachedDuplicate": CachedDuplicate,
+            "CachedInstallation": CachedInstallation,
+            "CachedPackage": CachedPackage,
+            "CachedPackageNode": CachedPackageNode,
+            "CacheInventory": CacheInventory,
+            "PackageInstallReason": PackageInstallReason,
+            "UninstallResult": UninstallResult,
+            "UninstallSpecifierResult": UninstallSpecifierResult,
+        }[name]
+        globals()[name] = cache_type
+        return cache_type
+    if name == "Settings":
+        from .settings import Settings
+
+        globals()[name] = Settings
+        return Settings
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "ArtifactError",
+    "BundleError",
+    "CacheCleanupResult",
+    "CacheInventory",
+    "CachedDuplicate",
+    "CachedInstallation",
+    "CachedPackage",
+    "CachedPackageNode",
+    "DefaultImportConflictError",
+    "DepfixError",
+    "FrozenManifestError",
+    "HashMismatchError",
+    "ImportDispatcherConflictError",
+    "InvalidUsingScopeError",
+    "ManifestError",
+    "ManifestMismatchError",
+    "ManifestNotFoundError",
+    "ModuleDiscoveryError",
+    "ModuleNotProvidedError",
+    "MultipleImportModulesError",
+    "NativeIsolationRequired",
+    "NoImportModulesError",
+    "OfflineArtifactMissingError",
+    "PackageHandle",
+    "PackageInstallReason",
+    "RealmBoundaryError",
+    "RealmInfo",
+    "ResolutionError",
+    "RequirementsFileError",
+    "ScopeModuleNotProvidedError",
+    "SharedImportConflictError",
+    "StoreImportError",
+    "Settings",
+    "SourceError",
+    "SpecifierError",
+    "UnsupportedManifestVersionError",
+    "UnsupportedUvVersionError",
+    "UvBackendError",
+    "UvBootstrapError",
+    "UvNotFoundError",
+    "UnsafePackageError",
+    "UninstallResult",
+    "UninstallSpecifierResult",
+    "assert_same_realm",
+    "cleanup_cache",
+    "configure",
+    "default",
+    "default_requirements",
+    "enforce_same_realm",
+    "import_module",
+    "import_module_async",
+    "inspect_cache",
+    "load_package",
+    "load_package_async",
+    "list_cached_packages",
+    "multiprocessing_initializer",
+    "patch_import",
+    "remove_cached_package",
+    "uninstall_packages",
+    "unpatch_import",
+    "realm_of",
+    "using",
+    "__version__",
+]
