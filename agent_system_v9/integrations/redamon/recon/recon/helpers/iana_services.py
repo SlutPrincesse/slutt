@@ -20,7 +20,7 @@ IANA_CSV_PATH = Path(__file__).parent.parent / "data" / "iana-services.csv"
 
 def _load_iana_cache() -> None:
     """Load IANA services CSV into memory cache."""
-    global _IANA_CACHE, _CACHE_LOADED
+    global _IANA_CACHE, _CACHE_LOADED  # noqa: PLW0602
 
     if _CACHE_LOADED:
         return

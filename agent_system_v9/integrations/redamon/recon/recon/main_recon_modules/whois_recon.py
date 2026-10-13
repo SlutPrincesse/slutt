@@ -113,7 +113,7 @@ def get_whois_data(domain: str, max_retries: int = None, settings: dict | None =
         if outcome in (cb.Outcome.OK, cb.Outcome.NO_DATA):
             return result, domain
         if outcome is cb.Outcome.FATAL:
-            raise Exception(f"WHOIS lookup refused for {domain}: {detail}")
+            raise RuntimeError(f"WHOIS lookup refused for {domain}: {detail}")
         last_detail = detail
         if retry_once_only:
             if short_retry_used:
@@ -125,7 +125,7 @@ def get_whois_data(domain: str, max_retries: int = None, settings: dict | None =
         print(f"[!][WHOIS] {detail}, retrying in {delay}s... (attempt {attempt + 1}/{attempts})")
         time.sleep(delay)
 
-    raise Exception(f"WHOIS lookup failed for {domain}: {last_detail}")
+    raise RuntimeError(f"WHOIS lookup failed for {domain}: {last_detail}")
 
 
 def _serialize_for_json(value: Any) -> Any:

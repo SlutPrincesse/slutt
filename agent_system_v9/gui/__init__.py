@@ -2,17 +2,17 @@
 GUI Package for AGENT_SYSTEM_V9
 """
 from .integration import (
-    WebappManager,
-    WebappConfig,
     GUIIntegration,
-    get_webapp_manager,
+    WebappConfig,
+    WebappManager,
     get_gui_integration,
+    get_webapp_manager,
     run_with_gui,
 )
 
 __all__ = [
     "WebappManager",
-    "WebappConfig", 
+    "WebappConfig",
     "GUIIntegration",
     "get_webapp_manager",
     "get_gui_integration",

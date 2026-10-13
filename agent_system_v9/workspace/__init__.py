@@ -45,6 +45,7 @@ from .workspace_synchronizer import (
 
 # Alias for AGENT_SYSTEM_V9 main package to avoid naming conflict with storage.ConflictResolver
 WorkspaceConflictResolver = ConflictResolver
+WorkspaceSyncResult = SyncResult
 
 __all__ = [
     # Workspace Manager
@@ -85,4 +86,5 @@ __all__ = [
     "ConflictStrategy",
     "FileInfo",
     "SyncResult",
+    "WorkspaceSyncResult",
 ]

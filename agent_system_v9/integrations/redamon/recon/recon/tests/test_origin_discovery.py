@@ -267,7 +267,7 @@ class TestSources(unittest.TestCase):
                 return [_RR('"v=spf1 ip4:8.8.8.0/30 ip4:9.9.9.9 include:x -all"')]
             if rtype == "MX":
                 return [_RR("mail.example.com"), _RR("aspmx.l.google.com")]  # google skipped
-            raise Exception("no")
+            raise ValueError(f"Unsupported record type: {rtype}")
         fake_dns.resolver.resolve.side_effect = _resolve
 
         with patch.dict("sys.modules", {"dns": fake_dns, "dns.resolver": fake_dns.resolver}), \

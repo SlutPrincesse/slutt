@@ -238,7 +238,7 @@ from .workspace import (
     FunctionMutator, MutationTester, EvolutionaryMutator,
     Mutation, MutationResult, MutationType,
     WorkspaceSynchronizer, WorkspaceReplicator, SyncScheduler, WorkspaceConflictResolver,
-    SyncConfig, SyncMode, ConflictStrategy, FileInfo, SyncResult,
+    SyncConfig, SyncMode, ConflictStrategy, FileInfo, WorkspaceSyncResult,
 )
 
 # Guardrails (Section 28)
@@ -262,7 +262,7 @@ from .shadowgit import (
 # Evolution (Section 31)
 from .evolution import (
     EvolutionEngine, EvolutionConfig, EvolutionResult, Individual,
-    FitnessFunction, EvolutionStrategy, SelectionMethod,
+    FitnessFunction, EvolutionStrategyEnum, SelectionMethod,
     MultiObjectiveEvolution, AdaptiveEvolution,
     CodeEvolutionEngine, CodeEvolutionConfig, CodeIndividual, CodeMutationType,
     CodeOptimizer, RefactoringEvolution,

@@ -19,9 +19,9 @@ from knowledge_base.reranker import (
 )
 
 
+@dataclass
 class _FakeTokenizer:
-    def __init__(self, model_max_length: int):
-        self.model_max_length = model_max_length
+    model_max_length: int
 
 
 class _FakeCrossEncoder:

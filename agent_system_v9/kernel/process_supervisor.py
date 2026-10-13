@@ -118,7 +118,7 @@ class ProcessSupervisor:
                 stdout=subprocess.PIPE if spec.capture_output else None,
                 stderr=subprocess.PIPE if spec.capture_output else None,
                 shell=spec.shell,
-                preexec_fn=spec.preexec_fn,
+                preexec_fn=spec.preexec_fn,  # noqa: PLW1509 (required for process isolation)
                 start_new_session=spec.start_new_session,
                 bufsize=0
             )

@@ -18,15 +18,15 @@ from .shadowgit_index import (
     ShadowIndex,
 )
 from .shadowgit_sync import (
-    ShadowGitSync,
-    ShadowGitLFS,
-    SyncDirection,
-    SyncStatus,
-    RemoteProtocol,
     RemoteConfig,
+    RemoteProtocol,
+    ShadowGitLFS,
+    ShadowGitSync,
+    SyncConflict,
+    SyncDirection,
     SyncOptions,
     SyncResult,
-    SyncConflict,
+    SyncStatus,
 )
 
 __all__ = [

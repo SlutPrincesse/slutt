@@ -20,7 +20,6 @@ from .ffi_mapper import (
 )
 from .polyglot_ast import (
     ASTDiffer,
-    Language,
     NodeType,
     PolyglotASTGenerator,
     PolyglotNode,

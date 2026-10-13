@@ -19,6 +19,13 @@ class RPCErrorCode(Enum):
     METHOD_NOT_FOUND = -32601
     INVALID_PARAMS = -32602
     INTERNAL_ERROR = -32603
+
+
+class RPCError(Exception):
+    """RPC-specific error."""
+    def __init__(self, message: str, code: int = RPCErrorCode.INTERNAL_ERROR.value):
+        super().__init__(message)
+        self.code = code
     SERVER_ERROR = -32000
     TIMEOUT = -32001
     CANCELLED = -32002
@@ -96,20 +103,16 @@ class RPCNotification:
         }
 
 
+from dataclasses import dataclass
+
+
+@dataclass
 class RPCMethod:
-    def __init__(
-        self,
-        name: str,
-        handler: Callable,
-        description: str = "",
-        params_schema: dict | None = None,
-        return_schema: dict | None = None,
-    ):
-        self.name = name
-        self.handler = handler
-        self.description = description
-        self.params_schema = params_schema
-        self.return_schema = return_schema
+    name: str
+    handler: Callable
+    description: str = ""
+    params_schema: dict | None = None
+    return_schema: dict | None = None
 
 
 class RPCGateway:
@@ -245,7 +248,7 @@ class RPCGateway:
             response = RPCResponse.from_dict(json.loads(response_data.decode()))
 
             if response.error:
-                raise Exception(f"RPC Error: {response.error['message']}")
+                raise RPCError(response.error['message'], response.error.get('code', RPCErrorCode.INTERNAL_ERROR.value))
 
             return response.result
         finally:

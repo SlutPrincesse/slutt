@@ -28,7 +28,6 @@ from .degradation_manager import (
     StaticFallback,
 )
 from .deployment_handshake import (
-    Artifact,
     DeploymentCoordinator,
     DeploymentHandshake,
     DeploymentOrchestrator,

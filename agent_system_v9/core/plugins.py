@@ -42,19 +42,13 @@ class PluginContext:
     logger: Any
 
 
+@dataclass
 class _PluginInfo:
     """Internal plugin information."""
-    def __init__(
-        self,
-        metadata: PluginMetadata,
-        factory: Callable[[PluginContext], Any],
-        instance: Any = None,
-        state: str = PluginState.LOADED,
-    ):
-        self.metadata = metadata
-        self.factory = factory
-        self.instance = instance
-        self.state = state
+    metadata: PluginMetadata
+    factory: Callable[[PluginContext], Any]
+    instance: Any = None
+    state: str = PluginState.LOADED
 
 
 class PluginManager:

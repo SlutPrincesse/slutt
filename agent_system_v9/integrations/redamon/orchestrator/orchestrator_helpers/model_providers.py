@@ -13,6 +13,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache for env-var fallback mode
+_cache: dict[str, Any] | None = None
+_cache_ts: float = 0.0
+
 
 # ---------------------------------------------------------------------------
 # Unified model schema
@@ -511,12 +515,8 @@ async def fetch_all_models(
     of model dicts with {id, name, context_length, description}.
     Uses an in-memory cache (1 hour TTL) only for env-var fallback mode.
     """
-    global _cache, _cache_ts
-
-    # If no providers from DB, use env var fallback with caching
-    if providers is None:
-        # No env-var fallback — keys come exclusively from DB providers
-        return {}
+    # Cache variables are defined at module level but not used in DB-driven mode
+    # (they're only used in the env-var fallback path which is currently disabled)
 
     # --- DB-driven mode: build tasks from provider configs ---
     import asyncio

@@ -346,7 +346,7 @@ def grab_banner(host: str, port: int, timeout: float = 5.0, use_ssl: bool = Fals
                 sock.send(probe)
                 sock.settimeout(timeout)
                 banner = sock.recv(1024)
-            except:
+            except Exception:
                 pass
 
         sock.close()
@@ -377,7 +377,7 @@ def identify_service(banner: str, port: int) -> dict:
                     "version": version_info,
                     "confidence": "high"
                 }
-            except:
+            except Exception:
                 return {"service": service, "version": None, "confidence": "medium"}
 
     return {"service": "unknown", "version": None, "banner_hint": banner[:100], "confidence": "low"}
@@ -1406,7 +1406,7 @@ def download_wappalyzer_database(settings: dict = None) -> str | None:
                     cached_data = json.load(f)
                 tech_count = len(cached_data.get('technologies', {}))
                 print(f"[*][httpx] Using cached Wappalyzer DB ({tech_count} technologies, {file_age_hours:.1f}h old)")
-            except:
+            except Exception:
                 print(f"[*][httpx] Using cached Wappalyzer DB ({file_age_hours:.1f}h old)")
             return str(WAPPALYZER_CACHE_FILE)
 
@@ -1438,7 +1438,7 @@ def download_wappalyzer_database(settings: dict = None) -> str | None:
         print(" Done")
 
         if not technologies_data:
-            raise Exception("No technology data downloaded")
+            raise RuntimeError("No technology data downloaded")
 
         # Normalize technologies for compatibility with python-Wappalyzer
         # The library expects strings, but newer DB has lists in some fields
