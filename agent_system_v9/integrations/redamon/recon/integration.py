@@ -74,7 +74,7 @@ class SubdomainEnumModule(ReconModule):
 
     def __init__(self, config: dict | None = None):
         super().__init__("subdomain_enum", ReconModuleType.SUBDOMAIN, config)
-        self.tools = config.get("tools", ["subfinder", "amass", "puredns"])
+        self.tools = self.config.get("tools", ["subfinder", "amass", "puredns"])
 
     async def run(self, target: ReconTarget) -> ReconResult:
         result = ReconResult(
@@ -138,9 +138,9 @@ class PortScanModule(ReconModule):
 
     def __init__(self, config: dict | None = None):
         super().__init__("port_scan", ReconModuleType.PORT_SCAN, config)
-        self.tools = config.get("tools", ["naabu", "rustscan"])
-        self.ports = config.get("ports", "top-1000")
-        self.rate = config.get("rate", 1000)
+        self.tools = self.config.get("tools", ["naabu", "rustscan"])
+        self.ports = self.config.get("ports", "top-1000")
+        self.rate = self.config.get("rate", 1000)
 
     async def run(self, target: ReconTarget) -> ReconResult:
         result = ReconResult(
@@ -210,9 +210,9 @@ class HTTPProbeModule(ReconModule):
 
     def __init__(self, config: dict | None = None):
         super().__init__("http_probe", ReconModuleType.HTTP_PROBE, config)
-        self.ports = config.get("ports", "80,443,8080,8443")
-        self.follow_redirects = config.get("follow_redirects", True)
-        self.tech_detect = config.get("tech_detect", True)
+        self.ports = self.config.get("ports", "80,443,8080,8443")
+        self.follow_redirects = self.config.get("follow_redirects", True)
+        self.tech_detect = self.config.get("tech_detect", True)
 
     async def run(self, target: ReconTarget) -> ReconResult:
         result = ReconResult(
@@ -263,9 +263,9 @@ class NucleiScanModule(ReconModule):
 
     def __init__(self, config: dict | None = None):
         super().__init__("nuclei_scan", ReconModuleType.VULN_SCAN, config)
-        self.templates = config.get("templates", [])
-        self.severity = config.get("severity", ["critical", "high", "medium"])
-        self.rate_limit = config.get("rate_limit", 150)
+        self.templates = self.config.get("templates", [])
+        self.severity = self.config.get("severity", ["critical", "high", "medium"])
+        self.rate_limit = self.config.get("rate_limit", 150)
 
     async def run(self, target: ReconTarget) -> ReconResult:
         result = ReconResult(
@@ -317,9 +317,9 @@ class KatanaCrawlModule(ReconModule):
 
     def __init__(self, config: dict | None = None):
         super().__init__("katana_crawl", ReconModuleType.CONTENT, config)
-        self.depth = config.get("depth", 2)
-        self.js_crawl = config.get("js_crawl", True)
-        self.known_files = config.get("known_files", True)
+        self.depth = self.config.get("depth", 2)
+        self.js_crawl = self.config.get("js_crawl", True)
+        self.known_files = self.config.get("known_files", True)
 
     async def run(self, target: ReconTarget) -> ReconResult:
         result = ReconResult(
@@ -369,8 +369,8 @@ class GraphQLScannerModule(ReconModule):
 
     def __init__(self, config: dict | None = None):
         super().__init__("graphql_scan", ReconModuleType.GRAPHQL, config)
-        self.introspection = config.get("introspection", True)
-        self.tools = config.get("tools", ["graphql-cop"])
+        self.introspection = self.config.get("introspection", True)
+        self.tools = self.config.get("tools", ["graphql-cop"])
 
     async def run(self, target: ReconTarget) -> ReconResult:
         result = ReconResult(

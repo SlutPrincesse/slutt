@@ -290,6 +290,10 @@ from .integrations import (
     CybersecToolkitIntegration, get_cybersec_toolkit_integration,
 )
 
+# TUI & GUI
+from .tui import AgentV9TUI, run_tui
+from .gui import WebappManager, WebappConfig, GUIIntegration, get_webapp_manager, get_gui_integration, run_with_gui
+
 __version__ = "9.0.0"
 __codename__ = "NEURO-CRANIAL OVERLORD"
 
@@ -467,6 +471,10 @@ __all__ = [
     # Cybersec-Toolkit
     "ToolManager", "ToolConfig", "ModuleRunner",
     "CybersecToolkitIntegration", "get_cybersec_toolkit_integration",
+    # TUI & GUI
+    "AgentV9TUI", "run_tui",
+    "WebappManager", "WebappConfig", "GUIIntegration",
+    "get_webapp_manager", "get_gui_integration", "run_with_gui",
 ]
 
 

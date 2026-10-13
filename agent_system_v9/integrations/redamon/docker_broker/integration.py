@@ -50,6 +50,7 @@ _DEFAULT_ALLOWED_IMAGES = {
 _DEFAULT_BIND_PREFIXES = ["/tmp/redamon"]
 _DEFAULT_VOLUMES = {"nuclei-templates", "redamon-osv-db", "redamon-sca-intel"}
 _DEFAULT_RW_PREFIXES = ["/tmp/redamon"]
+_DEFAULT_RW_VOLUMES = set()
 _DEFAULT_CAPS = {"NET_RAW", "NET_ADMIN", "CAP_NET_RAW", "CAP_NET_ADMIN"}
 
 
