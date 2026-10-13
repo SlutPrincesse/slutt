@@ -4,6 +4,7 @@ AST State-Verification Gatekeeper - Enforces mandatory AST and state checks prio
 import ast
 import threading
 import hashlib
+import time
 from typing import Dict, List, Optional, Any, Callable, Set
 from dataclasses import dataclass, field
 from enum import Enum

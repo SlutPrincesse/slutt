@@ -3,7 +3,7 @@ Sanitization & Clean Code Formatter - Strips debug logs, normalizes string quote
 """
 import re
 import threading
-from typing import Dict, List, Optional, Any, Callable, Set
+from typing import Dict, List, Optional, Any, Callable, Set, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path

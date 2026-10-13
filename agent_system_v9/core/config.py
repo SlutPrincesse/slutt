@@ -1,7 +1,7 @@
 """
 Core System Configuration - Dynamic configuration management with environment variable support
 """
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Callable
 from dataclasses import dataclass, field, asdict
 import os
 import json

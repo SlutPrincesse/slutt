@@ -9,7 +9,7 @@ from .dual_stream import DualStreamSplitter, StreamType
 from .shadow_broker import ShadowBrokerScanner, RepoCandidate
 from .ast_extractor import ASTFunctionalExtractor, FunctionalNode
 from .approval_guardrail import ApprovalModalGuardrail, ApprovalRequest
-from .cli_schema import CLISchemaGenerator, ToolSchema
+from .cli_schema import CLISchemaGenerator, CLISchema
 from .binary_manager import GlobalBinaryManager, BinaryEntry
 
 __all__ = [
@@ -24,7 +24,7 @@ __all__ = [
     "ApprovalModalGuardrail",
     "ApprovalRequest",
     "CLISchemaGenerator",
-    "ToolSchema",
+    "CLISchema",
     "GlobalBinaryManager",
     "BinaryEntry",
 ]

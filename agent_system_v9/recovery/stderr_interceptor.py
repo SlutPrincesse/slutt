@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import os
 import time
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path

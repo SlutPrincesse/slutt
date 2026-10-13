@@ -4,7 +4,7 @@ Lexical Normalization Pipeline (LEX_NORM) - Universal token and syntax standardi
 import threading
 import re
 import ast
-from typing import Dict, List, Optional, Any, Callable, Set
+from typing import Dict, List, Optional, Any, Callable, Set, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
