@@ -4,12 +4,23 @@ Polyglot AST Driver - Multi-language AST operations for workspace
 import ast
 import hashlib
 import json
+import re
+import subprocess
 from typing import Dict, List, Optional, Any, Set, Union, Callable, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from collections import defaultdict
 import importlib.util
+
+
+try:
+    from tree_sitter import Language as TSLanguage, Parser as TSParser
+    TREE_SITTER_AVAILABLE = True
+except ImportError:
+    TREE_SITTER_AVAILABLE = False
+    TSLanguage = None
+    TSParser = None
 
 
 class Language(Enum):
@@ -25,6 +36,66 @@ class Language(Enum):
     PHP = "php"
     SWIFT = "swift"
     KOTLIN = "kotlin"
+
+
+@dataclass
+class TreeSitterConfig:
+    language: Language
+    lib_path: str
+    language_name: str
+    queries: Dict[str, str] = field(default_factory=dict)
+
+
+class TreeSitterManager:
+    _instance = None
+    _languages: Dict[Language, TSLanguage] = {}
+    _parsers: Dict[Language, TSParser] = {}
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
+    def __init__(self):
+        if not TREE_SITTER_AVAILABLE:
+            return
+        self._load_languages()
+    
+    def _load_languages(self):
+        language_configs = {
+            Language.PYTHON: ("tree_sitter_python", "python"),
+            Language.JAVASCRIPT: ("tree_sitter_javascript", "javascript"),
+            Language.TYPESCRIPT: ("tree_sitter_typescript", "typescript"),
+            Language.RUST: ("tree_sitter_rust", "rust"),
+            Language.GO: ("tree_sitter_go", "go"),
+            Language.JAVA: ("tree_sitter_java", "java"),
+            Language.CPP: ("tree_sitter_cpp", "cpp"),
+        }
+        
+        for lang, (module_name, lang_name) in language_configs.items():
+            try:
+                module = importlib.import_module(module_name)
+                ts_lang = TSLanguage(module.language())
+                self._languages[lang] = ts_lang
+                parser = TSParser()
+                parser.set_language(ts_lang)
+                self._parsers[lang] = parser
+            except ImportError:
+                pass
+    
+    def get_parser(self, language: Language) -> Optional[TSParser]:
+        return self._parsers.get(language)
+    
+    def get_language(self, language: Language) -> Optional[TSLanguage]:
+        return self._languages.get(language)
+    
+    def is_available(self, language: Language) -> bool:
+        return language in self._parsers
+    
+    @classmethod
+    def available_languages(cls) -> List[Language]:
+        return list(cls._parsers.keys())
 
 
 @dataclass
@@ -80,6 +151,12 @@ class ASTParser:
 
     def _register_default_parsers(self):
         self.parsers[Language.PYTHON] = self._parse_python
+        
+        if TREE_SITTER_AVAILABLE:
+            ts_manager = TreeSitterManager.get_instance()
+            for lang in [Language.JAVASCRIPT, Language.TYPESCRIPT, Language.RUST, Language.GO, Language.JAVA, Language.CPP]:
+                if ts_manager.is_available(lang):
+                    self.parsers[lang] = lambda content, path, l=lang: self._parse_with_tree_sitter(content, path, l)
 
     def register_parser(self, language: Language, parser: Callable):
         self.parsers[language] = parser
@@ -132,6 +209,11 @@ class ASTParser:
         return mapping.get(ext, Language.PYTHON)
 
     def _parse_python(self, content: str, file_path: str) -> ASTNode:
+        if TREE_SITTER_AVAILABLE:
+            ts_manager = TreeSitterManager.get_instance()
+            if ts_manager.is_available(Language.PYTHON):
+                return self._parse_with_tree_sitter(content, file_path, Language.PYTHON)
+        
         try:
             tree = ast.parse(content)
         except SyntaxError as e:
@@ -156,6 +238,58 @@ class ASTParser:
         
         self._convert_python_ast(tree, root, content, file_path)
         return root
+
+    def _parse_with_tree_sitter(self, content: str, file_path: str, language: Language) -> ASTNode:
+        ts_manager = TreeSitterManager.get_instance()
+        parser = ts_manager.get_parser(language)
+        if not parser:
+            return self._parse_python(content, file_path)
+        
+        tree = parser.parse(bytes(content, 'utf8'))
+        root_node = tree.root_node
+        
+        root = ASTNode(
+            node_id=hashlib.md5(f"module:{file_path}".encode()).hexdigest()[:12],
+            node_type="MODULE",
+            language=language,
+            name=Path(file_path).name,
+            file_path=file_path,
+            line=1,
+            column=0,
+        )
+        
+        self._convert_tree_sitter_ast(root_node, root, content, file_path, language)
+        return root
+
+    def _convert_tree_sitter_ast(self, ts_node, parent: ASTNode, content: str, file_path: str, language: Language):
+        node_type = ts_node.type
+        start_line = ts_node.start_point[0] + 1
+        start_col = ts_node.start_point[1]
+        end_line = ts_node.end_point[0] + 1
+        end_col = ts_node.end_point[1]
+        
+        ast_node = ASTNode(
+            node_id=hashlib.md5(f"{node_type}:{file_path}:{start_line}".encode()).hexdigest()[:12],
+            node_type=node_type.upper(),
+            language=language,
+            file_path=file_path,
+            line=start_line,
+            column=start_col,
+            end_line=end_line,
+            end_column=end_col,
+        )
+        
+        if ts_node.child_count == 0:
+            text = content[ts_node.start_byte:ts_node.end_byte]
+            if text.strip():
+                ast_node.value = text
+                if node_type in ('identifier', 'function_name', 'class_name', 'variable_name'):
+                    ast_node.name = text
+        
+        parent.add_child(ast_node)
+        
+        for child in ts_node.children:
+            self._convert_tree_sitter_ast(child, ast_node, content, file_path, language)
 
     def _convert_python_ast(self, node: ast.AST, parent: ASTNode, content: str, file_path: str):
         node_type = type(node).__name__

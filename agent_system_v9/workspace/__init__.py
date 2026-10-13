@@ -19,6 +19,9 @@ from .polyglot_ast_driver import (
     Language,
     ASTTransformer,
     ASTIndexer,
+    TreeSitterManager,
+    TreeSitterConfig,
+    TREE_SITTER_AVAILABLE,
 )
 from .function_mutator import (
     FunctionMutator,
@@ -58,6 +61,9 @@ __all__ = [
     "Language",
     "ASTTransformer",
     "ASTIndexer",
+    "TreeSitterManager",
+    "TreeSitterConfig",
+    "TREE_SITTER_AVAILABLE",
     # Function Mutator
     "FunctionMutator",
     "MutationTester",

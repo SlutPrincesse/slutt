@@ -60,6 +60,13 @@ from .hud import (
     LinguisticDisambiguator, ASTContextPruner,
 )
 
+# Behavioral Framework (COM-B)
+from .behavioral_framework import (
+    COMModel, COMComponent, CapabilityType, OpportunityType, MotivationType,
+    COMFactor, Behavior, Intervention, BCTTaxonomy,
+    NudgeEngine, BehavioralDesigner,
+)
+
 # Restructuring (Section 08)
 from .restructure import (
     VulnerabilityAuditor, StealthProxyExecutor, IntentResolver,
@@ -87,6 +94,10 @@ from .syntax import (
 from .threat import (
     ThreatSeeder, ThreatSeed,
     DeepAuditor, TimingValidator, RBACInspector, StressSimulator,
+    BinaryAnalyzer, BinaryInfo, FunctionInfo, BinaryFormat, Architecture, AnalysisTool,
+    GhidraAnalyzer, Radare2Analyzer, GDBController,
+    BinaryASTMapper, PackerDetector, AntiDebugDetector, BinaryAnalysisOrchestrator,
+    ControlFlowGraph, CFGNode,
 )
 
 # Blueprint (Section 13/26)
@@ -186,6 +197,15 @@ from .edge import (
     PowerThrottler, DeltaSyncer
 )
 
+# Feature Engineering (Section 25+)
+from .featuretools_engine import (
+    PrimitiveLibrary, Primitive, PrimitiveType, DataType,
+    Entity, Relationship, EntitySet, Feature, FeatureVector,
+    DeepFeatureSynthesis, FeatureToolsEngine,
+    ExecutionLogFeatureExtractor,
+    DaskFeatureEngine,
+)
+
 # CI/CD (Section 24)
 from .cicd import (
     SelfModifyingPipeline, ReleaseTagger, CanaryGuard,
@@ -198,6 +218,7 @@ from .workspace import (
     WorkspaceTemplate, WorkspaceIsolation, WorkspaceSnapshot,
     PolyglotASTDriver, ASTParser, ASTNode, ParseResult, Language,
     ASTTransformer, ASTIndexer,
+    TreeSitterManager, TreeSitterConfig, TREE_SITTER_AVAILABLE,
     FunctionMutator, MutationTester, EvolutionaryMutator,
     Mutation, MutationResult, MutationType,
     WorkspaceSynchronizer, WorkspaceReplicator, SyncScheduler, ConflictResolver,
@@ -276,6 +297,10 @@ __all__ = [
     # HUD
     "TaskGraphVisualizer", "AmbientShaderPipeline", "NudgeMonitor",
     "LinguisticDisambiguator", "ASTContextPruner",
+    # Behavioral Framework (COM-B)
+    "COMModel", "COMComponent", "CapabilityType", "OpportunityType", "MotivationType",
+    "COMFactor", "Behavior", "Intervention", "BCTTaxonomy",
+    "NudgeEngine", "BehavioralDesigner",
     # Restructure
     "VulnerabilityAuditor", "StealthProxyExecutor", "IntentResolver",
     "FailoverStateMachine", "AutonomousLockIn",
@@ -290,6 +315,10 @@ __all__ = [
     # Threat
     "ThreatSeeder", "ThreatSeed",
     "DeepAuditor", "TimingValidator", "RBACInspector", "StressSimulator",
+    "BinaryAnalyzer", "BinaryInfo", "FunctionInfo", "BinaryFormat", "Architecture", "AnalysisTool",
+    "GhidraAnalyzer", "Radare2Analyzer", "GDBController",
+    "BinaryASTMapper", "PackerDetector", "AntiDebugDetector", "BinaryAnalysisOrchestrator",
+    "ControlFlowGraph", "CFGNode",
     # Blueprint
     "PolyglotASTGenerator", "ProtocolCompiler", "FFIMapper",
     "TraceabilityInspector", "CoreStdLib",
@@ -351,6 +380,12 @@ __all__ = [
     # Edge
     "LLMFallbackGateway", "OfflineCache", "DeferredQueue",
     "PowerThrottler", "DeltaSyncer",
+    # Feature Engineering
+    "PrimitiveLibrary", "Primitive", "PrimitiveType", "DataType",
+    "Entity", "Relationship", "EntitySet", "Feature", "FeatureVector",
+    "DeepFeatureSynthesis", "FeatureToolsEngine",
+    "ExecutionLogFeatureExtractor",
+    "DaskFeatureEngine",
     # CI/CD
     "SelfModifyingPipeline", "ReleaseTagger", "CanaryGuard",
     "CapabilityExporter", "KnowledgeExtractor",
@@ -359,6 +394,7 @@ __all__ = [
     "WorkspaceTemplate", "WorkspaceIsolation", "WorkspaceSnapshot",
     "PolyglotASTDriver", "ASTParser", "ASTNode", "ParseResult", "Language",
     "ASTTransformer", "ASTIndexer",
+    "TreeSitterManager", "TreeSitterConfig", "TREE_SITTER_AVAILABLE",
     "FunctionMutator", "MutationTester", "EvolutionaryMutator",
     "Mutation", "MutationResult", "MutationType",
     "WorkspaceSynchronizer", "WorkspaceReplicator", "SyncScheduler", "ConflictResolver",
