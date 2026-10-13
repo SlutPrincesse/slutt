@@ -3,7 +3,7 @@ No-Op Detector - Detects dead code and no-op operations
 """
 import ast
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ class NoOpType(Enum):
     EMPTY_BLOCK = "empty_block"
     USELESS_EXCEPTION = "useless_exception"
     IDENTITY_OPERATION = "identity_operation"
+    TRAILING_WHITESPACE = "trailing_whitespace"
 
 
 @dataclass
@@ -38,22 +39,20 @@ class NoOpIssue:
 @dataclass
 class NoOpReport:
     file_path: str
-    issues: list[NoOpIssue] = None
+    issues: list[NoOpIssue] = field(default_factory=list)
     total_issues: int = 0
 
     def __post_init__(self):
-        if self.issues is None:
-            self.issues = []
         self.total_issues = len(self.issues)
 
     def by_type(self) -> dict[NoOpType, int]:
-        counts = defaultdict(int)
+        counts: dict[NoOpType, int] = defaultdict(int)
         for issue in self.issues:
             counts[issue.op_type] += 1
         return dict(counts)
 
     def by_severity(self) -> dict[str, int]:
-        counts = defaultdict(int)
+        counts: dict[str, int] = defaultdict(int)
         for issue in self.issues:
             counts[issue.severity] += 1
         return dict(counts)
@@ -107,8 +106,8 @@ class NoOpDetector:
         for report in reports.values():
             all_issues.extend(report.issues)
 
-        by_type = defaultdict(int)
-        by_severity = defaultdict(int)
+        by_type: dict[str, int] = defaultdict(int)
+        by_severity: dict[str, int] = defaultdict(int)
 
         for issue in all_issues:
             by_type[issue.op_type.value] += 1
@@ -171,7 +170,7 @@ class NoOpVisitor(ast.NodeVisitor):
         self.defined_names: set[str] = set()
         self.used_names: set[str] = set()
         self.imported_names: dict[str, tuple[int, int]] = {}
-        self.current_function = None
+        self.current_function: str | None = None
         self.in_loop = False
         self.in_function = False
         self.returned = False
@@ -197,7 +196,7 @@ class NoOpVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
         if not self.returned and node.name != '__init__':
-            if not any(isinstance(n, ast.Return) for n in ast.walk(node) if not isinstance(n, ast.FunctionDef)):
+            if not any(isinstance(n, ast.Return) for n in ast.walk(node) if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
                 self.report.issues.append(NoOpIssue(
                     file_path=self.report.file_path,
                     line_number=node.lineno,
@@ -277,7 +276,7 @@ class NoOpVisitor(ast.NodeVisitor):
         if self.current_function:
             func_node = None
             for n in ast.walk(self.report.__dict__.get('_tree', None) or []):
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.lineno <= node.lineno <= n.end_lineno:
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.lineno <= node.lineno <= getattr(n, 'end_lineno', node.lineno):
                     func_node = n
                     break
 
@@ -330,8 +329,6 @@ class NoOpVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant):
-        if isinstance(node.value, (str, int, float)) and self.in_function and not self.returned:
-            pass
         self.generic_visit(node)
 
     def _check_unused(self):

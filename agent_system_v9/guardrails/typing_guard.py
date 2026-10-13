@@ -2,7 +2,8 @@
 Typing Guard - Enforces type hints in Python code
 """
 import ast
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -36,11 +37,7 @@ class TypingReport:
     typed_parameters: int = 0
     total_returns: int = 0
     typed_returns: int = 0
-    issues: list[TypingIssue] = None
-
-    def __post_init__(self):
-        if self.issues is None:
-            self.issues = []
+    issues: list[TypingIssue] = field(default_factory=list)
 
     @property
     def function_coverage(self) -> float:
@@ -108,9 +105,9 @@ class TypingGuard:
         for report in reports.values():
             all_issues.extend(report.issues)
 
-        by_severity = {}
+        by_severity: dict[str, int] = defaultdict(int)
         for issue in all_issues:
-            by_severity[issue.severity] = by_severity.get(issue.severity, 0) + 1
+            by_severity[issue.severity] += 1
 
         return {
             "files_checked": len(reports),
@@ -123,7 +120,7 @@ class TypingGuard:
             "total_returns": total_returns,
             "typed_returns": total_typed_returns,
             "return_coverage": total_typed_returns / max(total_returns, 1),
-            "issues_by_severity": by_severity,
+            "issues_by_severity": dict(by_severity),
             "total_issues": len(all_issues),
         }
 
@@ -165,7 +162,7 @@ class TypingVisitor(ast.NodeVisitor):
     def __init__(self, report: TypingReport, guard: TypingGuard):
         self.report = report
         self.guard = guard
-        self.current_class = None
+        self.current_class: str | None = None
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         self._check_function(node)
@@ -175,7 +172,7 @@ class TypingVisitor(ast.NodeVisitor):
         self._check_function(node)
         self.generic_visit(node)
 
-    def _check_function(self, node: ast.FunctionDef):
+    def _check_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef):
         if self.guard.ignore_private and node.name.startswith('_') and not node.name.startswith('__'):
             return
         if self.guard.ignore_dunder and node.name.startswith('__') and node.name.endswith('__'):
@@ -242,7 +239,7 @@ class TypingVisitor(ast.NodeVisitor):
 
 class TypeAnnotationGenerator:
     def __init__(self):
-        self.common_patterns = {
+        self.common_patterns: dict[str, str] = {
             'list': 'List[Any]',
             'dict': 'Dict[str, Any]',
             'set': 'Set[Any]',
@@ -276,7 +273,7 @@ class TypeAnnotationGenerator:
             return 'Tuple[Any, ...]'
         return 'Any'
 
-    def suggest_return_type(self, node: ast.FunctionDef) -> str:
+    def suggest_return_type(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
         for stmt in node.body:
             if isinstance(stmt, ast.Return) and stmt.value:
                 return self._infer_from_expression(stmt.value)

@@ -42,7 +42,7 @@ class ValidationResult:
 
 class PreCommitValidator:
     def __init__(self):
-        self.rules: dict[str, Callable] = {}
+        self.rules: dict[str, Callable[[str, str], list[ValidationResult]]] = {}
         self._register_default_rules()
 
     def _register_default_rules(self):
@@ -57,11 +57,11 @@ class PreCommitValidator:
         self.rules["trailing_whitespace"] = self._check_trailing_whitespace
         self.rules["unused_import"] = self._check_unused_import
 
-    def register_rule(self, rule_id: str, checker: Callable):
+    def register_rule(self, rule_id: str, checker: Callable[[str, str], list[ValidationResult]]):
         self.rules[rule_id] = checker
 
     def validate_file(self, file_path: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         path = Path(file_path)
 
         if not path.exists():
@@ -80,7 +80,7 @@ class PreCommitValidator:
         return results
 
     def validate_directory(self, dir_path: str, pattern: str = "*.py") -> dict[str, list[ValidationResult]]:
-        results = {}
+        results: dict[str, list[ValidationResult]] = {}
         for file_path in Path(dir_path).rglob(pattern):
             file_results = self.validate_file(str(file_path))
             if file_results:
@@ -88,7 +88,7 @@ class PreCommitValidator:
         return results
 
     def _check_no_todo(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
             if re.search(r'#\s*TODO|#\s*FIXME|#\s*HACK|#\s*XXX', line, re.IGNORECASE):
@@ -104,7 +104,7 @@ class PreCommitValidator:
         return results
 
     def _check_no_pass(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         try:
             tree = ast.parse(content)
             for node in ast.walk(tree):
@@ -123,7 +123,7 @@ class PreCommitValidator:
         return results
 
     def _check_no_not_implemented(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
             if re.search(r'raise\s+NotImplementedError', line):
@@ -138,7 +138,7 @@ class PreCommitValidator:
         return results
 
     def _check_no_debug_print(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         try:
             tree = ast.parse(content)
             for node in ast.walk(tree):
@@ -158,7 +158,7 @@ class PreCommitValidator:
         return results
 
     def _check_no_hardcoded_secrets(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         patterns = [
             (r'api[_-]?key\s*=\s*["\'][^"\']+["\']', "API Key"),
             (r'secret[_-]?key\s*=\s*["\'][^"\']+["\']', "Secret Key"),
@@ -180,7 +180,7 @@ class PreCommitValidator:
         return results
 
     def _check_function_docstring(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         try:
             tree = ast.parse(content)
             for node in ast.walk(tree):
@@ -199,7 +199,7 @@ class PreCommitValidator:
         return results
 
     def _check_type_hints(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         try:
             tree = ast.parse(content)
             for node in ast.walk(tree):
@@ -218,7 +218,7 @@ class PreCommitValidator:
         return results
 
     def _check_line_length(self, file_path: str, content: str, max_length: int = 120) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
             if len(line) > max_length:
@@ -234,7 +234,7 @@ class PreCommitValidator:
         return results
 
     def _check_trailing_whitespace(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
             if line.rstrip() != line:
@@ -250,11 +250,11 @@ class PreCommitValidator:
         return results
 
     def _check_unused_import(self, file_path: str, content: str) -> list[ValidationResult]:
-        results = []
+        results: list[ValidationResult] = []
         try:
             tree = ast.parse(content)
-            imports = {}
-            used_names = set()
+            imports: dict[str, tuple[int, int]] = {}
+            used_names: set[str] = set()
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -289,7 +289,7 @@ class CommitHookRunner:
         self.validator = validator
 
     def run(self, files: list[str]) -> tuple[bool, list[ValidationResult]]:
-        all_results = []
+        all_results: list[ValidationResult] = []
         for file_path in files:
             results = self.validator.validate_file(file_path)
             all_results.extend(results)

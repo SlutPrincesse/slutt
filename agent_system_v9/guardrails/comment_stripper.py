@@ -5,6 +5,7 @@ import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -22,7 +23,7 @@ class CommentStripper:
         self.preserve_docstrings = False
         self.preserve_todos = False
 
-    def strip_file(self, file_path: str, output_path: str = None) -> StripResult:
+    def strip_file(self, file_path: str, output_path: str | None = None) -> StripResult:
         path = Path(file_path)
         content = path.read_text(encoding='utf-8', errors='ignore')
 
@@ -43,11 +44,11 @@ class CommentStripper:
 
     def _strip_python(self, content: str) -> StripResult:
         lines = content.split('\n')
-        output_lines = []
+        output_lines: list[str] = []
         comments_removed = 0
         lines_removed = 0
         in_multiline_string = False
-        multiline_quote = None
+        multiline_quote: str | None = None
 
         for i, line in enumerate(lines):
             if i == 0 and self.preserve_shebang and line.startswith('#!'):
@@ -62,7 +63,7 @@ class CommentStripper:
             if not in_multiline_string:
                 comment_pos = -1
                 in_string = False
-                string_char = None
+                string_char: str | None = None
 
                 for j, char in enumerate(line):
                     if char in ('"', "'") and not in_string:
@@ -109,7 +110,7 @@ class CommentStripper:
 
     def _strip_generic(self, content: str) -> StripResult:
         lines = content.split('\n')
-        output_lines = []
+        output_lines: list[str] = []
         comments_removed = 0
         lines_removed = 0
         in_block_comment = False
@@ -174,7 +175,7 @@ class DocstringStripper:
         self.preserve_class_docstring = True
         self.preserve_function_docstring = True
 
-    def strip_file(self, file_path: str, output_path: str = None) -> StripResult:
+    def strip_file(self, file_path: str, output_path: str | None = None) -> StripResult:
         path = Path(file_path)
         content = path.read_text(encoding='utf-8', errors='ignore')
         result = self.strip_string(content)
@@ -188,7 +189,7 @@ class DocstringStripper:
         try:
             tree = ast.parse(content)
             lines = content.split('\n')
-            to_remove = set()
+            to_remove: set[int] = set()
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Module):
@@ -223,7 +224,8 @@ class DocstringStripper:
 
     def _mark_docstring_lines(self, lines: list[str], node: ast.AST, to_remove: set[int]):
         if hasattr(node, 'lineno') and hasattr(node, 'end_lineno'):
-            for i in range(node.lineno - 1, node.end_lineno):
+            end_lineno = node.end_lineno or node.lineno
+            for i in range(node.lineno - 1, end_lineno):
                 if i < len(lines):
                     stripped = lines[i].strip()
                     if stripped.startswith('"""') or stripped.startswith("'''"):
@@ -243,7 +245,7 @@ class LicenseHeaderManager:
     def add_header(self, language: str, header: str):
         self.headers[language] = header
 
-    def apply_header(self, file_path: str, language: str = None) -> bool:
+    def apply_header(self, file_path: str, language: str | None = None) -> bool:
         path = Path(file_path)
         if not path.exists():
             return False
@@ -261,7 +263,7 @@ class LicenseHeaderManager:
         path.write_text(new_content)
         return True
 
-    def remove_header(self, file_path: str, language: str = None) -> bool:
+    def remove_header(self, file_path: str, language: str | None = None) -> bool:
         path = Path(file_path)
         if not path.exists():
             return False
@@ -275,7 +277,7 @@ class LicenseHeaderManager:
         if header.strip() in content[:len(header) + 100]:
             lines = content.split('\n')
             header_lines = header.strip().split('\n')
-            new_lines = lines[len(header_lines) + 1:] if lines[len(header_lines)] == '' else lines[len(header_lines):]
+            new_lines = lines[len(header_lines) + 1:] if len(lines) > len(header_lines) and lines[len(header_lines)] == '' else lines[len(header_lines):]
             path.write_text('\n'.join(new_lines))
             return True
         return False
