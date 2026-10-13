@@ -1,5 +1,117 @@
 """
 Runtime Dynamic Compilation & Reflection (Section 18)
-Modules not yet implemented
 """
-__all__ = []
+from .code_generator import (
+    UniversalCodeGenerator,
+    CodeGenerator,
+    PythonCodeGenerator,
+    JavaScriptCodeGenerator,
+    TypeScriptCodeGenerator,
+    RustCodeGenerator,
+    CodeTemplate,
+    GenerationContext,
+    TargetLanguage,
+    ASTToCodeConverter,
+    IncrementalCodeGenerator,
+)
+from .symbol_inspector import (
+    SymbolInspector,
+    SymbolTable,
+    Symbol,
+    SymbolReference,
+    Scope,
+    SymbolType,
+    Visibility,
+    CrossFileAnalyzer,
+)
+from .memory_compiler import (
+    JITCompiler,
+    HotReloader,
+    CompilationPipeline,
+    IncrementalCompiler,
+    CompilationUnit,
+    CompilationResult,
+    CompilationTarget,
+    CompilationStatus,
+    BaseCompiler,
+    BytecodeCompiler,
+    ASTCompiler,
+    MemoryCache,
+)
+from .hot_swap import (
+    HotSwapLoader,
+    PluginManager,
+    IsolatedLoader,
+    LazyLoader,
+    LazyModuleProxy,
+    ModuleInfo,
+    ReloadEvent,
+    LoadStatus,
+    temporary_module,
+)
+from .type_marshaller import (
+    TypeMarshaller,
+    Marshaller,
+    JSONMarshaller,
+    BinaryMarshaller,
+    TypeInfo,
+    TypeKind,
+    SchemaValidator,
+    CrossLanguageTypeMapper,
+)
+
+__all__ = [
+    # Code Generator
+    "UniversalCodeGenerator",
+    "CodeGenerator",
+    "PythonCodeGenerator",
+    "JavaScriptCodeGenerator",
+    "TypeScriptCodeGenerator",
+    "RustCodeGenerator",
+    "CodeTemplate",
+    "GenerationContext",
+    "TargetLanguage",
+    "ASTToCodeConverter",
+    "IncrementalCodeGenerator",
+    # Symbol Inspector
+    "SymbolInspector",
+    "SymbolTable",
+    "Symbol",
+    "SymbolReference",
+    "Scope",
+    "SymbolType",
+    "Visibility",
+    "CrossFileAnalyzer",
+    # Memory Compiler
+    "JITCompiler",
+    "HotReloader",
+    "CompilationPipeline",
+    "IncrementalCompiler",
+    "CompilationUnit",
+    "CompilationResult",
+    "CompilationTarget",
+    "CompilationStatus",
+    "BaseCompiler",
+    "BytecodeCompiler",
+    "ASTCompiler",
+    "MemoryCache",
+    # Hot Swap
+    "HotSwapLoader",
+    "PluginManager",
+    "IsolatedLoader",
+    "LazyLoader",
+    "LazyModuleProxy",
+    "ModuleInfo",
+    "ReloadEvent",
+    "LoadStatus",
+    "temporary_module",
+    # Type Marshaller
+    "TypeMarshaller",
+    "Marshaller",
+    "JSONMarshaller",
+    "BinaryMarshaller",
+    "TypeInfo",
+    "TypeKind",
+    "SchemaValidator",
+    "CrossLanguageTypeMapper",
+]

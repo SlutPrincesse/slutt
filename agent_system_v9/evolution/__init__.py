@@ -1,5 +1,86 @@
 """
-Evolutionary Cloning & Free Random Projection (Section 31)
-Modules not yet implemented
+Evolution & Self-Improvement Engine (Section 31)
 """
-__all__ = []
+from .evolution_engine import (
+    EvolutionEngine,
+    EvolutionConfig,
+    EvolutionResult,
+    Individual,
+    FitnessFunction,
+    EvolutionStrategy,
+    SelectionMethod,
+    MultiObjectiveEvolution,
+    AdaptiveEvolution,
+)
+from .code_evolution import (
+    CodeEvolutionEngine,
+    CodeEvolutionConfig,
+    CodeIndividual,
+    CodeMutationType,
+    CodeOptimizer,
+    RefactoringEvolution,
+)
+from .architecture_evolution import (
+    ArchitectureEvolutionEngine,
+    ArchitectureEvolutionConfig,
+    ArchitectureIndividual,
+    ArchitectureDecision,
+    ArchitecturePattern,
+    QualityAttribute,
+    ArchitectureFitnessFunction,
+    ArchitectureOptimizer,
+    EvolutionaryArchitectureReviewer,
+)
+from .evolution_strategies import (
+    EvolutionStrategy,
+    CMAES,
+    ParticleSwarmOptimization,
+    DifferentialEvolution,
+    EvolutionStrategyPlus,
+    EvolutionStrategyComma,
+    StrategyConfig,
+    StrategyResult,
+    StrategySelector,
+    AdaptiveStrategySelector,
+    PortfolioOptimizer,
+    StrategyType,
+)
+
+__all__ = [
+    "EvolutionEngine",
+    "EvolutionConfig",
+    "EvolutionResult",
+    "Individual",
+    "FitnessFunction",
+    "EvolutionStrategy",
+    "SelectionMethod",
+    "MultiObjectiveEvolution",
+    "AdaptiveEvolution",
+    "CodeEvolutionEngine",
+    "CodeEvolutionConfig",
+    "CodeIndividual",
+    "CodeMutationType",
+    "CodeOptimizer",
+    "RefactoringEvolution",
+    "ArchitectureEvolutionEngine",
+    "ArchitectureEvolutionConfig",
+    "ArchitectureIndividual",
+    "ArchitectureDecision",
+    "ArchitecturePattern",
+    "QualityAttribute",
+    "ArchitectureFitnessFunction",
+    "ArchitectureOptimizer",
+    "EvolutionaryArchitectureReviewer",
+    "EvolutionStrategy",
+    "CMAES",
+    "ParticleSwarmOptimization",
+    "DifferentialEvolution",
+    "EvolutionStrategyPlus",
+    "EvolutionStrategyComma",
+    "StrategyConfig",
+    "StrategyResult",
+    "StrategySelector",
+    "AdaptiveStrategySelector",
+    "PortfolioOptimizer",
+    "StrategyType",
+]

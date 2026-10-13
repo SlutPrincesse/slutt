@@ -1,0 +1,435 @@
+"""
+Polyglot AST Driver - Multi-language AST operations for workspace
+"""
+import ast
+import hashlib
+import json
+from typing import Dict, List, Optional, Any, Set, Union, Callable, Tuple
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from collections import defaultdict
+import importlib.util
+
+
+class Language(Enum):
+    PYTHON = "python"
+    JAVASCRIPT = "javascript"
+    TYPESCRIPT = "typescript"
+    JAVA = "java"
+    GO = "go"
+    RUST = "rust"
+    CPP = "cpp"
+    CSHARP = "csharp"
+    RUBY = "ruby"
+    PHP = "php"
+    SWIFT = "swift"
+    KOTLIN = "kotlin"
+
+
+@dataclass
+class ASTNode:
+    node_id: str
+    node_type: str
+    language: Language
+    name: Optional[str] = None
+    value: Optional[Any] = None
+    file_path: str = ""
+    line: int = 0
+    column: int = 0
+    end_line: Optional[int] = None
+    end_column: Optional[int] = None
+    children: List['ASTNode'] = field(default_factory=list)
+    parent: Optional['ASTNode'] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def add_child(self, child: 'ASTNode'):
+        child.parent = self
+        self.children.append(child)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "node_type": self.node_type,
+            "language": self.language.value,
+            "name": self.name,
+            "value": self.value,
+            "file_path": self.file_path,
+            "line": self.line,
+            "column": self.column,
+            "end_line": self.end_line,
+            "end_column": self.end_column,
+            "children": [c.to_dict() for c in self.children],
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class ParseResult:
+    file_path: str
+    language: Language
+    ast: Optional[ASTNode] = None
+    errors: List[str] = field(default_factory=list)
+    parse_time: float = 0.0
+
+
+class ASTParser:
+    def __init__(self):
+        self.parsers: Dict[Language, Callable] = {}
+        self._register_default_parsers()
+
+    def _register_default_parsers(self):
+        self.parsers[Language.PYTHON] = self._parse_python
+
+    def register_parser(self, language: Language, parser: Callable):
+        self.parsers[language] = parser
+
+    def parse_file(self, file_path: str, language: Language = None) -> ParseResult:
+        if language is None:
+            language = self._detect_language(file_path)
+        
+        start = time.time()
+        
+        try:
+            content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+        except Exception as e:
+            return ParseResult(file_path, language, errors=[f"Read error: {e}"], parse_time=time.time() - start)
+        
+        return self.parse_string(content, file_path, language)
+
+    def parse_string(self, content: str, file_path: str, language: Language) -> ParseResult:
+        start = time.time()
+        
+        if language not in self.parsers:
+            return ParseResult(file_path, language, errors=[f"No parser for {language}"], parse_time=time.time() - start)
+        
+        try:
+            ast_node = self.parsers[language](content, file_path)
+            return ParseResult(file_path, language, ast=ast_node, parse_time=time.time() - start)
+        except Exception as e:
+            return ParseResult(file_path, language, errors=[f"Parse error: {e}"], parse_time=time.time() - start)
+
+    def _detect_language(self, file_path: str) -> Language:
+        ext = Path(file_path).suffix.lower()
+        mapping = {
+            '.py': Language.PYTHON,
+            '.js': Language.JAVASCRIPT,
+            '.ts': Language.TYPESCRIPT,
+            '.jsx': Language.JAVASCRIPT,
+            '.tsx': Language.TYPESCRIPT,
+            '.java': Language.JAVA,
+            '.go': Language.GO,
+            '.rs': Language.RUST,
+            '.cpp': Language.CPP,
+            '.cc': Language.CPP,
+            '.cxx': Language.CPP,
+            '.cs': Language.CSHARP,
+            '.rb': Language.RUBY,
+            '.php': Language.PHP,
+            '.swift': Language.SWIFT,
+            '.kt': Language.KOTLIN,
+        }
+        return mapping.get(ext, Language.PYTHON)
+
+    def _parse_python(self, content: str, file_path: str) -> ASTNode:
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as e:
+            return ASTNode(
+                node_id=hashlib.md5(f"error:{file_path}".encode()).hexdigest()[:12],
+                node_type="ERROR",
+                language=Language.PYTHON,
+                name="parse_error",
+                value=str(e),
+                file_path=file_path,
+            )
+        
+        root = ASTNode(
+            node_id=hashlib.md5(f"module:{file_path}".encode()).hexdigest()[:12],
+            node_type="MODULE",
+            language=Language.PYTHON,
+            name=Path(file_path).name,
+            file_path=file_path,
+            line=1,
+            column=0,
+        )
+        
+        self._convert_python_ast(tree, root, content, file_path)
+        return root
+
+    def _convert_python_ast(self, node: ast.AST, parent: ASTNode, content: str, file_path: str):
+        node_type = type(node).__name__
+        ast_node = ASTNode(
+            node_id=hashlib.md5(f"{node_type}:{file_path}:{getattr(node, 'lineno', 0)}".encode()).hexdigest()[:12],
+            node_type=self._map_python_node_type(node_type),
+            language=Language.PYTHON,
+            file_path=file_path,
+            line=getattr(node, 'lineno', 1),
+            column=getattr(node, 'col_offset', 0),
+            end_line=getattr(node, 'end_lineno', None),
+            end_column=getattr(node, 'end_col_offset', None),
+        )
+        
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            ast_node.name = node.name
+        elif isinstance(node, ast.Name):
+            ast_node.name = node.id
+            ast_node.value = node.id
+        elif isinstance(node, ast.Constant):
+            ast_node.value = node.value
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                child = ASTNode(
+                    node_id=hashlib.md5(f"import:{alias.name}".encode()).hexdigest()[:12],
+                    node_type="IMPORT",
+                    language=Language.PYTHON,
+                    name=alias.name,
+                    value=alias.asname,
+                    file_path=file_path,
+                    line=node.lineno,
+                    column=node.col_offset,
+                )
+                ast_node.add_child(child)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                child = ASTNode(
+                    node_id=hashlib.md5(f"import:{module}.{alias.name}".encode()).hexdigest()[:12],
+                    node_type="IMPORT",
+                    language=Language.PYTHON,
+                    name=f"{module}.{alias.name}",
+                    value=alias.asname,
+                    file_path=file_path,
+                    line=node.lineno,
+                    column=node.col_offset,
+                )
+                ast_node.add_child(child)
+        
+        parent.add_child(ast_node)
+        
+        for field_name, value in ast.iter_fields(node):
+            if isinstance(value, ast.AST):
+                self._convert_python_ast(value, ast_node, content, file_path)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        self._convert_python_ast(item, ast_node, content, file_path)
+
+    def _map_python_node_type(self, py_type: str) -> str:
+        mapping = {
+            'Module': 'MODULE',
+            'FunctionDef': 'FUNCTION',
+            'AsyncFunctionDef': 'FUNCTION',
+            'ClassDef': 'CLASS',
+            'Return': 'RETURN',
+            'If': 'IF',
+            'For': 'FOR',
+            'While': 'WHILE',
+            'Call': 'CALL',
+            'Assign': 'ASSIGNMENT',
+            'BinOp': 'BINARY_OP',
+            'UnaryOp': 'UNARY_OP',
+            'Name': 'IDENTIFIER',
+            'Constant': 'LITERAL',
+            'Attribute': 'ATTRIBUTE',
+            'Subscript': 'SUBSCRIPT',
+            'Lambda': 'LAMBDA',
+            'Try': 'TRY',
+            'ExceptHandler': 'EXCEPT',
+            'With': 'WITH',
+            'Match': 'MATCH',
+            'MatchCase': 'CASE',
+            'Yield': 'YIELD',
+            'GeneratorExp': 'GENERATOR',
+            'ListComp': 'COMPREHENSION',
+            'SetComp': 'COMPREHENSION',
+            'DictComp': 'COMPREHENSION',
+            'Expr': 'EXPRESSION',
+        }
+        return mapping.get(py_type, py_type)
+
+
+class PolyglotASTDriver:
+    def __init__(self):
+        self.parser = ASTParser()
+        self.ast_cache: Dict[str, ASTNode] = {}
+
+    def parse_file(self, file_path: str, language: Language = None) -> ParseResult:
+        result = self.parser.parse_file(file_path, language)
+        if result.ast:
+            self.ast_cache[file_path] = result.ast
+        return result
+
+    def parse_directory(self, dir_path: str, extensions: List[str] = None) -> List[ParseResult]:
+        if extensions is None:
+            extensions = ['.py', '.js', '.ts', '.java', '.go', '.rs', '.cpp', '.cs']
+        
+        results = []
+        for ext in extensions:
+            for file_path in Path(dir_path).rglob(f'*{ext}'):
+                results.append(self.parse_file(str(file_path)))
+        return results
+
+    def get_ast(self, file_path: str) -> Optional[ASTNode]:
+        return self.ast_cache.get(file_path)
+
+    def query_ast(self, file_path: str, query: Callable[[ASTNode], bool]) -> List[ASTNode]:
+        ast = self.get_ast(file_path)
+        if not ast:
+            result = self.parse_file(file_path)
+            if result.ast:
+                ast = result.ast
+            else:
+                return []
+        
+        results = []
+        self._traverse(ast, query, results)
+        return results
+
+    def _traverse(self, node: ASTNode, query: Callable, results: List[ASTNode]):
+        if query(node):
+            results.append(node)
+        for child in node.children:
+            self._traverse(child, query, results)
+
+    def find_functions(self, file_path: str) -> List[ASTNode]:
+        return self.query_ast(file_path, lambda n: n.node_type == "FUNCTION")
+
+    def find_classes(self, file_path: str) -> List[ASTNode]:
+        return self.query_ast(file_path, lambda n: n.node_type == "CLASS")
+
+    def find_imports(self, file_path: str) -> List[ASTNode]:
+        return self.query_ast(file_path, lambda n: n.node_type == "IMPORT")
+
+    def find_calls(self, file_path: str, function_name: str = None) -> List[ASTNode]:
+        if function_name:
+            return self.query_ast(file_path, lambda n: n.node_type == "CALL" and n.name == function_name)
+        return self.query_ast(file_path, lambda n: n.node_type == "CALL")
+
+    def get_dependencies(self, file_path: str) -> List[str]:
+        imports = self.find_imports(file_path)
+        deps = []
+        for imp in imports:
+            if imp.name:
+                deps.append(imp.name)
+            if imp.value:
+                deps.append(imp.value)
+        return deps
+
+    def get_call_graph(self, dir_path: str) -> Dict[str, List[str]]:
+        call_graph = defaultdict(list)
+        
+        for file_path in Path(dir_path).rglob('*.py'):
+            result = self.parse_file(str(file_path))
+            if not result.ast:
+                continue
+            
+            calls = self.query_ast(str(file_path), lambda n: n.node_type == "CALL")
+            funcs = self.query_ast(str(file_path), lambda n: n.node_type == "FUNCTION")
+            
+            current_func = None
+            for call in calls:
+                if call.parent and call.parent.node_type == "FUNCTION":
+                    current_func = call.parent.name
+                    if call.name:
+                        call_graph[f"{file_path}:{current_func}"].append(call.name)
+        
+        return dict(call_graph)
+
+
+class ASTTransformer:
+    def __init__(self, driver: PolyglotASTDriver):
+        self.driver = driver
+
+    def transform(self, file_path: str, transformer: Callable[[ASTNode], ASTNode]) -> Optional[ASTNode]:
+        ast = self.driver.get_ast(file_path)
+        if not ast:
+            result = self.driver.parse_file(file_path)
+            if not result.ast:
+                return None
+            ast = result.ast
+        
+        return self._transform_node(ast, transformer)
+
+    def _transform_node(self, node: ASTNode, transformer: Callable) -> ASTNode:
+        new_node = transformer(node)
+        new_children = []
+        for child in node.children:
+            new_child = self._transform_node(child, transformer)
+            if new_child:
+                new_child.parent = new_node
+                new_children.append(new_child)
+        new_node.children = new_children
+        return new_node
+
+    def rename_identifier(self, file_path: str, old_name: str, new_name: str) -> bool:
+        def transformer(node: ASTNode) -> ASTNode:
+            if node.name == old_name and node.node_type in ("IDENTIFIER", "FUNCTION", "CLASS"):
+                node.name = new_name
+            return node
+        
+        new_ast = self.transform(file_path, transformer)
+        if new_ast:
+            self.driver.ast_cache[file_path] = new_ast
+            return True
+        return False
+
+    def extract_function(self, file_path: str, function_name: str) -> Optional[str]:
+        ast = self.driver.get_ast(file_path)
+        if not ast:
+            return None
+        
+        for node in ast.children:
+            if node.node_type == "FUNCTION" and node.name == function_name:
+                return self._node_to_code(node)
+        return None
+
+    def _node_to_code(self, node: ASTNode) -> str:
+        if node.node_type == "FUNCTION":
+            params = []
+            for child in node.children:
+                if child.node_type == "IDENTIFIER":
+                    params.append(child.name)
+            return f"def {node.name}({', '.join(params)}):\n    pass"
+        return ""
+
+
+class ASTIndexer:
+    def __init__(self, driver: PolyglotASTDriver):
+        self.driver = driver
+        self.index: Dict[str, List[Tuple[str, ASTNode]]] = defaultdict(list)
+
+    def index_file(self, file_path: str) -> int:
+        result = self.driver.parse_file(file_path)
+        if not result.ast:
+            return 0
+        
+        count = 0
+        self._index_node(file_path, result.ast, count)
+        return count
+
+    def _index_node(self, file_path: str, node: ASTNode, count: int):
+        if node.name:
+            self.index[node.name].append((file_path, node))
+            count += 1
+        for child in node.children:
+            self._index_node(file_path, child, count)
+
+    def index_directory(self, dir_path: str, extensions: List[str] = None) -> int:
+        total = 0
+        for ext in extensions or ['.py']:
+            for file_path in Path(dir_path).rglob(f'*{ext}'):
+                total += self.index_file(str(file_path))
+        return total
+
+    def lookup(self, name: str) -> List[Tuple[str, ASTNode]]:
+        return self.index.get(name, [])
+
+    def find_definition(self, name: str, file_path: str = None) -> List[Tuple[str, ASTNode]]:
+        results = self.lookup(name)
+        if file_path:
+            results = [(fp, n) for fp, n in results if fp == file_path]
+        return results
+
+
+import time

@@ -86,18 +86,19 @@ from .syntax import (
 # Threat (Section 12/25)
 from .threat import (
     ThreatSeeder, ThreatSeed,
+    DeepAuditor, TimingValidator, RBACInspector, StressSimulator,
 )
 
-# Blueprint (Section 13/26) - Not yet implemented
-# from .blueprint import (
-#     PolyglotASTGenerator, ProtocolCompiler, FFIMapper,
-#     TraceabilityInspector, CoreStdLib,
-# )
+# Blueprint (Section 13/26)
+from .blueprint import (
+    PolyglotASTGenerator, ProtocolCompiler, FFIMapper,
+    TraceabilityInspector, CoreStdLib,
+)
 
-# Distributed (Section 14) - Not yet implemented
-# from .distributed import (
-#     RPCGateway, DAGScheduler, BFTConsensus, LoadBalancer, CRDTStore,
-# )
+# Distributed (Section 14)
+from .distributed import (
+    RPCGateway, DAGScheduler, BFTConsensus, LoadBalancer, CRDTStore,
+)
 
 # Reasoning (Section 15)
 from .reasoning import (
@@ -113,35 +114,59 @@ from .memory import (
     QueryEngine, QueryPlan, QueryResult
 )
 
-# Security (Section 16) - Not yet implemented
-# from .security import (
-#     ZeroTrustGatekeeper, EntropyDetector, VulnerabilityScanner,
-#     EgressProxy, IntegrityVerifier
-# )
+# Security (Section 16)
+from .security import (
+    ZeroTrustGatekeeper, EntropyDetector, VulnerabilityScanner,
+    EgressProxy, IntegrityVerifier
+)
 
-# Reactive (Section 17) - Not yet implemented
-# from .reactive import (
-#     MessageBusAdapter, BackpressureController, HookEngine,
-#     StateMachineGuard, IdempotentConsumer
-# )
+# Reactive (Section 17)
+from .reactive import (
+    MessageBus, InMemoryMessageBus, KafkaAdapter, RedisAdapter, MessageBusFactory,
+    Message, MessagePriority, Subscription,
+    BackpressureController, BackpressureConfig, BackpressureStrategy,
+    AsyncBuffer, TokenBucket, LeakyBucket, FlowController, FlowMetrics,
+    ReactiveStream, BufferFullException, BackpressureSignal,
+    HookEngine, PipelineHookEngine, ConditionalHookEngine, AsyncHookEngine,
+    Hook, HookContext, HookPhase, HookPriority, HookMetrics, DecoratorHooks,
+    StateMachine, HierarchicalStateMachine, StateMachineGuard,
+    StateMachineBuilder, ProtocolStateMachine, State, Transition, TransitionType, StateMachineConfig,
+    IdempotentConsumer, ExactlyOnceProcessor, MessageDeduplicator,
+    TransactionalOutbox, DistributedLock, DeduplicationStore,
+    InMemoryDeduplicationStore, RedisDeduplicationStore,
+    DeduplicationStrategy, ProcessingResult, IdempotencyKey
+)
 
-# Compilation (Section 18) - Not yet implemented
-# from .compilation import (
-#     UniversalCodeGenerator, SymbolInspector, MemoryCompiler,
-#     HotSwapLoader, TypeMarshaller
-# )
+# Compilation (Section 18)
+from .compilation import (
+    UniversalCodeGenerator, CodeGenerator, PythonCodeGenerator, JavaScriptCodeGenerator,
+    TypeScriptCodeGenerator, RustCodeGenerator, CodeTemplate, GenerationContext,
+    TargetLanguage, ASTToCodeConverter, IncrementalCodeGenerator,
+    SymbolInspector, SymbolTable, Symbol, SymbolReference, Scope, SymbolType, Visibility, CrossFileAnalyzer,
+    JITCompiler, HotReloader, CompilationPipeline, IncrementalCompiler,
+    CompilationUnit, CompilationResult, CompilationTarget, CompilationStatus,
+    BaseCompiler, BytecodeCompiler, ASTCompiler, MemoryCache,
+    HotSwapLoader, PluginManager, IsolatedLoader, LazyLoader, LazyModuleProxy,
+    ModuleInfo, ReloadEvent, LoadStatus, temporary_module,
+    TypeMarshaller, Marshaller, JSONMarshaller, BinaryMarshaller,
+    TypeInfo, TypeKind, SchemaValidator, CrossLanguageTypeMapper
+)
 
-# Storage (Section 19) - Not yet implemented
-# from .storage import (
-#     VirtualObjectRepo, ContentAddressableStore, DeltaSync,
-#     AssetLifecycler, BuildLedger
-# )
+# Storage (Section 19)
+from .storage import (
+    VirtualObjectRepository, ObjectStore, VersionedObjectStore, ObjectSerializer,
+    ContentAddressableStore, ObjectId, ObjectType, ObjectMetadata, VersionedObject, ObjectVersion,
+    DeltaGenerator, DeltaApplier, SyncEngine, ConflictResolver,
+    AssetLifecycler, BuildLedger,
+    Delta, DeltaType, DeltaOperation, SyncState, DeltaEncoder,
+    BlobStore, Chunker, Blob, Chunk, ChunkingStrategy, CASConfig,
+)
 
-# Deployment (Section 20) - Not yet implemented
-# from .deployment import (
-#     HealthVerifier, DeploymentHandshake, DegradationManager,
-#     ArtifactBundler, TelemetryMonitor
-# )
+# Deployment (Section 20)
+from .deployment import (
+    HealthVerifier, DeploymentHandshake, DegradationManager,
+    ArtifactBundler, TelemetryMonitor
+)
 
 # Context (Section 21)
 from .context import (
@@ -149,48 +174,66 @@ from .context import (
     BoundaryMonitor, ContextIsolationLayer
 )
 
-# Benchmark (Section 22) - Not yet implemented
-# from .benchmark import (
-#     TestGenerator, ComplexityEvaluator, PerformanceProfiler,
-#     RegressionDetector, CoverageLoop
-# )
+# Benchmark (Section 22)
+from .benchmark import (
+    TestGenerator, ComplexityEvaluator, PerformanceProfiler,
+    RegressionDetector, CoverageLoop
+)
 
-# Edge (Section 23) - Not yet implemented
-# from .edge import (
-#     LLMFallbackGateway, OfflineCache, DeferredQueue,
-#     PowerThrottler, DeltaSyncer
-# )
+# Edge (Section 23)
+from .edge import (
+    LLMFallbackGateway, OfflineCache, DeferredQueue,
+    PowerThrottler, DeltaSyncer
+)
 
-# CI/CD (Section 24) - Not yet implemented
-# from .cicd import (
-#     SelfModifyingPipeline, ReleaseTagger, CanaryGuard,
-#     CapabilityExporter, KnowledgeExtractor
-# )
+# CI/CD (Section 24)
+from .cicd import (
+    SelfModifyingPipeline, ReleaseTagger, CanaryGuard,
+    CapabilityExporter, KnowledgeExtractor
+)
 
-# Workspace (Section 27) - Not yet implemented
-# from .workspace import (
-#     WorkspaceManager, PolyglotASTDriver, FunctionMutator, ASTDiffEmitter
-# )
+# Workspace (Section 27)
+from .workspace import (
+    WorkspaceManager, WorkspaceConfig, Workspace, WorkspaceType, WorkspaceStatus,
+    WorkspaceTemplate, WorkspaceIsolation, WorkspaceSnapshot,
+    PolyglotASTDriver, ASTParser, ASTNode, ParseResult, Language,
+    ASTTransformer, ASTIndexer,
+    FunctionMutator, MutationTester, EvolutionaryMutator,
+    Mutation, MutationResult, MutationType,
+    WorkspaceSynchronizer, WorkspaceReplicator, SyncScheduler, ConflictResolver,
+    SyncConfig, SyncMode, ConflictStrategy, FileInfo, SyncResult,
+)
 
-# Guardrails (Section 28) - Not yet implemented
-# from .guardrails import (
-#     PreCommitValidator, CommentStripper, TypingGuard, NoOpDetector
-# )
+# Guardrails (Section 28)
+from .guardrails import (
+    PreCommitValidator, CommentStripper, TypingGuard, NoOpDetector
+)
 
 # Tools (Section 29)
 from .tools import (
     ExceptionHookInterceptor, ToolSynthesizer, DynamicToolRegistry
 )
 
-# ShadowGit (Section 30) - Not yet implemented
-# from .shadowgit import (
-#     ShadowGit, MutationCheckpoint, ZeroRollback
-# )
+# ShadowGit (Section 30)
+from .shadowgit import (
+    ShadowGit, ShadowGitRemote, ShadowFile, ShadowCommit, ShadowBranch, ShadowDiff, ShadowGitStatus,
+    ShadowIndex, IndexMerger, IndexEntry, IndexEntryStatus, IndexTree,
+)
 
-# Evolution (Section 31) - Not yet implemented
-# from .evolution import (
-#     OrthogonalProjection, CloneOrchestrator, FitnessEvaluator, MergeSelector
-# )
+# Evolution (Section 31)
+from .evolution import (
+    EvolutionEngine, EvolutionConfig, EvolutionResult, Individual,
+    FitnessFunction, EvolutionStrategy, SelectionMethod,
+    MultiObjectiveEvolution, AdaptiveEvolution,
+    CodeEvolutionEngine, CodeEvolutionConfig, CodeIndividual, CodeMutationType,
+    CodeOptimizer, RefactoringEvolution,
+    ArchitectureEvolutionEngine, ArchitectureEvolutionConfig, ArchitectureIndividual,
+    ArchitectureDecision, ArchitecturePattern, QualityAttribute,
+    ArchitectureFitnessFunction, ArchitectureOptimizer, EvolutionaryArchitectureReviewer,
+    EvolutionStrategy as EvoStrategy, CMAES, ParticleSwarmOptimization,
+    DifferentialEvolution, EvolutionStrategyPlus, EvolutionStrategyComma,
+    StrategyConfig, StrategyResult, StrategySelector, AdaptiveStrategySelector, PortfolioOptimizer, StrategyType,
+)
 
 # Integrations (Ablation & CoreCoder Plugins)
 from .integrations import (
@@ -245,15 +288,15 @@ __all__ = [
     "ISAEngine", "Sanitizer", "PathNormalizer", "JSONNormalizer",
     "MemorySerializer", "BlueprintExporter",
     # Threat
-    "ThreatSeeder", "DeepAuditor", "TimingValidator", "RBACInspector", "StressSimulator",
+    "ThreatSeeder", "ThreatSeed",
+    "DeepAuditor", "TimingValidator", "RBACInspector", "StressSimulator",
     # Blueprint
     "PolyglotASTGenerator", "ProtocolCompiler", "FFIMapper",
     "TraceabilityInspector", "CoreStdLib",
     # Distributed
     "RPCGateway", "DAGScheduler", "BFTConsensus", "LoadBalancer", "CRDTStore",
     # Reasoning
-    "SemanticIndexer", "EpisodicStore", "ConceptAbstractor",
-    "ContextSerializer", "OntologyUpdater",
+    "ConceptAbstractor", "Concept", "ContextSerializer", "OntologyUpdater", "OntologyConcept",
     # Memory
     "CodeMemory", "CodeNode", "CodeEdge",
     "MemoryEpisodicStore", "Episode", "EpisodeType",
@@ -264,14 +307,38 @@ __all__ = [
     "ZeroTrustGatekeeper", "EntropyDetector", "VulnerabilityScanner",
     "EgressProxy", "IntegrityVerifier",
     # Reactive
-    "MessageBusAdapter", "BackpressureController", "HookEngine",
-    "StateMachineGuard", "IdempotentConsumer",
+    "MessageBus", "InMemoryMessageBus", "KafkaAdapter", "RedisAdapter", "MessageBusFactory",
+    "Message", "MessagePriority", "Subscription",
+    "BackpressureController", "BackpressureConfig", "BackpressureStrategy",
+    "AsyncBuffer", "TokenBucket", "LeakyBucket", "FlowController", "FlowMetrics",
+    "ReactiveStream", "BufferFullException", "BackpressureSignal",
+    "HookEngine", "PipelineHookEngine", "ConditionalHookEngine", "AsyncHookEngine",
+    "Hook", "HookContext", "HookPhase", "HookPriority", "HookMetrics", "DecoratorHooks",
+    "StateMachine", "HierarchicalStateMachine", "StateMachineGuard",
+    "StateMachineBuilder", "ProtocolStateMachine", "State", "Transition", "TransitionType", "StateMachineConfig",
+    "IdempotentConsumer", "ExactlyOnceProcessor", "MessageDeduplicator",
+    "TransactionalOutbox", "DistributedLock", "DeduplicationStore",
+    "InMemoryDeduplicationStore", "RedisDeduplicationStore",
+    "DeduplicationStrategy", "ProcessingResult", "IdempotencyKey",
     # Compilation
-    "UniversalCodeGenerator", "SymbolInspector", "MemoryCompiler",
-    "HotSwapLoader", "TypeMarshaller",
+    "UniversalCodeGenerator", "CodeGenerator", "PythonCodeGenerator", "JavaScriptCodeGenerator",
+    "TypeScriptCodeGenerator", "RustCodeGenerator", "CodeTemplate", "GenerationContext",
+    "TargetLanguage", "ASTToCodeConverter", "IncrementalCodeGenerator",
+    "SymbolInspector", "SymbolTable", "Symbol", "SymbolReference", "Scope", "SymbolType", "Visibility", "CrossFileAnalyzer",
+    "JITCompiler", "HotReloader", "CompilationPipeline", "IncrementalCompiler",
+    "CompilationUnit", "CompilationResult", "CompilationTarget", "CompilationStatus",
+    "BaseCompiler", "BytecodeCompiler", "ASTCompiler", "MemoryCache",
+    "HotSwapLoader", "PluginManager", "IsolatedLoader", "LazyLoader", "LazyModuleProxy",
+    "ModuleInfo", "ReloadEvent", "LoadStatus", "temporary_module",
+    "TypeMarshaller", "Marshaller", "JSONMarshaller", "BinaryMarshaller",
+    "TypeInfo", "TypeKind", "SchemaValidator", "CrossLanguageTypeMapper",
     # Storage
-    "VirtualObjectRepo", "ContentAddressableStore", "DeltaSync",
+    "VirtualObjectRepository", "ObjectStore", "VersionedObjectStore", "ObjectSerializer",
+    "ContentAddressableStore", "ObjectId", "ObjectType", "ObjectMetadata", "VersionedObject", "ObjectVersion",
+    "DeltaGenerator", "DeltaApplier", "SyncEngine", "ConflictResolver",
     "AssetLifecycler", "BuildLedger",
+    "Delta", "DeltaType", "DeltaOperation", "SyncState", "DeltaEncoder",
+    "BlobStore", "Chunker", "Blob", "Chunk", "ChunkingStrategy", "CASConfig",
     # Deployment
     "HealthVerifier", "DeploymentHandshake", "DegradationManager",
     "ArtifactBundler", "TelemetryMonitor",
@@ -288,15 +355,33 @@ __all__ = [
     "SelfModifyingPipeline", "ReleaseTagger", "CanaryGuard",
     "CapabilityExporter", "KnowledgeExtractor",
     # Workspace
-    "WorkspaceManager", "PolyglotASTDriver", "FunctionMutator", "ASTDiffEmitter",
+    "WorkspaceManager", "WorkspaceConfig", "Workspace", "WorkspaceType", "WorkspaceStatus",
+    "WorkspaceTemplate", "WorkspaceIsolation", "WorkspaceSnapshot",
+    "PolyglotASTDriver", "ASTParser", "ASTNode", "ParseResult", "Language",
+    "ASTTransformer", "ASTIndexer",
+    "FunctionMutator", "MutationTester", "EvolutionaryMutator",
+    "Mutation", "MutationResult", "MutationType",
+    "WorkspaceSynchronizer", "WorkspaceReplicator", "SyncScheduler", "ConflictResolver",
+    "SyncConfig", "SyncMode", "ConflictStrategy", "FileInfo", "SyncResult",
     # Guardrails
     "PreCommitValidator", "CommentStripper", "TypingGuard", "NoOpDetector",
     # Tools
     "ExceptionHookInterceptor", "ToolSynthesizer", "DynamicToolRegistry",
     # ShadowGit
-    "ShadowGit", "MutationCheckpoint", "ZeroRollback",
+    "ShadowGit", "ShadowGitRemote", "ShadowFile", "ShadowCommit", "ShadowBranch", "ShadowDiff", "ShadowGitStatus",
+    "ShadowIndex", "IndexMerger", "IndexEntry", "IndexEntryStatus", "IndexTree",
     # Evolution
-    "OrthogonalProjection", "CloneOrchestrator", "FitnessEvaluator", "MergeSelector",
+    "EvolutionEngine", "EvolutionConfig", "EvolutionResult", "Individual",
+    "FitnessFunction", "EvolutionStrategy", "SelectionMethod",
+    "MultiObjectiveEvolution", "AdaptiveEvolution",
+    "CodeEvolutionEngine", "CodeEvolutionConfig", "CodeIndividual", "CodeMutationType",
+    "CodeOptimizer", "RefactoringEvolution",
+    "ArchitectureEvolutionEngine", "ArchitectureEvolutionConfig", "ArchitectureIndividual",
+    "ArchitectureDecision", "ArchitecturePattern", "QualityAttribute",
+    "ArchitectureFitnessFunction", "ArchitectureOptimizer", "EvolutionaryArchitectureReviewer",
+    "EvolutionStrategy", "CMAES", "ParticleSwarmOptimization",
+    "DifferentialEvolution", "EvolutionStrategyPlus", "EvolutionStrategyComma",
+    "StrategyConfig", "StrategyResult", "StrategySelector", "AdaptiveStrategySelector", "PortfolioOptimizer", "StrategyType",
     # Integrations
     "register_ablation_tools", "AblationToolSynthesizer", "ABLATION_COMMANDS",
     "register_corecoder_tools", "CoreCoderToolSynthesizer", "CORECODER_COMMANDS",

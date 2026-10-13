@@ -1,5 +1,119 @@
 """
 Adaptive Edge Execution & Offline Resilience (Section 23)
-Modules not yet implemented
 """
-__all__ = []
+from .llm_fallback import (
+    LLMFallbackGateway,
+    LoadBalancedGateway,
+    StreamingGateway,
+    CachedGateway,
+    CacheLayer,
+    ProviderConfig,
+    ProviderState,
+    ProviderStatus,
+    FallbackReason,
+    LLMRequest,
+    LLMResponse,
+    CircuitBreaker,
+)
+from .offline_cache import (
+    OfflineCache,
+    WriteThroughCache,
+    WriteBehindCache,
+    CacheWarmer,
+    MemoryCache,
+    DiskCache,
+    CacheConfig,
+    CacheStrategy,
+    CacheEntry,
+)
+from .deferred_queue import (
+    DeferredQueue,
+    BatchQueue,
+    DelayedQueue,
+    QueueItem,
+    QueueConfig,
+    QueueStatus,
+    Priority,
+)
+from .power_throttler import (
+    PowerThrottler,
+    AdaptiveThrottler,
+    PowerMonitor,
+    PowerState,
+    PowerProfile,
+    ThrottleConfig,
+    ThrottleReason,
+    WorkloadScheduler,
+    BatteryAwareExecutor,
+    ThermalManager,
+)
+from .delta_syncer import (
+    DeltaSyncer,
+    OfflineSyncer,
+    ConflictFreeSyncer,
+    BackgroundSyncer,
+    SyncItem,
+    Delta,
+    DeltaOp,
+    SyncResult,
+    SyncConfig,
+    SyncMode,
+    ConflictResolution,
+)
+
+__all__ = [
+    # LLM Fallback
+    "LLMFallbackGateway",
+    "LoadBalancedGateway",
+    "StreamingGateway",
+    "CachedGateway",
+    "CacheLayer",
+    "ProviderConfig",
+    "ProviderState",
+    "ProviderStatus",
+    "FallbackReason",
+    "LLMRequest",
+    "LLMResponse",
+    "CircuitBreaker",
+    # Offline Cache
+    "OfflineCache",
+    "WriteThroughCache",
+    "WriteBehindCache",
+    "CacheWarmer",
+    "MemoryCache",
+    "DiskCache",
+    "CacheConfig",
+    "CacheStrategy",
+    "CacheEntry",
+    # Deferred Queue
+    "DeferredQueue",
+    "BatchQueue",
+    "DelayedQueue",
+    "QueueItem",
+    "QueueConfig",
+    "QueueStatus",
+    "Priority",
+    # Power Throttler
+    "PowerThrottler",
+    "AdaptiveThrottler",
+    "PowerMonitor",
+    "PowerState",
+    "PowerProfile",
+    "ThrottleConfig",
+    "ThrottleReason",
+    "WorkloadScheduler",
+    "BatteryAwareExecutor",
+    "ThermalManager",
+    # Delta Syncer
+    "DeltaSyncer",
+    "OfflineSyncer",
+    "ConflictFreeSyncer",
+    "BackgroundSyncer",
+    "SyncItem",
+    "Delta",
+    "DeltaOp",
+    "SyncResult",
+    "SyncConfig",
+    "SyncMode",
+    "ConflictResolution",
+]

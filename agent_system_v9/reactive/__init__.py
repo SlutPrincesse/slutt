@@ -1,5 +1,119 @@
 """
 Reactive Pipelines & Event-Driven Orchestration (Section 17)
-Modules not yet implemented
 """
-__all__ = []
+from .message_bus import (
+    MessageBus,
+    InMemoryMessageBus,
+    KafkaAdapter,
+    RedisAdapter,
+    MessageBusFactory,
+    Message,
+    MessagePriority,
+    Subscription,
+)
+from .backpressure import (
+    BackpressureController,
+    BackpressureConfig,
+    BackpressureStrategy,
+    AsyncBuffer,
+    TokenBucket,
+    LeakyBucket,
+    FlowController,
+    FlowMetrics,
+    ReactiveStream,
+    BufferFullException,
+    BackpressureSignal,
+)
+from .hook_engine import (
+    HookEngine,
+    PipelineHookEngine,
+    ConditionalHookEngine,
+    AsyncHookEngine,
+    Hook,
+    HookContext,
+    HookPhase,
+    HookPriority,
+    HookMetrics,
+    DecoratorHooks,
+)
+from .state_machine import (
+    StateMachine,
+    HierarchicalStateMachine,
+    StateMachineGuard,
+    StateMachineBuilder,
+    ProtocolStateMachine,
+    State,
+    Transition,
+    TransitionType,
+    StateMachineConfig,
+)
+from .idempotent import (
+    IdempotentConsumer,
+    ExactlyOnceProcessor,
+    MessageDeduplicator,
+    TransactionalOutbox,
+    DistributedLock,
+    DeduplicationStore,
+    InMemoryDeduplicationStore,
+    RedisDeduplicationStore,
+    DeduplicationStrategy,
+    ProcessingResult,
+    IdempotencyKey,
+)
+
+__all__ = [
+    # Message Bus
+    "MessageBus",
+    "InMemoryMessageBus",
+    "KafkaAdapter",
+    "RedisAdapter",
+    "MessageBusFactory",
+    "Message",
+    "MessagePriority",
+    "Subscription",
+    # Backpressure
+    "BackpressureController",
+    "BackpressureConfig",
+    "BackpressureStrategy",
+    "AsyncBuffer",
+    "TokenBucket",
+    "LeakyBucket",
+    "FlowController",
+    "FlowMetrics",
+    "ReactiveStream",
+    "BufferFullException",
+    "BackpressureSignal",
+    # Hook Engine
+    "HookEngine",
+    "PipelineHookEngine",
+    "ConditionalHookEngine",
+    "AsyncHookEngine",
+    "Hook",
+    "HookContext",
+    "HookPhase",
+    "HookPriority",
+    "HookMetrics",
+    "DecoratorHooks",
+    # State Machine
+    "StateMachine",
+    "HierarchicalStateMachine",
+    "StateMachineGuard",
+    "StateMachineBuilder",
+    "ProtocolStateMachine",
+    "State",
+    "Transition",
+    "TransitionType",
+    "StateMachineConfig",
+    # Idempotent
+    "IdempotentConsumer",
+    "ExactlyOnceProcessor",
+    "MessageDeduplicator",
+    "TransactionalOutbox",
+    "DistributedLock",
+    "DeduplicationStore",
+    "InMemoryDeduplicationStore",
+    "RedisDeduplicationStore",
+    "DeduplicationStrategy",
+    "ProcessingResult",
+    "IdempotencyKey",
+]
