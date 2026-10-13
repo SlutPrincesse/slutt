@@ -1,0 +1,110 @@
+# Dependabot configuration for AGENT_SYSTEM_V9
+# See https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Python dependencies (pip)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "maintainer1"
+      - "maintainer2"
+    assignees:
+      - "maintainer1"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    groups:
+      dev-dependencies:
+        patterns:
+          - "pytest*"
+          - "ruff*"
+          - "black*"
+          - "isort*"
+          - "mypy*"
+          - "bandit*"
+          - "hypothesis*"
+          - "pre-commit*"
+        update-types:
+          - "minor"
+          - "patch"
+      ml-dependencies:
+        patterns:
+          - "numpy"
+          - "torch"
+          - "transformers"
+          - "sentence-transformers"
+          - "accelerate"
+        update-types:
+          - "minor"
+          - "patch"
+      distributed-dependencies:
+        patterns:
+          - "aiokafka"
+          - "aiohttp"
+          - "redis"
+          - "prometheus-client"
+        update-types:
+          - "minor"
+          - "patch"
+      ast-dependencies:
+        patterns:
+          - "tree-sitter*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # npm (for webapp)
+  - package-ecosystem: "npm"
+    directory: "agent_system_v9/integrations/redamon/webapp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "npm"
+    ignore:
+      # Ignore major version updates for React/Next.js until tested
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
