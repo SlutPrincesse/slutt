@@ -94,9 +94,9 @@ class ConsensusState:
     primary: str = ""
     nodes: list[str] = field(default_factory=list)
     committed: dict[int, Any] = field(default_factory=dict)
-    prepared: dict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
-    committed_certs: dict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
-    view_changes: dict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
+    prepared: defaultdict[tuple[int, int], set[str]] = field(default_factory=lambda: defaultdict(set))
+    committed_certs: defaultdict[tuple[int, int], set[str]] = field(default_factory=lambda: defaultdict(set))
+    view_changes: defaultdict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
     last_checkpoint: int = 0
 
 
@@ -107,7 +107,7 @@ class BFTConsensus:
         nodes: list[str],
         f: int = 1,
         checkpoint_interval: int = 100,
-    ):
+    ) -> None:
         self.node_id = node_id
         self.nodes = nodes
         self.n = len(nodes)
@@ -124,15 +124,15 @@ class BFTConsensus:
 
         self.message_log: list[ConsensusMessage] = []
         self.pending_requests: dict[str, ClientRequest] = {}
-        self.execute_queue: asyncio.Queue = asyncio.Queue()
+        self.execute_queue: asyncio.Queue[ClientRequest] = asyncio.Queue()
         self._running = False
-        self._callbacks: list[Callable] = []
+        self._callbacks: list[Callable[[Any], Any]] = []
         self._lock = asyncio.Lock()
 
     def is_primary(self) -> bool:
         return self.state.primary == self.node_id
 
-    def get_primary(self, view: int = None) -> str:
+    def get_primary(self, view: int | None = None) -> str:
         view = view or self.state.view
         return self.nodes[view % self.n]
 
@@ -142,12 +142,12 @@ class BFTConsensus:
     def _verify_signature(self, message: ConsensusMessage) -> bool:
         return message.signature is not None
 
-    async def start(self):
+    async def start(self) -> None:
         self._running = True
         asyncio.create_task(self._process_queue())
         asyncio.create_task(self._view_change_timer())
 
-    async def stop(self):
+    async def stop(self) -> None:
         self._running = False
 
     async def propose(self, operation: Any) -> str:
@@ -164,7 +164,7 @@ class BFTConsensus:
 
         return request_id
 
-    async def _pre_prepare(self, request: ClientRequest):
+    async def _pre_prepare(self, request: ClientRequest) -> None:
         self.state.sequence += 1
         digest = self._compute_digest(request)
 
@@ -180,7 +180,7 @@ class BFTConsensus:
         await self._broadcast(msg)
         await self._handle_pre_prepare(msg)
 
-    async def _handle_pre_prepare(self, msg: ConsensusMessage):
+    async def _handle_pre_prepare(self, msg: ConsensusMessage) -> None:
         if msg.node_id != self.state.primary:
             return
 
@@ -200,7 +200,7 @@ class BFTConsensus:
 
         await self._broadcast(prepare_msg)
 
-    async def _handle_prepare(self, msg: ConsensusMessage):
+    async def _handle_prepare(self, msg: ConsensusMessage) -> None:
         if msg.view != self.state.view:
             return
 
@@ -216,7 +216,7 @@ class BFTConsensus:
             )
             await self._broadcast(commit_msg)
 
-    async def _handle_commit(self, msg: ConsensusMessage):
+    async def _handle_commit(self, msg: ConsensusMessage) -> None:
         if msg.view != self.state.view:
             return
 
@@ -225,7 +225,7 @@ class BFTConsensus:
         if len(self.state.committed_certs[(msg.view, msg.sequence)]) >= self._quorum_size():
             await self._commit(msg)
 
-    async def _commit(self, msg: ConsensusMessage):
+    async def _commit(self, msg: ConsensusMessage) -> None:
         for req_id, request in self.pending_requests.items():
             if self._compute_digest(request) == msg.digest:
                 self.state.committed[msg.sequence] = request.operation
@@ -236,7 +236,7 @@ class BFTConsensus:
         if msg.sequence % self.checkpoint_interval == 0:
             await self._create_checkpoint(msg.sequence)
 
-    async def _create_checkpoint(self, sequence: int):
+    async def _create_checkpoint(self, sequence: int) -> None:
         checkpoint_msg = ConsensusMessage(
             msg_type=MessageType.CHECKPOINT,
             view=self.state.view,
@@ -247,16 +247,16 @@ class BFTConsensus:
         )
         await self._broadcast(checkpoint_msg)
 
-    async def _handle_checkpoint(self, msg: ConsensusMessage):
+    async def _handle_checkpoint(self, msg: ConsensusMessage) -> None:
         pass
 
-    async def _view_change_timer(self):
+    async def _view_change_timer(self) -> None:
         while self._running:
             await asyncio.sleep(10.0)
             if not self.is_primary() and self.state.sequence > 0:
                 await self._initiate_view_change()
 
-    async def _initiate_view_change(self):
+    async def _initiate_view_change(self) -> None:
         self.state.view += 1
         self.state.primary = self.get_primary(self.state.view)
 
@@ -278,10 +278,10 @@ class BFTConsensus:
         if len(self.state.view_changes[self.state.view]) >= self._quorum_size():
             await self._handle_new_view()
 
-    async def _handle_new_view(self):
+    async def _handle_new_view(self) -> None:
         pass
 
-    async def _process_queue(self):
+    async def _process_queue(self) -> None:
         while self._running:
             try:
                 request = await asyncio.wait_for(self.execute_queue.get(), timeout=1.0)
@@ -289,7 +289,7 @@ class BFTConsensus:
             except asyncio.TimeoutError:
                 continue
 
-    async def _execute_request(self, request: ClientRequest):
+    async def _execute_request(self, request: ClientRequest) -> None:
         for callback in self._callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -299,24 +299,23 @@ class BFTConsensus:
             except Exception:
                 pass
 
-    def add_callback(self, callback: Callable):
+    def add_callback(self, callback: Callable[[Any], Any]) -> None:
         self._callbacks.append(callback)
 
-    async def _broadcast(self, message: ConsensusMessage):
+    async def _broadcast(self, message: ConsensusMessage) -> None:
         self.message_log.append(message)
-        pass
 
     def _compute_digest(self, request: ClientRequest) -> str:
         data = json.dumps(request.to_dict(), sort_keys=True)
         return hashlib.sha256(data.encode()).hexdigest()
 
-    def receive_message(self, message: ConsensusMessage):
+    def receive_message(self, message: ConsensusMessage) -> None:
         if not self._verify_signature(message):
             return
 
         asyncio.create_task(self._dispatch_message(message))
 
-    async def _dispatch_message(self, message: ConsensusMessage):
+    async def _dispatch_message(self, message: ConsensusMessage) -> None:
         if message.msg_type == MessageType.PRE_PREPARE:
             await self._handle_pre_prepare(message)
         elif message.msg_type == MessageType.PREPARE:
@@ -341,14 +340,14 @@ class BFTConsensus:
 
 
 class PBFTNode:
-    def __init__(self, node_id: str, cluster: list[str]):
+    def __init__(self, node_id: str, cluster: list[str]) -> None:
         self.consensus = BFTConsensus(node_id, cluster)
-        self.client_results: dict[str, asyncio.Future] = {}
+        self.client_results: dict[str, asyncio.Future[Any]] = {}
 
-    async def start(self):
+    async def start(self) -> None:
         await self.consensus.start()
 
-    async def stop(self):
+    async def stop(self) -> None:
         await self.consensus.stop()
 
     async def submit(self, operation: Any) -> Any:
@@ -357,28 +356,28 @@ class PBFTNode:
         self.client_results[request_id] = future
         return await future
 
-    def handle_client_request(self, request: ClientRequest):
+    def handle_client_request(self, request: ClientRequest) -> None:
         asyncio.create_task(self.consensus.propose(request.operation))
 
-    def handle_consensus_message(self, message: ConsensusMessage):
+    def handle_consensus_message(self, message: ConsensusMessage) -> None:
         self.consensus.receive_message(message)
 
 
 class ConsensusCluster:
-    def __init__(self, nodes: list[str]):
+    def __init__(self, nodes: list[str]) -> None:
         self.nodes = {nid: PBFTNode(nid, nodes) for nid in nodes}
 
-    async def start_all(self):
+    async def start_all(self) -> None:
         for node in self.nodes.values():
             await node.start()
 
-    async def stop_all(self):
+    async def stop_all(self) -> None:
         for node in self.nodes.values():
             await node.stop()
 
     def get_node(self, node_id: str) -> PBFTNode | None:
         return self.nodes.get(node_id)
 
-    def broadcast_message(self, message: ConsensusMessage):
+    def broadcast_message(self, message: ConsensusMessage) -> None:
         for node in self.nodes.values():
             node.handle_consensus_message(message)

@@ -67,17 +67,17 @@ class ReloadEvent:
 
 
 class HotSwapLoader:
-    def __init__(self, watch_interval: float = 1.0):
+    def __init__(self, watch_interval: float = 1.0) -> None:
         self.modules: dict[str, ModuleInfo] = {}
         self.watch_interval = watch_interval
-        self.callbacks: list[Callable] = []
+        self.callbacks: list[Callable[[ReloadEvent], Any]] = []
         self._running = False
-        self._watch_task: asyncio.Task | None = None
+        self._watch_task: asyncio.Task[None] | None = None
         self._lock = threading.RLock()
-        self._module_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._module_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.reload_history: list[ReloadEvent] = []
 
-    def load_module(self, name: str, file_path: str = None) -> ModuleInfo:
+    def load_module(self, name: str, file_path: str | None = None) -> ModuleInfo:
         with self._lock:
             if name in self.modules:
                 return self.modules[name]
@@ -133,16 +133,17 @@ class HotSwapLoader:
         except Exception:
             return ""
 
-    def _register_dependencies(self, info: ModuleInfo):
+    def _register_dependencies(self, info: ModuleInfo) -> None:
         if info.module and hasattr(info.module, '__file__'):
             try:
                 source = Path(info.file_path).read_text()
-                tree = __import__('ast').parse(source)
-                for node in __import__('ast').walk(tree):
-                    if isinstance(node, __import__('ast').Import):
+                import ast
+                tree = ast.parse(source)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
                         for alias in node.names:
                             info.dependencies.append(alias.name)
-                    elif isinstance(node, __import__('ast').ImportFrom):
+                    elif isinstance(node, ast.ImportFrom):
                         module = node.module or ""
                         for alias in node.names:
                             info.dependencies.append(f"{module}.{alias.name}")
@@ -236,14 +237,14 @@ class HotSwapLoader:
             info = self.modules.get(name)
             return info is not None and info.status == LoadStatus.LOADED
 
-    def on_reload(self, callback: Callable):
+    def on_reload(self, callback: Callable[[ReloadEvent], Any]) -> None:
         self.callbacks.append(callback)
 
-    async def start_watching(self):
+    async def start_watching(self) -> None:
         self._running = True
         self._watch_task = asyncio.create_task(self._watch_loop())
 
-    async def stop_watching(self):
+    async def stop_watching(self) -> None:
         self._running = False
         if self._watch_task:
             self._watch_task.cancel()
@@ -252,12 +253,12 @@ class HotSwapLoader:
             except asyncio.CancelledError:
                 pass
 
-    async def _watch_loop(self):
+    async def _watch_loop(self) -> None:
         while self._running:
             await asyncio.sleep(self.watch_interval)
             await self._check_for_changes()
 
-    async def _check_for_changes(self):
+    async def _check_for_changes(self) -> None:
         for name, info in list(self.modules.items()):
             if info.status != LoadStatus.LOADED:
                 continue
@@ -278,15 +279,15 @@ class HotSwapLoader:
 
 
 class PluginManager:
-    def __init__(self, loader: HotSwapLoader):
+    def __init__(self, loader: HotSwapLoader) -> None:
         self.loader = loader
         self.plugins: dict[str, dict[str, Any]] = {}
         self.plugin_interfaces: dict[str, type] = {}
 
-    def register_interface(self, name: str, interface: type):
+    def register_interface(self, name: str, interface: type) -> None:
         self.plugin_interfaces[name] = interface
 
-    def load_plugin(self, name: str, file_path: str, interface: str = None) -> bool:
+    def load_plugin(self, name: str, file_path: str, interface: str | None = None) -> bool:
         info = self.loader.load_module(name, file_path)
         if info.status != LoadStatus.LOADED:
             return False
@@ -323,7 +324,7 @@ class PluginManager:
 
 
 class IsolatedLoader:
-    def __init__(self):
+    def __init__(self) -> None:
         self.loaders: dict[str, HotSwapLoader] = {}
         self._lock = threading.RLock()
 
@@ -346,25 +347,25 @@ class IsolatedLoader:
 
 
 class LazyLoader:
-    def __init__(self, loader: HotSwapLoader):
+    def __init__(self, loader: HotSwapLoader) -> None:
         self.loader = loader
         self.proxies: dict[str, Any] = {}
 
-    def get_module(self, name: str, file_path: str = None) -> Any:
+    def get_module(self, name: str, file_path: str | None = None) -> Any:
         if name not in self.proxies:
             self.proxies[name] = LazyModuleProxy(name, file_path, self.loader)
         return self.proxies[name]
 
 
 class LazyModuleProxy:
-    def __init__(self, name: str, file_path: str, loader: HotSwapLoader):
+    def __init__(self, name: str, file_path: str | None, loader: HotSwapLoader) -> None:
         self.name = name
         self.file_path = file_path
         self.loader = loader
-        self._module = None
+        self._module: Any = None
         self._loaded = False
 
-    def _ensure_loaded(self):
+    def _ensure_loaded(self) -> None:
         if not self._loaded:
             info = self.loader.load_module(self.name, self.file_path)
             self._module = info.module
@@ -374,7 +375,7 @@ class LazyModuleProxy:
         self._ensure_loaded()
         return getattr(self._module, item)
 
-    def __setattr__(self, name: str, value: Any):
+    def __setattr__(self, name: str, value: Any) -> None:
         if name in ['name', 'file_path', 'loader', '_module', '_loaded']:
             super().__setattr__(name, value)
         else:

@@ -27,7 +27,7 @@ class TypeKind(Enum):
 class TypeInfo:
     name: str
     kind: TypeKind
-    python_type: type = None
+    python_type: type | None = None
     fields: dict[str, 'TypeInfo'] = field(default_factory=dict)
     item_type: Optional['TypeInfo'] = None
     key_type: Optional['TypeInfo'] = None
@@ -77,11 +77,13 @@ class JSONMarshaller(Marshaller):
 
 
 class BinaryMarshaller(Marshaller):
-    def __init__(self):
+    def __init__(self) -> None:
         self.type_registry: dict[str, TypeInfo] = {}
+        self._offset = 0
+        self._data = b''
         self._register_primitives()
 
-    def _register_primitives(self):
+    def _register_primitives(self) -> None:
         primitives = {
             'bool': TypeInfo('bool', TypeKind.PRIMITIVE, bool),
             'int8': TypeInfo('int8', TypeKind.PRIMITIVE, int),
@@ -100,7 +102,7 @@ class BinaryMarshaller(Marshaller):
         for name, info in primitives.items():
             self.type_registry[name] = info
 
-    def register_type(self, type_info: TypeInfo):
+    def register_type(self, type_info: TypeInfo) -> None:
         self.type_registry[type_info.name] = type_info
 
     def marshal(self, value: Any, type_info: TypeInfo) -> bytes:
@@ -237,7 +239,7 @@ class BinaryMarshaller(Marshaller):
         return None
 
     def _unmarshal_composite(self, type_info: TypeInfo) -> Any:
-        result = {}
+        result: dict[str, Any] = {}
         for field_name, field_info in type_info.fields.items():
             present = self._read('?')
             if present:
@@ -255,7 +257,7 @@ class BinaryMarshaller(Marshaller):
 
     def _unmarshal_map(self, type_info: TypeInfo) -> dict:
         length = self._read('I')
-        result = {}
+        result: dict[Any, Any] = {}
         for _ in range(length):
             key = self._unmarshal_value(type_info.key_type)
             value = self._unmarshal_value(type_info.value_type)
@@ -270,7 +272,7 @@ class BinaryMarshaller(Marshaller):
 
 
 class TypeMarshaller:
-    def __init__(self):
+    def __init__(self) -> None:
         self.marshallers: dict[str, Marshaller] = {
             'json': JSONMarshaller(),
             'binary': BinaryMarshaller(),
@@ -278,7 +280,7 @@ class TypeMarshaller:
         self.type_registry: dict[str, TypeInfo] = {}
         self._register_default_types()
 
-    def _register_default_types(self):
+    def _register_default_types(self) -> None:
         self.register_type(TypeInfo('bool', TypeKind.PRIMITIVE, bool))
         self.register_type(TypeInfo('int', TypeKind.PRIMITIVE, int))
         self.register_type(TypeInfo('float', TypeKind.PRIMITIVE, float))
@@ -287,10 +289,10 @@ class TypeMarshaller:
         self.register_type(TypeInfo('datetime', TypeKind.PRIMITIVE, datetime))
         self.register_type(TypeInfo('uuid', TypeKind.PRIMITIVE, uuid.UUID))
 
-    def register_marshaller(self, name: str, marshaller: Marshaller):
+    def register_marshaller(self, name: str, marshaller: Marshaller) -> None:
         self.marshallers[name] = marshaller
 
-    def register_type(self, type_info: TypeInfo):
+    def register_type(self, type_info: TypeInfo) -> None:
         self.type_registry[type_info.name] = type_info
         if 'binary' in self.marshallers:
             self.marshallers['binary'].register_type(type_info)
@@ -301,7 +303,7 @@ class TypeMarshaller:
                 return info
         return None
 
-    def marshal(self, value: Any, format: str = 'json', type_info: TypeInfo = None) -> bytes:
+    def marshal(self, value: Any, format: str = 'json', type_info: TypeInfo | None = None) -> bytes:
         if format not in self.marshallers:
             raise ValueError(f"Unknown format: {format}")
 
@@ -310,7 +312,7 @@ class TypeMarshaller:
 
         return self.marshallers[format].marshal(value, type_info)
 
-    def unmarshal(self, data: bytes, format: str = 'json', type_info: TypeInfo = None) -> Any:
+    def unmarshal(self, data: bytes, format: str = 'json', type_info: TypeInfo | None = None) -> Any:
         if format not in self.marshallers:
             raise ValueError(f"Unknown format: {format}")
 
@@ -358,15 +360,15 @@ class TypeMarshaller:
 
 
 class SchemaValidator:
-    def __init__(self, marshaller: TypeMarshaller):
+    def __init__(self, marshaller: TypeMarshaller) -> None:
         self.marshaller = marshaller
 
     def validate(self, value: Any, type_info: TypeInfo) -> list[str]:
-        errors = []
+        errors: list[str] = []
         self._validate_value(value, type_info, "", errors)
         return errors
 
-    def _validate_value(self, value: Any, type_info: TypeInfo, path: str, errors: list[str]):
+    def _validate_value(self, value: Any, type_info: TypeInfo, path: str, errors: list[str]) -> None:
         if type_info.kind == TypeKind.PRIMITIVE:
             if not self._check_primitive(value, type_info):
                 errors.append(f"{path}: expected {type_info.name}, got {type(value).__name__}")
@@ -406,7 +408,7 @@ class SchemaValidator:
 
 
 class CrossLanguageTypeMapper:
-    def __init__(self):
+    def __init__(self) -> None:
         self.mappings: dict[str, dict[str, str]] = {
             'python': {
                 'int': 'int64',
@@ -453,7 +455,7 @@ class CrossLanguageTypeMapper:
         target_map = self.mappings.get(target_lang, {})
         return target_map.get(canonical, canonical)
 
-    def add_mapping(self, source_lang: str, source_type: str, target_lang: str, target_type: str):
+    def add_mapping(self, source_lang: str, source_type: str, target_lang: str, target_type: str) -> None:
         if source_lang not in self.mappings:
             self.mappings[source_lang] = {}
         self.mappings[source_lang][source_type] = target_type

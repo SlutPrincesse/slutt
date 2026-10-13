@@ -45,13 +45,13 @@ class Symbol:
     children: list['Symbol'] = field(default_factory=list)
     parent: Optional['Symbol'] = None
 
-    def add_child(self, child: 'Symbol'):
+    def add_child(self, child: 'Symbol') -> None:
         child.parent = self
         self.children.append(child)
 
     def get_full_name(self) -> str:
-        parts = []
-        current = self
+        parts: list[str] = []
+        current: Optional[Symbol] = self
         while current:
             parts.append(current.name)
             current = current.parent
@@ -92,7 +92,7 @@ class Scope:
     symbols: dict[str, Symbol] = field(default_factory=dict)
     children: list['Scope'] = field(default_factory=list)
 
-    def add_symbol(self, symbol: Symbol):
+    def add_symbol(self, symbol: Symbol) -> None:
         self.symbols[symbol.name] = symbol
 
     def get_symbol(self, name: str) -> Symbol | None:
@@ -110,16 +110,16 @@ class SymbolTable:
         self.all_symbols: dict[str, Symbol] = {}
         self.file_symbols: dict[str, list[Symbol]] = defaultdict(list)
 
-    def enter_scope(self, name: str, scope_type: str):
+    def enter_scope(self, name: str, scope_type: str) -> None:
         new_scope = Scope(name, scope_type, self.current_scope)
         self.current_scope.children.append(new_scope)
         self.current_scope = new_scope
 
-    def exit_scope(self):
+    def exit_scope(self) -> None:
         if self.current_scope.parent:
             self.current_scope = self.current_scope.parent
 
-    def define(self, symbol: Symbol):
+    def define(self, symbol: Symbol) -> None:
         self.current_scope.add_symbol(symbol)
         key = f"{symbol.file_path}:{symbol.line}:{symbol.column}"
         self.all_symbols[key] = symbol
@@ -154,7 +154,7 @@ class SymbolInspector:
         self._visit(tree, file_path)
         return self.symbol_table.get_symbols_in_file(file_path)
 
-    def _visit(self, node: ast.AST, file_path: str):
+    def _visit(self, node: ast.AST, file_path: str) -> None:
         if isinstance(node, ast.Module):
             self.symbol_table.enter_scope("module", "module")
             for child in node.body:
@@ -162,6 +162,13 @@ class SymbolInspector:
             self.symbol_table.exit_scope()
 
         elif isinstance(node, ast.FunctionDef):
+            returns_annotation: str | None = None
+            if node.returns and hasattr(ast, 'unparse'):
+                try:
+                    returns_annotation = ast.unparse(node.returns)
+                except Exception:
+                    pass
+
             symbol = Symbol(
                 name=node.name,
                 symbol_type=SymbolType.FUNCTION,
@@ -170,7 +177,7 @@ class SymbolInspector:
                 line=node.lineno,
                 column=node.col_offset,
                 visibility=Visibility.PRIVATE if node.name.startswith('_') else Visibility.PUBLIC,
-                type_annotation=ast.unparse(node.returns) if node.returns and hasattr(ast, 'unparse') else None,
+                type_annotation=returns_annotation,
                 docstring=ast.get_docstring(node),
             )
             self.symbol_table.define(symbol)
@@ -180,6 +187,13 @@ class SymbolInspector:
             self.symbol_table.exit_scope()
 
         elif isinstance(node, ast.AsyncFunctionDef):
+            returns_annotation = None
+            if node.returns and hasattr(ast, 'unparse'):
+                try:
+                    returns_annotation = ast.unparse(node.returns)
+                except Exception:
+                    pass
+
             symbol = Symbol(
                 name=node.name,
                 symbol_type=SymbolType.FUNCTION,
@@ -188,7 +202,7 @@ class SymbolInspector:
                 line=node.lineno,
                 column=node.col_offset,
                 visibility=Visibility.PRIVATE if node.name.startswith('_') else Visibility.PUBLIC,
-                type_annotation=ast.unparse(node.returns) if node.returns and hasattr(ast, 'unparse') else None,
+                type_annotation=returns_annotation,
                 docstring=ast.get_docstring(node),
                 metadata={"async": True},
             )
@@ -218,6 +232,13 @@ class SymbolInspector:
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name):
+                    value_annotation: str | None = None
+                    if hasattr(ast, 'unparse'):
+                        try:
+                            value_annotation = ast.unparse(node.value)
+                        except Exception:
+                            pass
+
                     symbol = Symbol(
                         name=target.id,
                         symbol_type=SymbolType.VARIABLE,
@@ -225,12 +246,19 @@ class SymbolInspector:
                         file_path=file_path,
                         line=node.lineno,
                         column=target.col_offset,
-                        type_annotation=ast.unparse(node.value) if hasattr(ast, 'unparse') else None,
+                        type_annotation=value_annotation,
                     )
                     self.symbol_table.define(symbol)
 
         elif isinstance(node, ast.AnnAssign):
             if isinstance(node.target, ast.Name):
+                annotation_str: str | None = None
+                if node.annotation and hasattr(ast, 'unparse'):
+                    try:
+                        annotation_str = ast.unparse(node.annotation)
+                    except Exception:
+                        pass
+
                 symbol = Symbol(
                     name=node.target.id,
                     symbol_type=SymbolType.VARIABLE,
@@ -238,7 +266,7 @@ class SymbolInspector:
                     file_path=file_path,
                     line=node.lineno,
                     column=node.target.col_offset,
-                    type_annotation=ast.unparse(node.annotation) if node.annotation and hasattr(ast, 'unparse') else None,
+                    type_annotation=annotation_str,
                 )
                 self.symbol_table.define(symbol)
 
@@ -282,16 +310,16 @@ class SymbolInspector:
         for child in ast.iter_child_nodes(node):
             self._visit(child, file_path)
 
-    def find_references(self, symbol_name: str, file_path: str = None) -> list[SymbolReference]:
-        results = []
+    def find_references(self, symbol_name: str, file_path: str | None = None) -> list[SymbolReference]:
+        results: list[SymbolReference] = []
         for ref in self.references:
             if ref.symbol.name == symbol_name:
                 if file_path is None or ref.file_path == file_path:
                     results.append(ref)
         return results
 
-    def get_call_graph(self, file_path: str = None) -> dict[str, list[str]]:
-        call_graph = defaultdict(list)
+    def get_call_graph(self, file_path: str | None = None) -> dict[str, list[str]]:
+        call_graph: dict[str, list[str]] = defaultdict(list)
         for ref in self.references:
             if file_path is None or ref.file_path == file_path:
                 caller = self._find_enclosing_function(ref)
@@ -321,11 +349,11 @@ class CrossFileAnalyzer:
         self.inspector = SymbolInspector()
         self.file_symbols: dict[str, list[Symbol]] = {}
 
-    def analyze_project(self, root_path: str, extensions: list[str] = None) -> dict[str, Any]:
+    def analyze_project(self, root_path: str, extensions: list[str] | None = None) -> dict[str, Any]:
         if extensions is None:
             extensions = ['.py']
 
-        all_symbols = {}
+        all_symbols: dict[str, list[dict[str, Any]]] = {}
         for ext in extensions:
             for file_path in Path(root_path).rglob(f'*{ext}'):
                 symbols = self.inspector.inspect_file(str(file_path))
@@ -339,7 +367,7 @@ class CrossFileAnalyzer:
         }
 
     def find_unused_symbols(self) -> list[Symbol]:
-        unused = []
+        unused: list[Symbol] = []
         for file_path, symbols in self.file_symbols.items():
             for symbol in symbols:
                 refs = self.inspector.find_references(symbol.name, file_path)
@@ -348,7 +376,7 @@ class CrossFileAnalyzer:
         return unused
 
     def find_circular_imports(self) -> list[list[str]]:
-        imports = defaultdict(set)
+        imports: dict[str, set[str]] = defaultdict(set)
         for file_path, symbols in self.file_symbols.items():
             for symbol in symbols:
                 if symbol.symbol_type == SymbolType.IMPORT:
@@ -356,11 +384,11 @@ class CrossFileAnalyzer:
                     if module:
                         imports[file_path].add(module)
 
-        cycles = []
-        visited = set()
-        path = []
+        cycles: list[list[str]] = []
+        visited: set[str] = set()
+        path: list[str] = []
 
-        def dfs(node: str):
+        def dfs(node: str) -> None:
             visited.add(node)
             path.append(node)
             for neighbor in imports.get(node, []):

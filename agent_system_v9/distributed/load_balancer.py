@@ -74,12 +74,12 @@ class LoadBalancerConfig:
 
 
 class HealthChecker:
-    def __init__(self, config: LoadBalancerConfig):
+    def __init__(self, config: LoadBalancerConfig) -> None:
         self.config = config
-        self.checks: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
+        self.checks: defaultdict[str, deque] = defaultdict(lambda: deque(maxlen=10))
         self._lock = threading.RLock()
 
-    def record_check(self, backend_id: str, success: bool, response_time: float = 0):
+    def record_check(self, backend_id: str, success: bool, response_time: float = 0) -> None:
         with self._lock:
             self.checks[backend_id].append({
                 "success": success,
@@ -116,24 +116,24 @@ class LoadBalancer:
     def __init__(
         self,
         config: LoadBalancerConfig | None = None,
-        backends: list[Backend] = None,
-    ):
+        backends: list[Backend] | None = None,
+    ) -> None:
         self.config = config or LoadBalancerConfig()
         self.backends: dict[str, Backend] = {}
         self.health_checker = HealthChecker(self.config)
         self._rr_index = 0
         self._wrr_weights: dict[str, int] = {}
         self._wrr_current: dict[str, int] = {}
-        self._consistent_hash_ring: list[tuple] = []
+        self._consistent_hash_ring: list[tuple[str, str]] = []
         self._lock = threading.RLock()
         self._running = False
-        self._health_check_task: asyncio.Task | None = None
+        self._health_check_task: asyncio.Task[None] | None = None
 
         if backends:
             for backend in backends:
                 self.add_backend(backend)
 
-    def add_backend(self, backend: Backend):
+    def add_backend(self, backend: Backend) -> None:
         with self._lock:
             self.backends[backend.backend_id] = backend
             self._update_weighted_round_robin()
@@ -156,11 +156,11 @@ class LoadBalancer:
         with self._lock:
             return list(self.backends.values())
 
-    def _update_weighted_round_robin(self):
+    def _update_weighted_round_robin(self) -> None:
         self._wrr_weights = {b.backend_id: b.weight for b in self.backends.values()}
         self._wrr_current = {b.backend_id: 0 for b in self.backends.values()}
 
-    def _rebuild_consistent_hash_ring(self):
+    def _rebuild_consistent_hash_ring(self) -> None:
         self._consistent_hash_ring = []
         for backend in self.backends.values():
             if backend.is_available:
@@ -169,7 +169,7 @@ class LoadBalancer:
                     self._consistent_hash_ring.append((key, backend.backend_id))
         self._consistent_hash_ring.sort(key=lambda x: x[0])
 
-    def select_backend(self, client_ip: str = None, session_id: str = None) -> Backend | None:
+    def select_backend(self, client_ip: str | None = None, session_id: str | None = None) -> Backend | None:
         with self._lock:
             available = [b for b in self.backends.values() if b.is_available]
             if not available:
@@ -223,7 +223,7 @@ class LoadBalancer:
     def _weighted_least_connections(self, available: list[Backend]) -> Backend:
         return min(available, key=lambda b: b.current_connections / max(b.weight, 1))
 
-    def _ip_hash(self, available: list[Backend], client_ip: str) -> Backend:
+    def _ip_hash(self, available: list[Backend], client_ip: str | None) -> Backend:
         if not client_ip:
             return available[0]
         hash_val = int(hashlib.md5(client_ip.encode()).hexdigest(), 16)
@@ -261,7 +261,7 @@ class LoadBalancer:
             return None
         return available[hash_val % len(available)]
 
-    def record_request(self, backend_id: str, success: bool, response_time: float):
+    def record_request(self, backend_id: str, success: bool, response_time: float) -> None:
         with self._lock:
             backend = self.backends.get(backend_id)
             if backend:
@@ -282,17 +282,17 @@ class LoadBalancer:
                 return True
         return False
 
-    def release_connection(self, backend_id: str):
+    def release_connection(self, backend_id: str) -> None:
         with self._lock:
             backend = self.backends.get(backend_id)
             if backend:
                 backend.current_connections = max(0, backend.current_connections - 1)
 
-    async def start_health_checks(self):
+    async def start_health_checks(self) -> None:
         self._running = True
         self._health_check_task = asyncio.create_task(self._health_check_loop())
 
-    async def stop_health_checks(self):
+    async def stop_health_checks(self) -> None:
         self._running = False
         if self._health_check_task:
             self._health_check_task.cancel()
@@ -301,12 +301,12 @@ class LoadBalancer:
             except asyncio.CancelledError:
                 pass
 
-    async def _health_check_loop(self):
+    async def _health_check_loop(self) -> None:
         while self._running:
             await asyncio.sleep(self.config.health_check_interval)
             await self._perform_health_checks()
 
-    async def _perform_health_checks(self):
+    async def _perform_health_checks(self) -> None:
         for backend in list(self.backends.values()):
             if backend.status == BackendStatus.MAINTENANCE:
                 continue
@@ -364,7 +364,7 @@ class CircuitBreaker:
         failure_threshold: int = 5,
         recovery_timeout: float = 30.0,
         half_open_requests: int = 3,
-    ):
+    ) -> None:
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.half_open_requests = half_open_requests
@@ -374,7 +374,7 @@ class CircuitBreaker:
         self.last_failure_time = 0
         self._lock = threading.RLock()
 
-    def record_success(self):
+    def record_success(self) -> None:
         with self._lock:
             if self.state == "half_open":
                 self.successes += 1
@@ -385,7 +385,7 @@ class CircuitBreaker:
             else:
                 self.failures = 0
 
-    def record_failure(self):
+    def record_failure(self) -> None:
         with self._lock:
             self.failures += 1
             self.last_failure_time = time.time()

@@ -19,6 +19,9 @@ class RPCErrorCode(Enum):
     METHOD_NOT_FOUND = -32601
     INVALID_PARAMS = -32602
     INTERNAL_ERROR = -32603
+    SERVER_ERROR = -32000
+    TIMEOUT = -32001
+    CANCELLED = -32002
 
 
 class RPCError(Exception):
@@ -26,9 +29,6 @@ class RPCError(Exception):
     def __init__(self, message: str, code: int = RPCErrorCode.INTERNAL_ERROR.value):
         super().__init__(message)
         self.code = code
-    SERVER_ERROR = -32000
-    TIMEOUT = -32001
-    CANCELLED = -32002
 
 
 @dataclass
@@ -103,16 +103,13 @@ class RPCNotification:
         }
 
 
-from dataclasses import dataclass
-
-
 @dataclass
 class RPCMethod:
     name: str
-    handler: Callable
+    handler: Callable[..., Any]
     description: str = ""
-    params_schema: dict | None = None
-    return_schema: dict | None = None
+    params_schema: dict[str, Any] | None = None
+    return_schema: dict[str, Any] | None = None
 
 
 class RPCGateway:
@@ -121,19 +118,19 @@ class RPCGateway:
         host: str = "0.0.0.0",
         port: int = 8080,
         ssl_context: ssl.SSLContext | None = None,
-    ):
+    ) -> None:
         self.host = host
         self.port = port
         self.ssl_context = ssl_context
         self.methods: dict[str, RPCMethod] = {}
-        self.middlewares: list[Callable] = []
+        self.middlewares: list[Callable[..., Any]] = []
         self.server: asyncio.Server | None = None
         self._running = False
         self._request_id = 0
-        self._pending: dict[str, asyncio.Future] = {}
+        self._pending: dict[str, asyncio.Future[Any]] = {}
         self._lock = asyncio.Lock()
 
-    def register(self, method: RPCMethod):
+    def register(self, method: RPCMethod) -> None:
         self.methods[method.name] = method
 
     def unregister(self, name: str) -> bool:
@@ -142,10 +139,10 @@ class RPCGateway:
             return True
         return False
 
-    def add_middleware(self, middleware: Callable):
+    def add_middleware(self, middleware: Callable[..., Any]) -> None:
         self.middlewares.append(middleware)
 
-    async def start(self):
+    async def start(self) -> None:
         self._running = True
         self.server = await asyncio.start_server(
             self._handle_connection,
@@ -155,13 +152,13 @@ class RPCGateway:
         )
         await self.server.start_serving()
 
-    async def stop(self):
+    async def stop(self) -> None:
         self._running = False
         if self.server:
             self.server.close()
             await self.server.wait_closed()
 
-    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             while self._running:
                 data = await reader.readline()
@@ -186,7 +183,7 @@ class RPCGateway:
             writer.close()
             await writer.wait_closed()
 
-    async def _process_request(self, request_data: dict) -> RPCResponse | None:
+    async def _process_request(self, request_data: dict[str, Any]) -> RPCResponse | None:
         if "method" not in request_data:
             return RPCResponse.error_response(
                 request_data.get("id", ""), RPCErrorCode.INVALID_REQUEST.value, "Invalid request"
@@ -195,7 +192,10 @@ class RPCGateway:
         request = RPCRequest.from_dict(request_data)
 
         for middleware in self.middlewares:
-            request = await middleware(request) if asyncio.iscoroutinefunction(middleware) else middleware(request)
+            if asyncio.iscoroutinefunction(middleware):
+                request = await middleware(request)
+            else:
+                request = middleware(request)
 
         if request.method not in self.methods:
             return RPCResponse.error_response(
@@ -257,8 +257,7 @@ class RPCGateway:
             async with self._lock:
                 self._pending.pop(request.id, None)
 
-    def notify(self, host: str, port: int, method: str, params: list | dict | None = None):
-        notification = RPCNotification(method=method, params=params)
+    def notify(self, host: str, port: int, method: str, params: list | dict | None = None) -> None:
         # Fire and forget - would need persistent connection pool in production
         pass
 
@@ -271,7 +270,7 @@ class RPCClient:
         timeout: float = 30.0,
         use_ssl: bool = False,
         ssl_context: ssl.SSLContext | None = None,
-    ):
+    ) -> None:
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -279,16 +278,16 @@ class RPCClient:
         self.ssl_context = ssl_context
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
-        self._pending: dict[str, asyncio.Future] = {}
-        _lock = asyncio.Lock()
+        self._pending: dict[str, asyncio.Future[Any]] = {}
+        self._lock = asyncio.Lock()
 
-    async def connect(self):
+    async def connect(self) -> None:
         self._reader, self._writer = await asyncio.open_connection(
             self.host, self.port, ssl=self.ssl_context if self.use_ssl else None
         )
         asyncio.create_task(self._read_loop())
 
-    async def _read_loop(self):
+    async def _read_loop(self) -> None:
         while self._writer and not self._writer.is_closing():
             try:
                 data = await self._reader.readline()
@@ -321,18 +320,18 @@ class RPCClient:
             self._pending.pop(request.id, None)
             raise TimeoutError(f"RPC call to {method} timed out")
 
-    async def close(self):
+    async def close(self) -> None:
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()
 
 
 class ServiceRegistry:
-    def __init__(self):
+    def __init__(self) -> None:
         self.services: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
-    def register(self, name: str, host: str, port: int, metadata: dict[str, Any] = None):
+    def register(self, name: str, host: str, port: int, metadata: dict[str, Any] | None = None) -> None:
         with self._lock:
             self.services[name] = {
                 "host": host,
@@ -357,12 +356,12 @@ class ServiceRegistry:
         with self._lock:
             return [{"name": k, **v} for k, v in self.services.items()]
 
-    def heartbeat(self, name: str):
+    def heartbeat(self, name: str) -> None:
         with self._lock:
             if name in self.services:
                 self.services[name]["last_heartbeat"] = time.time()
 
-    def cleanup_stale(self, max_age: float = 60.0):
+    def cleanup_stale(self, max_age: float = 60.0) -> None:
         now = time.time()
         with self._lock:
             stale = [k for k, v in self.services.items() if now - v["last_heartbeat"] > max_age]

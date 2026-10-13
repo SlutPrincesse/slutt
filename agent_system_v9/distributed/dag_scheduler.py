@@ -33,7 +33,7 @@ class TaskPriority(Enum):
 class Task:
     task_id: str
     name: str
-    func: Callable
+    func: Callable[..., Any]
     args: tuple = field(default_factory=tuple)
     kwargs: dict[str, Any] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
@@ -48,7 +48,7 @@ class Task:
     completed_at: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __lt__(self, other):
+    def __lt__(self, other: 'Task') -> bool:
         return self.priority.value > other.priority.value
 
 
@@ -61,10 +61,10 @@ class DAG:
     reverse_edges: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def add_task(self, task: Task):
+    def add_task(self, task: Task) -> None:
         self.tasks[task.task_id] = task
 
-    def add_edge(self, from_task: str, to_task: str):
+    def add_edge(self, from_task: str, to_task: str) -> None:
         self.edges[from_task].add(to_task)
         self.reverse_edges[to_task].add(from_task)
 
@@ -107,7 +107,7 @@ class DAGScheduler:
         max_concurrent: int = 10,
         default_timeout: float = 300.0,
         enable_priority: bool = True,
-    ):
+    ) -> None:
         self.max_concurrent = max_concurrent
         self.default_timeout = default_timeout
         self.enable_priority = enable_priority
@@ -118,14 +118,14 @@ class DAGScheduler:
         self._running = False
         self._semaphore: asyncio.Semaphore | None = None
         self._task_queue: list[Task] = []
-        _callbacks: list[Callable] = []
+        self._callbacks: list[Callable[[Task], Any]] = []
 
-    async def start(self):
+    async def start(self) -> None:
         self._running = True
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         asyncio.create_task(self._scheduler_loop())
 
-    async def stop(self, wait: bool = True):
+    async def stop(self, wait: bool = True) -> None:
         self._running = False
         if wait:
             while self.running_tasks:
@@ -143,13 +143,13 @@ class DAGScheduler:
         self._enqueue_ready_tasks(dag)
         return dag_id
 
-    def _enqueue_ready_tasks(self, dag: DAG):
+    def _enqueue_ready_tasks(self, dag: DAG) -> None:
         for task in dag.tasks.values():
             if task.status == TaskStatus.PENDING and not dag.get_dependencies(task.task_id):
                 task.status = TaskStatus.READY
                 heappush(self._task_queue, task)
 
-    async def _scheduler_loop(self):
+    async def _scheduler_loop(self) -> None:
         while self._running:
             if self._task_queue and len(self.running_tasks) < self.max_concurrent:
                 task = heappop(self._task_queue)
@@ -157,7 +157,7 @@ class DAGScheduler:
                     asyncio.create_task(self._execute_task(task))
             await asyncio.sleep(0.01)
 
-    async def _execute_task(self, task: Task):
+    async def _execute_task(self, task: Task) -> None:
         async with self._semaphore:
             task.status = TaskStatus.RUNNING
             task.started_at = time.time()
@@ -190,7 +190,7 @@ class DAGScheduler:
             if dag:
                 await self._check_dependents(dag, task)
 
-    async def _handle_failure(self, task: Task):
+    async def _handle_failure(self, task: Task) -> None:
         if task.retries < task.max_retries:
             task.retries += 1
             task.status = TaskStatus.READY
@@ -199,7 +199,7 @@ class DAGScheduler:
             task.status = TaskStatus.FAILED
             task.completed_at = time.time()
 
-    async def _check_dependents(self, dag: DAG, completed_task: Task):
+    async def _check_dependents(self, dag: DAG, completed_task: Task) -> None:
         for dependent_id in dag.get_dependents(completed_task.task_id):
             dependent = dag.tasks[dependent_id]
             if dependent.status == TaskStatus.PENDING:
@@ -218,10 +218,10 @@ class DAGScheduler:
                 return dag
         return None
 
-    def add_callback(self, callback: Callable):
+    def add_callback(self, callback: Callable[[Task], Any]) -> None:
         self._callbacks.append(callback)
 
-    async def _notify_callbacks(self, task: Task):
+    async def _notify_callbacks(self, task: Task) -> None:
         for callback in self._callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -265,7 +265,7 @@ class DAGScheduler:
             return {}
         return {tid: task.result for tid, task in dag.tasks.items() if task.status == TaskStatus.COMPLETED}
 
-    def cancel_dag(self, dag_id: str):
+    def cancel_dag(self, dag_id: str) -> None:
         dag = self.dags.get(dag_id)
         if not dag:
             return
@@ -273,7 +273,7 @@ class DAGScheduler:
             if task.status in (TaskStatus.PENDING, TaskStatus.READY):
                 task.status = TaskStatus.CANCELLED
 
-    def retry_failed(self, dag_id: str):
+    def retry_failed(self, dag_id: str) -> None:
         dag = self.dags.get(dag_id)
         if not dag:
             return
@@ -286,7 +286,7 @@ class DAGScheduler:
 
 
 class DynamicDAGBuilder:
-    def __init__(self, scheduler: DAGScheduler):
+    def __init__(self, scheduler: DAGScheduler) -> None:
         self.scheduler = scheduler
         self.current_dag: DAG | None = None
 
@@ -297,12 +297,12 @@ class DynamicDAGBuilder:
     def add_task(
         self,
         name: str,
-        func: Callable,
+        func: Callable[..., Any],
         args: tuple = (),
-        kwargs: dict = None,
-        dependencies: list[str] = None,
+        kwargs: dict | None = None,
+        dependencies: list[str] | None = None,
         priority: TaskPriority = TaskPriority.NORMAL,
-        timeout: float = None,
+        timeout: float | None = None,
         max_retries: int = 3,
     ) -> 'DynamicDAGBuilder':
         if not self.current_dag:
@@ -340,11 +340,11 @@ class DynamicDAGBuilder:
 
 
 class WorkflowEngine:
-    def __init__(self, scheduler: DAGScheduler):
+    def __init__(self, scheduler: DAGScheduler) -> None:
         self.scheduler = scheduler
-        self.workflows: dict[str, dict] = {}
+        self.workflows: dict[str, dict[str, Any]] = {}
 
-    def define_workflow(self, name: str, steps: list[dict]) -> str:
+    def define_workflow(self, name: str, steps: list[dict[str, Any]]) -> str:
         builder = DynamicDAGBuilder(self.scheduler).new_dag(name)
 
         task_ids = {}
@@ -367,6 +367,6 @@ class WorkflowEngine:
 
         return builder.build_and_submit()
 
-    def execute_workflow(self, workflow_id: str, inputs: dict[str, Any] = None) -> dict[str, Any]:
+    def execute_workflow(self, workflow_id: str, inputs: dict[str, Any] | None = None) -> dict[str, Any]:
         # Execute synchronously for simple cases
-        pass
+        return {}

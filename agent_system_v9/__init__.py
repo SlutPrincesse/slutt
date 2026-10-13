@@ -445,14 +445,14 @@ __all__ = [
     "ShadowIndex", "IndexMerger", "IndexEntry", "IndexEntryStatus", "IndexTree",
     # Evolution
     "EvolutionEngine", "EvolutionConfig", "EvolutionResult", "Individual",
-    "FitnessFunction", "EvolutionStrategy", "SelectionMethod",
+    "FitnessFunction", "EvolutionStrategyEnum", "SelectionMethod",
     "MultiObjectiveEvolution", "AdaptiveEvolution",
     "CodeEvolutionEngine", "CodeEvolutionConfig", "CodeIndividual", "CodeMutationType",
     "CodeOptimizer", "RefactoringEvolution",
     "ArchitectureEvolutionEngine", "ArchitectureEvolutionConfig", "ArchitectureIndividual",
     "ArchitectureDecision", "ArchitecturePattern", "QualityAttribute",
     "ArchitectureFitnessFunction", "ArchitectureOptimizer", "EvolutionaryArchitectureReviewer",
-    "EvolutionStrategy", "CMAES", "ParticleSwarmOptimization",
+    "EvoStrategy", "CMAES", "ParticleSwarmOptimization",
     "DifferentialEvolution", "EvolutionStrategyPlus", "EvolutionStrategyComma",
     "StrategyConfig", "StrategyResult", "StrategySelector", "AdaptiveStrategySelector", "PortfolioOptimizer", "StrategyType",
     # Integrations

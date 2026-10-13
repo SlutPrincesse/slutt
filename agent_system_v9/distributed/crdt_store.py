@@ -30,10 +30,10 @@ class CRDTType(Enum):
 class VectorClock:
     clocks: dict[str, int] = field(default_factory=dict)
 
-    def increment(self, node_id: str):
+    def increment(self, node_id: str) -> None:
         self.clocks[node_id] = self.clocks.get(node_id, 0) + 1
 
-    def merge(self, other: 'VectorClock'):
+    def merge(self, other: 'VectorClock') -> None:
         for node_id, clock in other.clocks.items():
             self.clocks[node_id] = max(self.clocks.get(node_id, 0), clock)
 
@@ -73,11 +73,11 @@ class CRDT(ABC):
 
 
 class GCounter(CRDT):
-    def __init__(self, node_id: str = ""):
+    def __init__(self, node_id: str = "") -> None:
         self.node_id = node_id
-        self.counts: dict[str, int] = defaultdict(int)
+        self.counts: defaultdict[str, int] = defaultdict(int)
 
-    def increment(self, node_id: str = None, value: int = 1):
+    def increment(self, node_id: str | None = None, value: int = 1) -> None:
         nid = node_id or self.node_id
         self.counts[nid] += value
 
@@ -102,15 +102,15 @@ class GCounter(CRDT):
 
 
 class PNCounter(CRDT):
-    def __init__(self, node_id: str = ""):
+    def __init__(self, node_id: str = "") -> None:
         self.node_id = node_id
         self.positive = GCounter(node_id)
         self.negative = GCounter(node_id)
 
-    def increment(self, node_id: str = None, value: int = 1):
+    def increment(self, node_id: str | None = None, value: int = 1) -> None:
         self.positive.increment(node_id, value)
 
-    def decrement(self, node_id: str = None, value: int = 1):
+    def decrement(self, node_id: str | None = None, value: int = 1) -> None:
         self.negative.increment(node_id, value)
 
     def value(self) -> int:
@@ -139,11 +139,11 @@ class PNCounter(CRDT):
 
 
 class GSet(CRDT, Generic[T]):
-    def __init__(self, node_id: str = ""):
+    def __init__(self, node_id: str = "") -> None:
         self.node_id = node_id
         self.elements: set[T] = set()
 
-    def add(self, element: T):
+    def add(self, element: T) -> None:
         self.elements.add(element)
 
     def contains(self, element: T) -> bool:
@@ -165,7 +165,7 @@ class GSet(CRDT, Generic[T]):
 
 
 class ORSet(CRDT, Generic[T]):
-    def __init__(self, node_id: str = ""):
+    def __init__(self, node_id: str = "") -> None:
         self.node_id = node_id
         self.elements: dict[T, dict[str, float]] = {}
         self.add_tags: dict[T, dict[str, float]] = {}
@@ -174,7 +174,7 @@ class ORSet(CRDT, Generic[T]):
     def _generate_tag(self) -> str:
         return f"{self.node_id}:{time.time()}:{uuid.uuid4().hex[:8]}"
 
-    def add(self, element: T):
+    def add(self, element: T) -> None:
         tag = self._generate_tag()
         if element not in self.elements:
             self.elements[element] = {}
@@ -182,7 +182,7 @@ class ORSet(CRDT, Generic[T]):
             self.remove_tags[element] = {}
         self.add_tags[element][tag] = time.time()
 
-    def remove(self, element: T):
+    def remove(self, element: T) -> None:
         if element in self.elements:
             for tag in self.add_tags.get(element, {}):
                 self.remove_tags[element][tag] = time.time()
@@ -241,13 +241,13 @@ class ORSet(CRDT, Generic[T]):
 
 
 class LWWRegister(CRDT, Generic[T]):
-    def __init__(self, node_id: str = "", value: T = None):
+    def __init__(self, node_id: str = "", value: T | None = None) -> None:
         self.node_id = node_id
         self.value = value
         self.timestamp = time.time()
         self.node_ts = node_id
 
-    def set(self, value: T, node_id: str = None, timestamp: float = None):
+    def set(self, value: T, node_id: str | None = None, timestamp: float | None = None) -> None:
         ts = timestamp or time.time()
         nid = node_id or self.node_id
 
@@ -256,7 +256,7 @@ class LWWRegister(CRDT, Generic[T]):
             self.timestamp = ts
             self.node_ts = nid
 
-    def get(self) -> T:
+    def get(self) -> T | None:
         return self.value
 
     def merge(self, other: 'LWWRegister') -> 'LWWRegister':
@@ -291,11 +291,11 @@ class LWWRegister(CRDT, Generic[T]):
 
 
 class LWWMap(CRDT):
-    def __init__(self, node_id: str = ""):
+    def __init__(self, node_id: str = "") -> None:
         self.node_id = node_id
         self.registers: dict[str, LWWRegister] = {}
 
-    def set(self, key: str, value: Any, node_id: str = None, timestamp: float = None):
+    def set(self, key: str, value: Any, node_id: str | None = None, timestamp: float | None = None) -> None:
         if key not in self.registers:
             self.registers[key] = LWWRegister(node_id or self.node_id)
         self.registers[key].set(value, node_id, timestamp)
@@ -304,7 +304,7 @@ class LWWMap(CRDT):
         reg = self.registers.get(key)
         return reg.get() if reg else None
 
-    def delete(self, key: str, node_id: str = None, timestamp: float = None):
+    def delete(self, key: str, node_id: str | None = None, timestamp: float | None = None) -> None:
         self.set(key, None, node_id, timestamp)
 
     def keys(self) -> builtins.set[str]:
@@ -341,15 +341,15 @@ class LWWMap(CRDT):
 
 
 class CRDTStore:
-    def __init__(self, node_id: str):
+    def __init__(self, node_id: str) -> None:
         self.node_id = node_id
         self.crdts: dict[str, CRDT] = {}
         self.vector_clock = VectorClock()
-        self.peers: dict[str, CRDTStore] = {}
+        self.peers: dict[str, 'CRDTStore'] = {}
         self._lock = asyncio.Lock()
-        self._callbacks: dict[str, list[Callable]] = defaultdict(list)
+        self._callbacks: defaultdict[str, list[Callable[[Any], Any]]] = defaultdict(list)
 
-    def register_crdt(self, name: str, crdt: CRDT):
+    def register_crdt(self, name: str, crdt: CRDT) -> None:
         self.crdts[name] = crdt
 
     def get_crdt(self, name: str) -> CRDT | None:
@@ -385,7 +385,7 @@ class CRDTStore:
             self.crdts[name] = LWWMap(self.node_id)
         return self.crdts[name]
 
-    async def merge_from(self, other_store: 'CRDTStore'):
+    async def merge_from(self, other_store: 'CRDTStore') -> None:
         async with self._lock:
             for name, other_crdt in other_store.crdts.items():
                 if name in self.crdts:
@@ -396,19 +396,19 @@ class CRDTStore:
             self.vector_clock.merge(other_store.vector_clock)
             await self._notify_callbacks()
 
-    async def sync_with_peer(self, peer_id: str, peer_store: 'CRDTStore'):
+    async def sync_with_peer(self, peer_id: str, peer_store: 'CRDTStore') -> None:
         await self.merge_from(peer_store)
 
-    def add_peer(self, peer_id: str, peer_store: 'CRDTStore'):
+    def add_peer(self, peer_id: str, peer_store: 'CRDTStore') -> None:
         self.peers[peer_id] = peer_store
 
-    def remove_peer(self, peer_id: str):
+    def remove_peer(self, peer_id: str) -> None:
         self.peers.pop(peer_id, None)
 
-    def on_change(self, name: str, callback: Callable):
+    def on_change(self, name: str, callback: Callable[[Any], Any]) -> None:
         self._callbacks[name].append(callback)
 
-    async def _notify_callbacks(self):
+    async def _notify_callbacks(self) -> None:
         for name, crdt in self.crdts.items():
             for callback in self._callbacks.get(name, []):
                 try:
@@ -426,7 +426,7 @@ class CRDTStore:
             "crdts": {name: crdt.to_dict() for name, crdt in self.crdts.items()},
         }
 
-    def load_state(self, state: dict[str, Any]):
+    def load_state(self, state: dict[str, Any]) -> None:
         self.vector_clock = VectorClock.from_dict(state.get("vector_clock", {}))
         for name, crdt_data in state.get("crdts", {}).items():
             crdt_type = crdt_data.get("type")
@@ -445,19 +445,19 @@ class CRDTStore:
 
 
 class CRDTCluster:
-    def __init__(self, node_id: str):
+    def __init__(self, node_id: str) -> None:
         self.local_store = CRDTStore(node_id)
         self.peers: dict[str, CRDTStore] = {}
 
-    def add_peer(self, peer_id: str, peer_store: CRDTStore):
+    def add_peer(self, peer_id: str, peer_store: CRDTStore) -> None:
         self.peers[peer_id] = peer_store
         self.local_store.add_peer(peer_id, peer_store)
 
-    async def sync_all(self):
+    async def sync_all(self) -> None:
         for peer_id, peer_store in self.peers.items():
             await self.local_store.sync_with_peer(peer_id, peer_store)
 
-    async def broadcast_operation(self, crdt_name: str, operation: str, *args, **kwargs):
+    async def broadcast_operation(self, crdt_name: str, operation: str, *args: Any, **kwargs: Any) -> None:
         crdt = self.local_store.get_crdt(crdt_name)
         if crdt:
             getattr(crdt, operation)(*args, **kwargs)

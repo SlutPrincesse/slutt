@@ -25,7 +25,7 @@ class SystemConfig:
     _instance: Optional['SystemConfig'] = None
     _lock = threading.RLock()
 
-    DEFAULTS = {
+    DEFAULTS: dict[str, SectionConfig] = {
         "kernel": SectionConfig(
             enabled=True,
             parameters={
@@ -290,11 +290,11 @@ class SystemConfig:
         self._config: dict[str, SectionConfig] = deepcopy(self.DEFAULTS)
         self._env_prefix = "AGENT_V9_"
         self._config_files: list[Path] = []
-        self._watchers: list[Callable] = []
+        self._watchers: list[Callable[[dict[str, SectionConfig]], None]] = []
         self._initialized = True
         self._load_from_env()
 
-    def _load_from_env(self):
+    def _load_from_env(self) -> None:
         for key, value in os.environ.items():
             if key.startswith(self._env_prefix):
                 parts = key[len(self._env_prefix):].lower().split("__")
@@ -317,7 +317,7 @@ class SystemConfig:
                 except ValueError:
                     return value
 
-    def _set_nested_param(self, section: str, param: str, value: Any):
+    def _set_nested_param(self, section: str, param: str, value: Any) -> None:
         if section in self._config:
             keys = param.split("_")
             target = self._config[section].parameters
@@ -363,7 +363,7 @@ class SystemConfig:
     def save_file(self, path: str | Path) -> bool:
         path = Path(path)
         try:
-            data = {}
+            data: dict[str, Any] = {}
             for section, config in self._config.items():
                 data[section] = asdict(config)
 
@@ -387,7 +387,7 @@ class SystemConfig:
         if not section_config:
             return default
         keys = param.split(".")
-        value = section_config.parameters
+        value: Any = section_config.parameters
         for key in keys:
             if isinstance(value, dict) and key in value:
                 value = value[key]
@@ -395,7 +395,7 @@ class SystemConfig:
                 return default
         return value
 
-    def set_param(self, section: str, param: str, value: Any):
+    def set_param(self, section: str, param: str, value: Any) -> None:
         if section in self._config:
             keys = param.split(".")
             target = self._config[section].parameters
@@ -409,12 +409,12 @@ class SystemConfig:
     def is_enabled(self, section: str) -> bool:
         return self._config.get(section, SectionConfig()).enabled
 
-    def enable_section(self, section: str):
+    def enable_section(self, section: str) -> None:
         if section in self._config:
             self._config[section].enabled = True
             self._notify_watchers()
 
-    def disable_section(self, section: str):
+    def disable_section(self, section: str) -> None:
         if section in self._config:
             self._config[section].enabled = False
             self._notify_watchers()
@@ -422,14 +422,14 @@ class SystemConfig:
     def get_all(self) -> dict[str, SectionConfig]:
         return dict(self._config)
 
-    def add_watcher(self, callback: Callable):
+    def add_watcher(self, callback: Callable[[dict[str, SectionConfig]], None]) -> None:
         self._watchers.append(callback)
 
-    def remove_watcher(self, callback: Callable):
+    def remove_watcher(self, callback: Callable[[dict[str, SectionConfig]], None]) -> None:
         if callback in self._watchers:
             self._watchers.remove(callback)
 
-    def _notify_watchers(self):
+    def _notify_watchers(self) -> None:
         for watcher in self._watchers:
             try:
                 watcher(self._config)
