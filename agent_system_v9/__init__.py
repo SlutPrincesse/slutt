@@ -5,7 +5,22 @@ Master Technical Architecture Specification & Consolidated Implementation Roadma
 from typing import Dict, Any
 
 # Core
-from .core import SystemRegistry, EventBus, SystemConfig, registry, event_bus, config
+from .core import (
+    SystemRegistry,
+    EventBus,
+    Event,
+    EventPriority,
+    SystemConfig,
+    SectionConfig,
+    registry,
+    event_bus,
+    config,
+    PluginManager,
+    PluginMetadata,
+    PluginState,
+    PluginContext,
+    plugin_manager,
+)
 
 # Providers (Phase 1)
 from .providers import (
@@ -268,7 +283,9 @@ __codename__ = "NEURO-CRANIAL OVERLORD"
 
 __all__ = [
     # Core
-    "SystemRegistry", "EventBus", "SystemConfig", "registry", "event_bus", "config",
+    "SystemRegistry", "EventBus", "Event", "EventPriority", "SystemConfig", "SectionConfig",
+    "registry", "event_bus", "config",
+    "PluginManager", "PluginMetadata", "PluginState", "PluginContext", "plugin_manager",
     # Providers (Phase 1)
     "LLMProvider", "ModelInfo", "LLMResponse", "LLMChunk", "ProviderType",
     "ProviderError", "RateLimitError", "AuthenticationError", "ModelNotFoundError",

@@ -112,10 +112,12 @@ class SystemRegistry:
     def update_health(self, component_id: str, health_score: float):
         if component_id in self._components:
             self._components[component_id].health_score = health_score
-            if health_score < 0.5:
-                self._components[component_id].state = ComponentState.DEGRADED
-            elif health_score < 0.2:
+            if health_score < 0.2:
                 self._components[component_id].state = ComponentState.FAILED
+            elif health_score < 0.5:
+                self._components[component_id].state = ComponentState.DEGRADED
+            else:
+                self._components[component_id].state = ComponentState.ACTIVE
     
     def heartbeat(self, component_id: str):
         import time
@@ -123,7 +125,9 @@ class SystemRegistry:
             self._components[component_id].last_heartbeat = time.time()
     
     def resolve_dependencies(self, component_id: str) -> List[str]:
-        return self._dependency_graph.get(component_id, [])
+        if component_id in self._components:
+            return self._components[component_id].dependencies
+        return []
 
 
 registry = SystemRegistry()
