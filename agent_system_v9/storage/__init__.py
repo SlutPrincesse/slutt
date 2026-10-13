@@ -30,6 +30,7 @@ from .content_addressable import (
     ContentAddressableStore as CASContentAddressableStore,
     BlobStore,
     DeltaSync as CASDeltaSync,
+    DeltaSync,  # Export as both names
     GarbageCollector as CASGarbageCollector,
     Blob,
     Chunk,
@@ -64,6 +65,7 @@ __all__ = [
     "DeltaEncoder",
     # Content Addressable (CAS)
     "BlobStore",
+    "DeltaSync",
     "CASDeltaSync",
     "CASGarbageCollector",
     "Blob",

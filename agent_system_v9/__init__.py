@@ -171,6 +171,7 @@ from .storage import (
     AssetLifecycler, BuildLedger,
     Delta, DeltaType, DeltaOperation, SyncState, DeltaEncoder,
     BlobStore, Chunker, Blob, Chunk, ChunkingStrategy, CASConfig,
+    DeltaSync, CASDeltaSync,
 )
 
 # Deployment (Section 20)
@@ -368,6 +369,7 @@ __all__ = [
     "AssetLifecycler", "BuildLedger",
     "Delta", "DeltaType", "DeltaOperation", "SyncState", "DeltaEncoder",
     "BlobStore", "Chunker", "Blob", "Chunk", "ChunkingStrategy", "CASConfig",
+    "DeltaSync", "CASDeltaSync",
     # Deployment
     "HealthVerifier", "DeploymentHandshake", "DegradationManager",
     "ArtifactBundler", "TelemetryMonitor",
