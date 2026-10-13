@@ -255,6 +255,8 @@ from .tools import (
 from .shadowgit import (
     ShadowGit, ShadowGitRemote, ShadowFile, ShadowCommit, ShadowBranch, ShadowDiff, ShadowGitStatus,
     ShadowIndex, IndexMerger, IndexEntry, IndexEntryStatus, IndexTree,
+    ShadowGitSync, ShadowGitLFS, SyncDirection, SyncStatus, RemoteProtocol,
+    RemoteConfig, SyncOptions, SyncResult, SyncConflict,
 )
 
 # Evolution (Section 31)

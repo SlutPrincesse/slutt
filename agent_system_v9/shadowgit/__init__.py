@@ -17,6 +17,17 @@ from .shadowgit_index import (
     IndexTree,
     ShadowIndex,
 )
+from .shadowgit_sync import (
+    ShadowGitSync,
+    ShadowGitLFS,
+    SyncDirection,
+    SyncStatus,
+    RemoteProtocol,
+    RemoteConfig,
+    SyncOptions,
+    SyncResult,
+    SyncConflict,
+)
 
 __all__ = [
     "ShadowGit",
@@ -31,4 +42,13 @@ __all__ = [
     "IndexEntry",
     "IndexEntryStatus",
     "IndexTree",
+    "ShadowGitSync",
+    "ShadowGitLFS",
+    "SyncDirection",
+    "SyncStatus",
+    "RemoteProtocol",
+    "RemoteConfig",
+    "SyncOptions",
+    "SyncResult",
+    "SyncConflict",
 ]
