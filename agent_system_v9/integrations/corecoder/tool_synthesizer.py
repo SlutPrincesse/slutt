@@ -3,15 +3,18 @@ CoreCoder Integration Module
 Maps CoreCoder CLI to V9 DynamicToolRegistry tools
 """
 import asyncio
-import json
 import os
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any
 
-from agent_system_v9.tools.tool_registry import DynamicToolRegistry, ToolEntry, ToolParameter, ToolCategory, SandboxSpec
 from agent_system_v9.kernel.sandbox_isolator import SandboxIsolator
 from agent_system_v9.memory.query_engine import QueryEngine
+from agent_system_v9.tools.tool_registry import (
+    DynamicToolRegistry,
+    SandboxSpec,
+    ToolCategory,
+    ToolParameter,
+)
 
 
 @dataclass
@@ -19,7 +22,7 @@ class CoreCoderCommand:
     name: str
     description: str
     mode: str
-    args_schema: Dict[str, Any]
+    args_schema: dict[str, Any]
     sandbox_spec: SandboxSpec
 
 
@@ -139,18 +142,18 @@ class CoreCoderToolSynthesizer:
         return count
 
     def _register_command(self, cmd: CoreCoderCommand):
-        async def corecoder_wrapper(**kwargs) -> Dict[str, Any]:
+        async def corecoder_wrapper(**kwargs) -> dict[str, Any]:
             workspace = kwargs.get("workspace", "/workspace")
-            
+
             if cmd.mode == "repl":
                 return await self._run_repl(kwargs, workspace)
-            elif cmd.mode == "task":
+            if cmd.mode == "task":
                 return await self._run_task(kwargs, workspace)
-            elif cmd.mode == "edit":
+            if cmd.mode == "edit":
                 return await self._run_edit(kwargs, workspace)
-            elif cmd.mode == "test":
+            if cmd.mode == "test":
                 return await self._run_test(kwargs, workspace)
-            
+
             return {"error": f"Unknown mode: {cmd.mode}", "success": False}
 
         params = [
@@ -176,16 +179,16 @@ class CoreCoderToolSynthesizer:
             metadata={"mode": cmd.mode},
         )
 
-    async def _run_repl(self, kwargs: Dict[str, Any], workspace: str) -> Dict[str, Any]:
+    async def _run_repl(self, kwargs: dict[str, Any], workspace: str) -> dict[str, Any]:
         return {"success": False, "error": "REPL mode not supported in tool context", "output": {}}
 
-    async def _run_task(self, kwargs: Dict[str, Any], workspace: str) -> Dict[str, Any]:
+    async def _run_task(self, kwargs: dict[str, Any], workspace: str) -> dict[str, Any]:
         prompt = kwargs.get("prompt", "")
         model = kwargs.get("model", "gpt-4o")
         temperature = kwargs.get("temperature", 0.7)
         max_tokens = kwargs.get("max_tokens", 4096)
         auto_apply = kwargs.get("auto_apply", True)
-        
+
         cmd = [
             "corecoder",
             "-p", prompt,
@@ -193,13 +196,13 @@ class CoreCoderToolSynthesizer:
             "--temperature", str(temperature),
             "--max-tokens", str(max_tokens),
         ]
-        
+
         if auto_apply:
             cmd.append("--auto-apply")
-        
+
         env = os.environ.copy()
         env["CORECODER_WORKSPACE"] = workspace
-        
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -209,26 +212,26 @@ class CoreCoderToolSynthesizer:
                 env=env,
             )
             stdout, stderr = await proc.communicate()
-            
+
             result = {
                 "success": proc.returncode == 0,
                 "output": stdout.decode(),
                 "stderr": stderr.decode(),
                 "returncode": proc.returncode,
             }
-            
+
             if result["success"]:
                 await self._ingest_result(kwargs, result)
-            
+
             return result
         except Exception as e:
             return {"success": False, "error": str(e), "output": ""}
 
-    async def _run_edit(self, kwargs: Dict[str, Any], workspace: str) -> Dict[str, Any]:
+    async def _run_edit(self, kwargs: dict[str, Any], workspace: str) -> dict[str, Any]:
         file_path = kwargs.get("file_path", "")
         instruction = kwargs.get("instruction", "")
         model = kwargs.get("model", "gpt-4o")
-        
+
         cmd = [
             "corecoder",
             "edit",
@@ -236,10 +239,10 @@ class CoreCoderToolSynthesizer:
             "--instruction", instruction,
             "--model", model,
         ]
-        
+
         env = os.environ.copy()
         env["CORECODER_WORKSPACE"] = workspace
-        
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -249,7 +252,7 @@ class CoreCoderToolSynthesizer:
                 env=env,
             )
             stdout, stderr = await proc.communicate()
-            
+
             return {
                 "success": proc.returncode == 0,
                 "output": stdout.decode(),
@@ -259,20 +262,20 @@ class CoreCoderToolSynthesizer:
         except Exception as e:
             return {"success": False, "error": str(e), "output": ""}
 
-    async def _run_test(self, kwargs: Dict[str, Any], workspace: str) -> Dict[str, Any]:
+    async def _run_test(self, kwargs: dict[str, Any], workspace: str) -> dict[str, Any]:
         test_path = kwargs.get("test_path", "")
         model = kwargs.get("model", "gpt-4o")
-        
+
         cmd = [
             "corecoder",
             "test",
             "--path", test_path,
             "--model", model,
         ]
-        
+
         env = os.environ.copy()
         env["CORECODER_WORKSPACE"] = workspace
-        
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -282,22 +285,22 @@ class CoreCoderToolSynthesizer:
                 env=env,
             )
             stdout, stderr = await proc.communicate()
-            
+
             result = {
                 "success": proc.returncode == 0,
                 "output": stdout.decode(),
                 "stderr": stderr.decode(),
                 "returncode": proc.returncode,
             }
-            
+
             if result["success"]:
                 await self._ingest_test_result(kwargs, result)
-            
+
             return result
         except Exception as e:
             return {"success": False, "error": str(e), "output": ""}
 
-    async def _ingest_result(self, kwargs: Dict[str, Any], result: Dict[str, Any]):
+    async def _ingest_result(self, kwargs: dict[str, Any], result: dict[str, Any]):
         self.query_engine.ingest_corecoder_result(
             task=kwargs.get("prompt", ""),
             result={
@@ -308,7 +311,7 @@ class CoreCoderToolSynthesizer:
             source="corecoder_task",
         )
 
-    async def _ingest_test_result(self, kwargs: Dict[str, Any], result: Dict[str, Any]):
+    async def _ingest_test_result(self, kwargs: dict[str, Any], result: dict[str, Any]):
         self.query_engine.ingest_corecoder_result(
             task=f"Test: {kwargs.get('test_path', '')}",
             result={
@@ -319,12 +322,12 @@ class CoreCoderToolSynthesizer:
             source="corecoder_test",
         )
 
-    def _extract_modified_files(self, output: str) -> List[str]:
+    def _extract_modified_files(self, output: str) -> list[str]:
         import re
         files = re.findall(r'(?:modified|created|updated)\s+([^\s]+\.\w+)', output, re.IGNORECASE)
         return list(set(files))
 
-    def _parse_test_output(self, output: str) -> Dict[str, Any]:
+    def _parse_test_output(self, output: str) -> dict[str, Any]:
         import re
         passed = len(re.findall(r'\bPASSED\b|\bpassed\b', output))
         failed = len(re.findall(r'\bFAILED\b|\bfailed\b', output))

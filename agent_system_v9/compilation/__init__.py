@@ -2,62 +2,65 @@
 Runtime Dynamic Compilation & Reflection (Section 18)
 """
 from .code_generator import (
-    UniversalCodeGenerator,
+    ASTToCodeConverter,
     CodeGenerator,
-    PythonCodeGenerator,
-    JavaScriptCodeGenerator,
-    TypeScriptCodeGenerator,
-    RustCodeGenerator,
     CodeTemplate,
     GenerationContext,
-    TargetLanguage,
-    ASTToCodeConverter,
     IncrementalCodeGenerator,
-)
-from .symbol_inspector import (
-    SymbolInspector,
-    SymbolTable,
-    Symbol,
-    SymbolReference,
-    Scope,
-    SymbolType,
-    Visibility,
-    CrossFileAnalyzer,
-)
-from .memory_compiler import (
-    JITCompiler,
-    HotReloader,
-    CompilationPipeline,
-    IncrementalCompiler,
-    CompilationUnit,
-    CompilationResult,
-    CompilationTarget,
-    CompilationStatus,
-    BaseCompiler,
-    BytecodeCompiler,
-    ASTCompiler,
-    MemoryCache,
+    JavaScriptCodeGenerator,
+    PythonCodeGenerator,
+    RustCodeGenerator,
+    TargetLanguage,
+    TypeScriptCodeGenerator,
+    UniversalCodeGenerator,
 )
 from .hot_swap import (
     HotSwapLoader,
-    PluginManager,
     IsolatedLoader,
     LazyLoader,
     LazyModuleProxy,
-    ModuleInfo,
-    ReloadEvent,
     LoadStatus,
+    ModuleInfo,
+    PluginManager,
+    ReloadEvent,
     temporary_module,
 )
+
+# Alias for AGENT_SYSTEM_V9 main package to avoid naming conflict with core.plugins.PluginManager
+CompilationPluginManager = PluginManager
+from .memory_compiler import (
+    ASTCompiler,
+    BaseCompiler,
+    BytecodeCompiler,
+    CompilationPipeline,
+    CompilationResult,
+    CompilationStatus,
+    CompilationTarget,
+    CompilationUnit,
+    HotReloader,
+    IncrementalCompiler,
+    JITCompiler,
+    MemoryCache,
+)
+from .symbol_inspector import (
+    CrossFileAnalyzer,
+    Scope,
+    Symbol,
+    SymbolInspector,
+    SymbolReference,
+    SymbolTable,
+    SymbolType,
+    Visibility,
+)
 from .type_marshaller import (
-    TypeMarshaller,
-    Marshaller,
-    JSONMarshaller,
     BinaryMarshaller,
+    CrossLanguageTypeMapper,
+    JSONMarshaller,
+    Marshaller,
+    SchemaValidator,
     TypeInfo,
     TypeKind,
-    SchemaValidator,
-    CrossLanguageTypeMapper,
+    TypeMarshaller,
 )
 
 __all__ = [
@@ -98,6 +101,7 @@ __all__ = [
     # Hot Swap
     "HotSwapLoader",
     "PluginManager",
+    "CompilationPluginManager",
     "IsolatedLoader",
     "LazyLoader",
     "LazyModuleProxy",

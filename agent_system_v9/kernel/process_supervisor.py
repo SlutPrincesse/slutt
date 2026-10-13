@@ -1,17 +1,18 @@
 """
 Process Subshell Supervisor - Spawn, monitor, signal, terminate background OS processes
 """
+import os
+import select
+import signal
 import subprocess
 import threading
 import time
-import signal
-import os
 import uuid
-from typing import Dict, List, Optional, Callable, Any, IO
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import deque
-import select
+from typing import Any
 
 
 class ProcessState(Enum):
@@ -26,16 +27,16 @@ class ProcessState(Enum):
 
 @dataclass
 class ProcessSpec:
-    command: List[str]
-    env: Dict[str, str] = field(default_factory=dict)
-    cwd: Optional[str] = None
-    stdin_data: Optional[str] = None
+    command: list[str]
+    env: dict[str, str] = field(default_factory=dict)
+    cwd: str | None = None
+    stdin_data: str | None = None
     timeout: float = 30.0
     capture_output: bool = True
     shell: bool = False
-    preexec_fn: Optional[Callable] = None
+    preexec_fn: Callable | None = None
     start_new_session: bool = True
-    resource_limits: Dict[str, Any] = field(default_factory=dict)
+    resource_limits: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -43,49 +44,49 @@ class ProcessResult:
     process_id: str
     spec: ProcessSpec
     state: ProcessState
-    returncode: Optional[int] = None
+    returncode: int | None = None
     stdout: str = ""
     stderr: str = ""
     start_time: float = 0.0
     end_time: float = 0.0
-    pid: Optional[int] = None
-    error: Optional[str] = None
+    pid: int | None = None
+    error: str | None = None
 
 
 class ProcessSupervisor:
     def __init__(self, max_processes: int = 100):
         self.max_processes = max_processes
-        self._processes: Dict[str, ProcessResult] = {}
-        self._running_processes: Dict[str, subprocess.Popen] = {}
-        self._output_buffers: Dict[str, Dict[str, deque]] = {}
+        self._processes: dict[str, ProcessResult] = {}
+        self._running_processes: dict[str, subprocess.Popen] = {}
+        self._output_buffers: dict[str, dict[str, deque]] = {}
         self._lock = threading.RLock()
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._running = False
-        self._callbacks: Dict[str, List[Callable]] = {
+        self._callbacks: dict[str, list[Callable]] = {
             "stdout": [],
             "stderr": [],
             "exit": [],
             "state_change": []
         }
-    
+
     def start(self):
         if self._running:
             return
         self._running = True
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
-    
+
     def stop(self):
         self._running = False
         self.terminate_all()
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5.0)
-    
+
     def spawn(self, spec: ProcessSpec) -> str:
         with self._lock:
             if len(self._running_processes) >= self.max_processes:
                 raise RuntimeError("Maximum process limit reached")
-            
+
             process_id = str(uuid.uuid4())[:8]
             result = ProcessResult(
                 process_id=process_id,
@@ -95,19 +96,19 @@ class ProcessSupervisor:
             )
             self._processes[process_id] = result
             self._output_buffers[process_id] = {"stdout": deque(maxlen=10000), "stderr": deque(maxlen=10000)}
-        
+
         thread = threading.Thread(target=self._run_process, args=(process_id, spec), daemon=True)
         thread.start()
         return process_id
-    
+
     def _run_process(self, process_id: str, spec: ProcessSpec):
         with self._lock:
             self._processes[process_id].state = ProcessState.STARTING
             self._notify_state_change(process_id, ProcessState.STARTING)
-        
+
         env = os.environ.copy()
         env.update(spec.env)
-        
+
         try:
             proc = subprocess.Popen(
                 spec.command,
@@ -128,23 +129,23 @@ class ProcessSupervisor:
                 self._processes[process_id].end_time = time.time()
                 self._notify_state_change(process_id, ProcessState.FAILED)
             return
-        
+
         with self._lock:
             self._running_processes[process_id] = proc
             self._processes[process_id].pid = proc.pid
             self._processes[process_id].state = ProcessState.RUNNING
             self._notify_state_change(process_id, ProcessState.RUNNING)
-        
+
         if spec.stdin_data and proc.stdin:
             try:
                 proc.stdin.write(spec.stdin_data.encode())
                 proc.stdin.close()
             except Exception:
                 pass
-        
+
         stdout_data = []
         stderr_data = []
-        
+
         try:
             if spec.capture_output and proc.stdout and proc.stderr:
                 stdout_data, stderr_data = self._read_output(process_id, proc, spec.timeout)
@@ -159,23 +160,23 @@ class ProcessSupervisor:
                 self._processes[process_id].error = str(e)
         finally:
             self._cleanup_process(process_id, proc, stdout_data, stderr_data)
-    
+
     def _read_output(self, process_id: str, proc: subprocess.Popen, timeout: float) -> tuple:
         stdout_chunks = []
         stderr_chunks = []
         start_time = time.time()
-        
+
         stdout_fd = proc.stdout.fileno() if proc.stdout else None
         stderr_fd = proc.stderr.fileno() if proc.stderr else None
-        
+
         while proc.poll() is None:
             if time.time() - start_time > timeout:
                 break
-            
+
             ready, _, _ = select.select(
                 [f for f in [stdout_fd, stderr_fd] if f is not None], [], [], 0.1
             )
-            
+
             for fd in ready:
                 if fd == stdout_fd:
                     chunk = os.read(fd, 8192)
@@ -191,11 +192,11 @@ class ProcessSupervisor:
                         stderr_chunks.append(text)
                         self._output_buffers[process_id]["stderr"].append(text)
                         self._notify_stderr(process_id, text)
-        
+
         return stdout_chunks, stderr_chunks
-    
-    def _cleanup_process(self, process_id: str, proc: subprocess.Popen, 
-                         stdout_data: List[str], stderr_data: List[str]):
+
+    def _cleanup_process(self, process_id: str, proc: subprocess.Popen,
+                         stdout_data: list[str], stderr_data: list[str]):
         returncode = proc.poll()
         if returncode is None:
             try:
@@ -203,7 +204,7 @@ class ProcessSupervisor:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 returncode = -9
-        
+
         with self._lock:
             self._running_processes.pop(process_id, None)
             result = self._processes[process_id]
@@ -211,107 +212,104 @@ class ProcessSupervisor:
             result.stdout = "".join(stdout_data)
             result.stderr = "".join(stderr_data)
             result.end_time = time.time()
-            
-            if returncode == 0:
-                result.state = ProcessState.TERMINATED
-            elif returncode < 0:
+
+            if returncode == 0 or returncode < 0:
                 result.state = ProcessState.TERMINATED
             else:
                 result.state = ProcessState.FAILED
-            
+
             self._notify_state_change(process_id, result.state)
             self._notify_exit(process_id, returncode)
-    
+
     def terminate(self, process_id: str, force: bool = False) -> bool:
         with self._lock:
             proc = self._running_processes.get(process_id)
             if not proc:
                 return False
-            
+
             self._processes[process_id].state = ProcessState.STOPPING
             self._notify_state_change(process_id, ProcessState.STOPPING)
-        
+
         try:
             if force:
                 if proc.poll() is None:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            else:
-                if proc.poll() is None:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                    try:
-                        proc.wait(timeout=5.0)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            elif proc.poll() is None:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                try:
+                    proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             return True
         except Exception:
             return False
-    
+
     def terminate_all(self, force: bool = False):
         with self._lock:
             process_ids = list(self._running_processes.keys())
         for pid in process_ids:
             self.terminate(pid, force)
-    
+
     def signal(self, process_id: str, sig: int) -> bool:
         with self._lock:
             proc = self._running_processes.get(process_id)
             if not proc or proc.poll() is not None:
                 return False
-        
+
         try:
             os.killpg(os.getpgid(proc.pid), sig)
             return True
         except Exception:
             return False
-    
-    def get_result(self, process_id: str) -> Optional[ProcessResult]:
+
+    def get_result(self, process_id: str) -> ProcessResult | None:
         with self._lock:
             return self._processes.get(process_id)
-    
+
     def get_output(self, process_id: str, stream: str = "stdout") -> str:
         with self._lock:
             buffer = self._output_buffers.get(process_id, {}).get(stream, deque())
             return "".join(buffer)
-    
-    def list_processes(self, state: Optional[ProcessState] = None) -> List[ProcessResult]:
+
+    def list_processes(self, state: ProcessState | None = None) -> list[ProcessResult]:
         with self._lock:
             results = list(self._processes.values())
             if state:
                 results = [r for r in results if r.state == state]
             return results
-    
+
     def register_callback(self, event: str, callback: Callable):
         if event in self._callbacks:
             self._callbacks[event].append(callback)
-    
+
     def _notify_stdout(self, process_id: str, data: str):
         for cb in self._callbacks["stdout"]:
             try:
                 cb(process_id, data)
             except Exception:
                 pass
-    
+
     def _notify_stderr(self, process_id: str, data: str):
         for cb in self._callbacks["stderr"]:
             try:
                 cb(process_id, data)
             except Exception:
                 pass
-    
+
     def _notify_exit(self, process_id: str, returncode: int):
         for cb in self._callbacks["exit"]:
             try:
                 cb(process_id, returncode)
             except Exception:
                 pass
-    
+
     def _notify_state_change(self, process_id: str, state: ProcessState):
         for cb in self._callbacks["state_change"]:
             try:
                 cb(process_id, state)
             except Exception:
                 pass
-    
+
     def _monitor_loop(self):
         while self._running:
             time.sleep(1.0)
@@ -321,7 +319,8 @@ class ProcessSupervisor:
                         self._cleanup_process(pid, proc, [], [])
 
 
-_process_supervisor: Optional[ProcessSupervisor] = None
+_process_supervisor: ProcessSupervisor | None = None
+
 
 def get_process_supervisor() -> ProcessSupervisor:
     global _process_supervisor

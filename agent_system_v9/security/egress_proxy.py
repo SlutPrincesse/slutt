@@ -1,16 +1,17 @@
 """
 Egress Proxy - Network egress control and monitoring
 """
+import ipaddress
+import json
+import pathlib
 import socket
 import threading
 import time
-import json
-from typing import Dict, List, Optional, Any, Set, Callable
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from urllib.parse import urlparse
-import ipaddress
+from typing import Any
 
 
 class EgressAction(Enum):
@@ -35,14 +36,14 @@ class Protocol(Enum):
 class EgressRule:
     rule_id: str
     name: str
-    protocols: Set[Protocol]
-    destinations: List[str]
-    ports: List[int]
+    protocols: set[Protocol]
+    destinations: list[str]
+    ports: list[int]
     action: EgressAction
     priority: int = 0
-    redirect_to: Optional[str] = None
-    requires_approval_from: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    redirect_to: str | None = None
+    requires_approval_from: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
 
     def matches(self, protocol: Protocol, destination: str, port: int) -> bool:
@@ -81,7 +82,7 @@ class EgressRequest:
     protocol: Protocol
     destination: str
     port: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
 
@@ -89,29 +90,29 @@ class EgressRequest:
 class EgressDecision:
     request: EgressRequest
     action: EgressAction
-    matched_rules: List[EgressRule]
-    redirect_to: Optional[str] = None
-    approved_by: Optional[str] = None
+    matched_rules: list[EgressRule]
+    redirect_to: str | None = None
+    approved_by: str | None = None
     timestamp: float = field(default_factory=time.time)
 
 
 class ApprovalHandler:
     def __init__(self):
-        self.handlers: Dict[str, Callable] = {}
+        self.handlers: dict[str, Callable] = {}
 
     def register(self, name: str, handler: Callable):
         self.handlers[name] = handler
 
-    def request(self, handler_name: str, request: EgressRequest, rules: List[EgressRule]) -> EgressAction:
+    def request(self, handler_name: str, request: EgressRequest, rules: list[EgressRule]) -> EgressAction:
         if handler_name in self.handlers:
             return self.handlers[handler_name](request, rules)
         return EgressAction.BLOCK
 
 
 class EgressLogger:
-    def __init__(self, log_path: Optional[str] = None):
+    def __init__(self, log_path: str | None = None):
         self.log_path = log_path
-        self.records: List[EgressDecision] = []
+        self.records: list[EgressDecision] = []
         self._lock = threading.Lock()
 
     def log(self, decision: EgressDecision):
@@ -122,7 +123,7 @@ class EgressLogger:
 
     def _write_to_file(self, decision: EgressDecision):
         try:
-            with open(self.log_path, 'a') as f:
+            with pathlib.Path(self.log_path).open('a') as f:
                 f.write(json.dumps({
                     "timestamp": decision.timestamp,
                     "request_id": decision.request.request_id,
@@ -139,7 +140,7 @@ class EgressLogger:
         except Exception:
             pass
 
-    def get_recent(self, limit: int = 100) -> List[EgressDecision]:
+    def get_recent(self, limit: int = 100) -> list[EgressDecision]:
         with self._lock:
             return self.records[-limit:]
 
@@ -153,7 +154,7 @@ class MetricsCollector:
         with self._lock:
             self.counters[key] += value
 
-    def get_all(self) -> Dict[str, int]:
+    def get_all(self) -> dict[str, int]:
         with self._lock:
             return dict(self.counters)
 
@@ -161,11 +162,11 @@ class MetricsCollector:
 class EgressProxy:
     def __init__(
         self,
-        approval_handler: Optional[ApprovalHandler] = None,
-        log_path: Optional[str] = None,
+        approval_handler: ApprovalHandler | None = None,
+        log_path: str | None = None,
         default_action: EgressAction = EgressAction.BLOCK,
     ):
-        self.rules: List[EgressRule] = []
+        self.rules: list[EgressRule] = []
         self.approval_handler = approval_handler or ApprovalHandler()
         self.logger = EgressLogger(log_path)
         self.metrics = MetricsCollector()
@@ -183,7 +184,7 @@ class EgressProxy:
             action=EgressAction.ALLOW,
             priority=-100,
         ))
-        
+
         self.add_rule(EgressRule(
             rule_id="default-https",
             name="Allow HTTPS to trusted",
@@ -193,7 +194,7 @@ class EgressProxy:
             action=EgressAction.ALLOW,
             priority=-50,
         ))
-        
+
         self.add_rule(EgressRule(
             rule_id="default-http",
             name="Allow HTTP to localhost",
@@ -230,7 +231,7 @@ class EgressProxy:
             highest_priority = max(r.priority for r in matched_rules)
             top_rules = [r for r in matched_rules if r.priority == highest_priority]
             actions = [r.action for r in top_rules]
-            
+
             if EgressAction.BLOCK in actions:
                 action = EgressAction.BLOCK
             elif EgressAction.REQUIRE_APPROVAL in actions:
@@ -244,20 +245,20 @@ class EgressProxy:
 
         redirect_to = None
         approved_by = None
-        
+
         if action == EgressAction.REQUIRE_APPROVAL:
             approvers = set()
             for r in matched_rules:
                 if r.action == EgressAction.REQUIRE_APPROVAL:
                     approvers.update(r.requires_approval_from)
-            
+
             if approvers:
                 for approver in approvers:
                     action = self.approval_handler.request(approver, request, matched_rules)
                     if action == EgressAction.ALLOW:
                         approved_by = approver
                         break
-        
+
         if action == EgressAction.REDIRECT:
             for r in matched_rules:
                 if r.action == EgressAction.REDIRECT and r.redirect_to:
@@ -271,11 +272,11 @@ class EgressProxy:
             redirect_to=redirect_to,
             approved_by=approved_by,
         )
-        
+
         self.logger.log(decision)
         self.metrics.increment(f"action.{action.value}")
         self.metrics.increment("total_requests")
-        
+
         return decision
 
     def authorize(
@@ -288,7 +289,7 @@ class EgressProxy:
         **metadata
     ) -> EgressDecision:
         request = EgressRequest(
-            request_id=f"egress-{int(time.time()*1000)}",
+            request_id=f"egress-{int(time.time() * 1000)}",
             actor_id=actor_id,
             session_id=session_id,
             protocol=protocol,
@@ -302,14 +303,14 @@ class EgressProxy:
         decision = self.authorize(actor_id, session_id, protocol, destination, port)
         return decision.action == EgressAction.ALLOW
 
-    def get_rules(self) -> List[EgressRule]:
+    def get_rules(self) -> list[EgressRule]:
         with self._lock:
             return list(self.rules)
 
-    def get_logs(self, limit: int = 100) -> List[EgressDecision]:
+    def get_logs(self, limit: int = 100) -> list[EgressDecision]:
         return self.logger.get_recent(limit)
 
-    def get_metrics(self) -> Dict[str, int]:
+    def get_metrics(self) -> dict[str, int]:
         return self.metrics.get_all()
 
 
@@ -322,10 +323,10 @@ class SocketInterceptor:
     def patch(self):
         if self._patched:
             return
-        
+
         original_connect = socket.socket.connect
         original_connect_ex = socket.socket.connect_ex
-        
+
         def patched_connect(self_sock, address):
             host, port = address[0], address[1]
             decision = self.proxy.authorize(
@@ -338,7 +339,7 @@ class SocketInterceptor:
             if decision.action != EgressAction.ALLOW:
                 raise PermissionError(f"Egress blocked: {host}:{port}")
             return original_connect(self_sock, address)
-        
+
         def patched_connect_ex(self_sock, address):
             host, port = address[0], address[1]
             decision = self.proxy.authorize(
@@ -351,7 +352,7 @@ class SocketInterceptor:
             if decision.action != EgressAction.ALLOW:
                 return 13  # EACCES
             return original_connect_ex(self_sock, address)
-        
+
         socket.socket.connect = patched_connect
         socket.socket.connect_ex = patched_connect_ex
         self._patched = True

@@ -1,9 +1,8 @@
-import asyncio
 import hashlib
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 
 class SummaryTier(Enum):
@@ -22,10 +21,10 @@ class Summary:
     source_tokens: int
     summary_tokens: int
     compression_ratio: float
-    key_points: List[str] = field(default_factory=list)
-    entities: List[str] = field(default_factory=list)
+    key_points: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class HierarchicalSummarizer:
@@ -33,27 +32,27 @@ class HierarchicalSummarizer:
         self.max_immediate = max_immediate
         self.max_recent = max_recent
         self.max_session = max_session
-        
-        self.immediate_summaries: List[Summary] = []
-        self.recent_summaries: List[Summary] = []
-        self.session_summaries: List[Summary] = []
-        self.historical_summaries: List[Summary] = []
-        self.semantic_summaries: List[Summary] = []
+
+        self.immediate_summaries: list[Summary] = []
+        self.recent_summaries: list[Summary] = []
+        self.session_summaries: list[Summary] = []
+        self.historical_summaries: list[Summary] = []
+        self.semantic_summaries: list[Summary] = []
 
     def add_interaction(self, user_msg: str, assistant_msg: str, tokens: int) -> Summary:
         combined = f"User: {user_msg}\nAssistant: {assistant_msg}"
         summary = self._create_summary(combined, tokens, SummaryTier.IMMEDIATE)
         self.immediate_summaries.append(summary)
-        
+
         if len(self.immediate_summaries) > self.max_immediate:
             self._promote_to_recent()
-        
+
         return summary
 
     def _create_summary(self, content: str, tokens: int, tier: SummaryTier) -> Summary:
         summary_text = self._compress(content)
         summary_tokens = len(summary_text.split()) * 1.3
-        
+
         return Summary(
             id=hashlib.sha256(f"{content}:{datetime.utcnow().isoformat()}".encode()).hexdigest()[:12],
             tier=tier,
@@ -71,13 +70,13 @@ class HierarchicalSummarizer:
             return text
         return ". ".join(sentences[:2] + [sentences[-1]]) + "."
 
-    def _extract_key_points(self, text: str) -> List[str]:
+    def _extract_key_points(self, text: str) -> list[str]:
         import re
         sentences = re.split(r'[.!?]+', text)
         key_points = [s.strip() for s in sentences if len(s.strip()) > 20]
         return key_points[:5]
 
-    def _extract_entities(self, text: str) -> List[str]:
+    def _extract_entities(self, text: str) -> list[str]:
         import re
         words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
         return list(set(words))[:10]
@@ -88,7 +87,7 @@ class HierarchicalSummarizer:
         promoted = self.immediate_summaries.pop(0)
         promoted.tier = SummaryTier.RECENT
         self.recent_summaries.append(promoted)
-        
+
         if len(self.recent_summaries) > self.max_recent:
             self._promote_to_session()
 
@@ -98,7 +97,7 @@ class HierarchicalSummarizer:
         promoted = self.recent_summaries.pop(0)
         promoted.tier = SummaryTier.SESSION
         self.session_summaries.append(promoted)
-        
+
         if len(self.session_summaries) > self.max_session:
             self._promote_to_historical()
 
@@ -109,7 +108,7 @@ class HierarchicalSummarizer:
         promoted.tier = SummaryTier.HISTORICAL
         self.historical_summaries.append(promoted)
 
-    def create_semantic_summary(self, theme: str, related_summaries: List[Summary]) -> Summary:
+    def create_semantic_summary(self, theme: str, related_summaries: list[Summary]) -> Summary:
         combined = f"Theme: {theme}\n" + "\n".join(s.content for s in related_summaries)
         summary = self._create_summary(combined, sum(s.source_tokens for s in related_summaries), SummaryTier.SEMANTIC)
         summary.metadata["theme"] = theme
@@ -120,7 +119,7 @@ class HierarchicalSummarizer:
     def get_context(self, max_tokens: int = 8000) -> str:
         context_parts = []
         token_count = 0
-        
+
         for tier in [SummaryTier.IMMEDIATE, SummaryTier.RECENT, SummaryTier.SESSION, SummaryTier.SEMANTIC, SummaryTier.HISTORICAL]:
             summaries = getattr(self, f"{tier.value}_summaries")
             for summary in reversed(summaries):
@@ -128,16 +127,16 @@ class HierarchicalSummarizer:
                     break
                 context_parts.append(f"[{tier.value.upper()}] {summary.content}")
                 token_count += summary.summary_tokens
-        
+
         return "\n\n".join(reversed(context_parts))
 
-    def get_all_summaries(self) -> List[Summary]:
+    def get_all_summaries(self) -> list[Summary]:
         all_summaries = []
         for tier in SummaryTier:
             all_summaries.extend(getattr(self, f"{tier.value}_summaries"))
         return all_summaries
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "immediate": len(self.immediate_summaries),
             "recent": len(self.recent_summaries),

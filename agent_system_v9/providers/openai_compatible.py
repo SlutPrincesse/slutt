@@ -1,23 +1,22 @@
-import os
 import json
-import time
-import asyncio
-from typing import Any, AsyncIterator, Dict, List, Optional
+import os
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from .base import (
-    LLMProvider,
-    ModelInfo,
-    LLMResponse,
-    LLMChunk,
-    ProviderType,
-    ProviderError,
-    RateLimitError,
     AuthenticationError,
+    LLMChunk,
+    LLMProvider,
+    LLMResponse,
+    ModelInfo,
     ModelNotFoundError,
+    ProviderError,
+    ProviderType,
+    RateLimitError,
 )
 
 
@@ -26,11 +25,11 @@ class OpenAICompatibleConfig:
     api_key: str
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o"
-    organization: Optional[str] = None
+    organization: str | None = None
     timeout: float = 60.0
     max_retries: int = 3
-    default_headers: Dict[str, str] = field(default_factory=dict)
-    extra_body: Dict[str, Any] = field(default_factory=dict)
+    default_headers: dict[str, str] = field(default_factory=dict)
+    extra_body: dict[str, Any] = field(default_factory=dict)
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -61,13 +60,13 @@ class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, config: OpenAICompatibleConfig):
         super().__init__(config.model)
         self.config = config
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
         self._model_info = self._build_model_info()
 
     def _build_model_info(self) -> ModelInfo:
         costs = self.MODEL_COSTS.get(self.config.model, {"input": 0.0, "output": 0.0})
         provider_name = self._detect_provider()
-        
+
         return ModelInfo(
             name=self.config.model,
             provider=ProviderType.OPENAI_COMPATIBLE,
@@ -119,7 +118,7 @@ class OpenAICompatibleProvider(LLMProvider):
             }
             if self.config.organization:
                 headers["OpenAI-Organization"] = self.config.organization
-            
+
             self._client = httpx.AsyncClient(
                 base_url=self.config.base_url,
                 headers=headers,
@@ -139,8 +138,8 @@ class OpenAICompatibleProvider(LLMProvider):
     )
     async def chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         **kwargs
     ) -> LLMResponse:
         payload = {
@@ -150,7 +149,7 @@ class OpenAICompatibleProvider(LLMProvider):
             **self.config.extra_body,
             **kwargs,
         }
-        
+
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -160,8 +159,8 @@ class OpenAICompatibleProvider(LLMProvider):
 
     async def stream_chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         **kwargs
     ) -> AsyncIterator[LLMChunk]:
         payload = {
@@ -171,7 +170,7 @@ class OpenAICompatibleProvider(LLMProvider):
             **self.config.extra_body,
             **kwargs,
         }
-        
+
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -189,18 +188,18 @@ class OpenAICompatibleProvider(LLMProvider):
                 except json.JSONDecodeError:
                     continue
 
-    async def _post_with_retry(self, endpoint: str, payload: Dict[str, Any]) -> httpx.Response:
+    async def _post_with_retry(self, endpoint: str, payload: dict[str, Any]) -> httpx.Response:
         try:
             response = await self.client.post(endpoint, json=payload)
-            
+
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", "60"))
                 raise RateLimitError("Rate limit exceeded", self.provider_type, retry_after)
-            elif response.status_code == 401:
+            if response.status_code == 401:
                 raise AuthenticationError("Invalid API key", self.provider_type)
-            elif response.status_code == 404:
+            if response.status_code == 404:
                 raise ModelNotFoundError(f"Model not found: {self.config.model}", self.provider_type, self.config.model)
-            
+
             response.raise_for_status()
             return response
         except httpx.TimeoutException as e:
@@ -212,11 +211,11 @@ class OpenAICompatibleProvider(LLMProvider):
         data = response.json()
         choice = data["choices"][0]
         message = choice["message"]
-        
+
         usage = data.get("usage", {})
         input_tokens = usage.get("prompt_tokens", 0)
         output_tokens = usage.get("completion_tokens", 0)
-        
+
         return LLMResponse(
             content=message.get("content", "") or "",
             tool_calls=message.get("tool_calls", []),
@@ -232,10 +231,10 @@ class OpenAICompatibleProvider(LLMProvider):
             }
         )
 
-    def _parse_stream_chunk(self, data: Dict[str, Any]) -> LLMChunk:
+    def _parse_stream_chunk(self, data: dict[str, Any]) -> LLMChunk:
         choice = data["choices"][0]
         delta = choice.get("delta", {})
-        
+
         return LLMChunk(
             delta=delta.get("content", "") or "",
             tool_calls=delta.get("tool_calls", []),
@@ -251,18 +250,18 @@ class OpenAICompatibleProvider(LLMProvider):
         return self._model_info
 
     @classmethod
-    def from_env(cls, provider: str = "openai", model: Optional[str] = None) -> "OpenAICompatibleProvider":
+    def from_env(cls, provider: str = "openai", model: str | None = None) -> "OpenAICompatibleProvider":
         provider_config = cls.SUPPORTED_PROVIDERS.get(provider.lower())
         if not provider_config:
             raise ValueError(f"Unknown provider: {provider}. Supported: {list(cls.SUPPORTED_PROVIDERS.keys())}")
-        
+
         api_key = os.getenv(f"{provider.upper()}_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(f"API key not found. Set {provider.upper()}_API_KEY or OPENAI_API_KEY")
-        
+
         base_url = os.getenv(f"{provider.upper()}_BASE_URL", provider_config["base_url"])
         model = model or os.getenv("MODEL", provider_config["models"][0])
-        
+
         config = OpenAICompatibleConfig(
             api_key=api_key,
             base_url=base_url,
@@ -271,7 +270,7 @@ class OpenAICompatibleProvider(LLMProvider):
         return cls(config)
 
     @classmethod
-    def list_models(cls, provider: str) -> List[str]:
+    def list_models(cls, provider: str) -> list[str]:
         provider_config = cls.SUPPORTED_PROVIDERS.get(provider.lower())
         if not provider_config:
             return []
@@ -280,7 +279,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
 async def create_openai_compatible_provider(
     provider: str = "openai",
-    model: Optional[str] = None,
+    model: str | None = None,
     **kwargs
 ) -> OpenAICompatibleProvider:
     provider_instance = OpenAICompatibleProvider.from_env(provider, model)

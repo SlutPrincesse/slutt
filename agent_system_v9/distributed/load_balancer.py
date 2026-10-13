@@ -2,15 +2,13 @@
 Load Balancer - Distributed load balancing strategies
 """
 import asyncio
-import time
-import random
 import hashlib
 import threading
-from typing import Dict, List, Optional, Any, Callable, Set
+import time
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict, deque
-from heapq import heappush, heappop
+from typing import Any
 
 
 class LoadBalancingAlgorithm(Enum):
@@ -44,7 +42,7 @@ class Backend:
     total_errors: int = 0
     avg_response_time: float = 0.0
     last_health_check: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def address(self) -> str:
@@ -78,7 +76,7 @@ class LoadBalancerConfig:
 class HealthChecker:
     def __init__(self, config: LoadBalancerConfig):
         self.config = config
-        self.checks: Dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
+        self.checks: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
         self._lock = threading.RLock()
 
     def record_check(self, backend_id: str, success: bool, response_time: float = 0):
@@ -94,15 +92,15 @@ class HealthChecker:
             checks = self.checks.get(backend_id, [])
             if not checks:
                 return BackendStatus.HEALTHY
-            
+
             recent = list(checks)[-self.config.unhealthy_threshold:]
             if all(not c["success"] for c in recent):
                 return BackendStatus.UNHEALTHY
-            
+
             recent_healthy = list(checks)[-self.config.healthy_threshold:]
             if all(c["success"] for c in recent_healthy):
                 return BackendStatus.HEALTHY
-            
+
             return BackendStatus.UNHEALTHY
 
     def get_avg_response_time(self, backend_id: str) -> float:
@@ -117,20 +115,20 @@ class HealthChecker:
 class LoadBalancer:
     def __init__(
         self,
-        config: Optional[LoadBalancerConfig] = None,
-        backends: List[Backend] = None,
+        config: LoadBalancerConfig | None = None,
+        backends: list[Backend] = None,
     ):
         self.config = config or LoadBalancerConfig()
-        self.backends: Dict[str, Backend] = {}
+        self.backends: dict[str, Backend] = {}
         self.health_checker = HealthChecker(self.config)
         self._rr_index = 0
-        self._wrr_weights: Dict[str, int] = {}
-        self._wrr_current: Dict[str, int] = {}
-        self._consistent_hash_ring: List[tuple] = []
+        self._wrr_weights: dict[str, int] = {}
+        self._wrr_current: dict[str, int] = {}
+        self._consistent_hash_ring: list[tuple] = []
         self._lock = threading.RLock()
         self._running = False
-        self._health_check_task: Optional[asyncio.Task] = None
-        
+        self._health_check_task: asyncio.Task | None = None
+
         if backends:
             for backend in backends:
                 self.add_backend(backend)
@@ -150,11 +148,11 @@ class LoadBalancer:
                 return True
         return False
 
-    def get_backend(self, backend_id: str) -> Optional[Backend]:
+    def get_backend(self, backend_id: str) -> Backend | None:
         with self._lock:
             return self.backends.get(backend_id)
 
-    def list_backends(self) -> List[Backend]:
+    def list_backends(self) -> list[Backend]:
         with self._lock:
             return list(self.backends.values())
 
@@ -171,7 +169,7 @@ class LoadBalancer:
                     self._consistent_hash_ring.append((key, backend.backend_id))
         self._consistent_hash_ring.sort(key=lambda x: x[0])
 
-    def select_backend(self, client_ip: str = None, session_id: str = None) -> Optional[Backend]:
+    def select_backend(self, client_ip: str = None, session_id: str = None) -> Backend | None:
         with self._lock:
             available = [b for b in self.backends.values() if b.is_available]
             if not available:
@@ -184,29 +182,29 @@ class LoadBalancer:
 
             if self.config.algorithm == LoadBalancingAlgorithm.ROUND_ROBIN:
                 return self._round_robin(available)
-            elif self.config.algorithm == LoadBalancingAlgorithm.WEIGHTED_ROUND_ROBIN:
+            if self.config.algorithm == LoadBalancingAlgorithm.WEIGHTED_ROUND_ROBIN:
                 return self._weighted_round_robin(available)
-            elif self.config.algorithm == LoadBalancingAlgorithm.LEAST_CONNECTIONS:
+            if self.config.algorithm == LoadBalancingAlgorithm.LEAST_CONNECTIONS:
                 return self._least_connections(available)
-            elif self.config.algorithm == LoadBalancingAlgorithm.WEIGHTED_LEAST_CONNECTIONS:
+            if self.config.algorithm == LoadBalancingAlgorithm.WEIGHTED_LEAST_CONNECTIONS:
                 return self._weighted_least_connections(available)
-            elif self.config.algorithm == LoadBalancingAlgorithm.IP_HASH:
+            if self.config.algorithm == LoadBalancingAlgorithm.IP_HASH:
                 return self._ip_hash(available, client_ip)
-            elif self.config.algorithm == LoadBalancingAlgorithm.CONSISTENT_HASH:
+            if self.config.algorithm == LoadBalancingAlgorithm.CONSISTENT_HASH:
                 return self._consistent_hash(available, client_ip or session_id or "")
-            elif self.config.algorithm == LoadBalancingAlgorithm.LEAST_RESPONSE_TIME:
+            if self.config.algorithm == LoadBalancingAlgorithm.LEAST_RESPONSE_TIME:
                 return self._least_response_time(available)
-            elif self.config.algorithm == LoadBalancingAlgorithm.ADAPTIVE:
+            if self.config.algorithm == LoadBalancingAlgorithm.ADAPTIVE:
                 return self._adaptive(available)
-            
+
             return available[0]
 
-    def _round_robin(self, available: List[Backend]) -> Backend:
+    def _round_robin(self, available: list[Backend]) -> Backend:
         backend = available[self._rr_index % len(available)]
         self._rr_index += 1
         return backend
 
-    def _weighted_round_robin(self, available: List[Backend]) -> Backend:
+    def _weighted_round_robin(self, available: list[Backend]) -> Backend:
         max_score = -1
         selected = None
         for backend in available:
@@ -219,44 +217,44 @@ class LoadBalancer:
             self._wrr_current[selected.backend_id] -= sum(self._wrr_weights.values())
         return selected
 
-    def _least_connections(self, available: List[Backend]) -> Backend:
+    def _least_connections(self, available: list[Backend]) -> Backend:
         return min(available, key=lambda b: b.current_connections)
 
-    def _weighted_least_connections(self, available: List[Backend]) -> Backend:
+    def _weighted_least_connections(self, available: list[Backend]) -> Backend:
         return min(available, key=lambda b: b.current_connections / max(b.weight, 1))
 
-    def _ip_hash(self, available: List[Backend], client_ip: str) -> Backend:
+    def _ip_hash(self, available: list[Backend], client_ip: str) -> Backend:
         if not client_ip:
             return available[0]
         hash_val = int(hashlib.md5(client_ip.encode()).hexdigest(), 16)
         return available[hash_val % len(available)]
 
-    def _consistent_hash(self, available: List[Backend], key: str) -> Backend:
+    def _consistent_hash(self, available: list[Backend], key: str) -> Backend:
         if not self._consistent_hash_ring:
             return available[0]
-        
+
         hash_val = hashlib.md5(key.encode()).hexdigest()
         for ring_key, backend_id in self._consistent_hash_ring:
             if ring_key >= hash_val:
                 backend = self.backends.get(backend_id)
                 if backend and backend.is_available:
                     return backend
-        
+
         return self.backends.get(self._consistent_hash_ring[0][1]) or available[0]
 
-    def _least_response_time(self, available: List[Backend]) -> Backend:
+    def _least_response_time(self, available: list[Backend]) -> Backend:
         return min(available, key=lambda b: self.health_checker.get_avg_response_time(b.backend_id))
 
-    def _adaptive(self, available: List[Backend]) -> Backend:
+    def _adaptive(self, available: list[Backend]) -> Backend:
         def score(b: Backend) -> float:
             load = b.current_connections / max(b.max_connections, 1)
             rt = self.health_checker.get_avg_response_time(b.backend_id)
             error_rate = b.total_errors / max(b.total_requests, 1)
             return load * 0.4 + (rt / 1000) * 0.3 + error_rate * 0.3
-        
+
         return min(available, key=score)
 
-    def _get_sticky_backend(self, session_id: str) -> Optional[Backend]:
+    def _get_sticky_backend(self, session_id: str) -> Backend | None:
         hash_val = int(hashlib.md5(session_id.encode()).hexdigest(), 16)
         available = [b for b in self.backends.values() if b.is_available]
         if not available:
@@ -312,7 +310,7 @@ class LoadBalancer:
         for backend in list(self.backends.values()):
             if backend.status == BackendStatus.MAINTENANCE:
                 continue
-            
+
             try:
                 success = await self._check_backend_health(backend)
                 new_status = self.health_checker.get_status(backend.backend_id)
@@ -337,7 +335,7 @@ class LoadBalancer:
         except Exception:
             return False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "algorithm": self.config.algorithm.value,

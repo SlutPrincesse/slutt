@@ -6,11 +6,12 @@ import hashlib
 import secrets
 import time
 import uuid
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class HandshakePhase(Enum):
@@ -36,11 +37,11 @@ class HandshakeMessage:
     phase: HandshakePhase
     sender: str
     recipient: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     signature: str = ""
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "message_id": self.message_id,
             "phase": self.phase.value,
@@ -52,7 +53,7 @@ class HandshakeMessage:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'HandshakeMessage':
+    def from_dict(cls, data: dict[str, Any]) -> 'HandshakeMessage':
         return cls(
             message_id=data["message_id"],
             phase=HandshakePhase(data["phase"]),
@@ -68,14 +69,14 @@ class HandshakeMessage:
 class DeploymentSession:
     session_id: str
     coordinator: str
-    targets: List[str]
+    targets: list[str]
     phase: HandshakePhase = HandshakePhase.INIT
-    artifacts: Dict[str, str] = field(default_factory=dict)
-    config: Dict[str, Any] = field(default_factory=dict)
-    secrets: Dict[str, str] = field(default_factory=dict)
+    artifacts: dict[str, str] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
+    secrets: dict[str, str] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -86,7 +87,7 @@ class Artifact:
     hash: str
     size: int
     content_type: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
 
@@ -94,12 +95,12 @@ class DeploymentHandshake:
     def __init__(self, node_id: str, role: DeploymentRole = DeploymentRole.COORDINATOR):
         self.node_id = node_id
         self.role = role
-        self.sessions: Dict[str, DeploymentSession] = {}
-        self.message_handlers: Dict[HandshakePhase, List[Callable]] = defaultdict(list)
+        self.sessions: dict[str, DeploymentSession] = {}
+        self.message_handlers: dict[HandshakePhase, list[Callable]] = defaultdict(list)
         self._lock = asyncio.Lock()
         self._message_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     def register_handler(self, phase: HandshakePhase, handler: Callable):
         self.message_handlers[phase].append(handler)
@@ -119,9 +120,9 @@ class DeploymentHandshake:
 
     async def initiate_deployment(
         self,
-        targets: List[str],
-        artifacts: Dict[str, Artifact],
-        config: Dict[str, Any] = None,
+        targets: list[str],
+        artifacts: dict[str, Artifact],
+        config: dict[str, Any] = None,
     ) -> DeploymentSession:
         session_id = str(uuid.uuid4())
         session = DeploymentSession(
@@ -131,16 +132,16 @@ class DeploymentHandshake:
             artifacts={a.name: a.artifact_id for a.name, a in artifacts.items()},
             config=config or {},
         )
-        
+
         async with self._lock:
             self.sessions[session_id] = session
-        
+
         await self._send_to_targets(session_id, HandshakePhase.AUTHENTICATE, {
             "session_id": session_id,
             "artifacts": {name: a.to_dict() for name, a in artifacts.items()},
             "config": config or {},
         })
-        
+
         return session
 
     def _create_artifact(self, name: str, version: str, data: bytes, content_type: str = "application/octet-stream") -> Artifact:
@@ -154,11 +155,11 @@ class DeploymentHandshake:
             content_type=content_type,
         )
 
-    async def _send_to_targets(self, session_id: str, phase: HandshakePhase, payload: Dict[str, Any]):
+    async def _send_to_targets(self, session_id: str, phase: HandshakePhase, payload: dict[str, Any]):
         session = self.sessions.get(session_id)
         if not session:
             return
-        
+
         for target in session.targets:
             message = HandshakeMessage(
                 message_id=str(uuid.uuid4()),
@@ -188,10 +189,10 @@ class DeploymentHandshake:
             except Exception:
                 pass
 
-    def get_session(self, session_id: str) -> Optional[DeploymentSession]:
+    def get_session(self, session_id: str) -> DeploymentSession | None:
         return self.sessions.get(session_id)
 
-    def list_sessions(self) -> List[DeploymentSession]:
+    def list_sessions(self) -> list[DeploymentSession]:
         return list(self.sessions.values())
 
 
@@ -199,8 +200,8 @@ class SecureChannel:
     def __init__(self, local_id: str, remote_id: str):
         self.local_id = local_id
         self.remote_id = remote_id
-        self.shared_secret: Optional[bytes] = None
-        self.session_key: Optional[bytes] = None
+        self.shared_secret: bytes | None = None
+        self.session_key: bytes | None = None
 
     async def establish(self, handshake: DeploymentHandshake) -> bool:
         self.shared_secret = secrets.token_bytes(32)
@@ -220,21 +221,21 @@ class SecureChannel:
 class DeploymentCoordinator:
     def __init__(self, node_id: str):
         self.handshake = DeploymentHandshake(node_id, DeploymentRole.COORDINATOR)
-        self.deployments: Dict[str, DeploymentSession] = {}
-        self.artifact_store: Dict[str, Artifact] = {}
+        self.deployments: dict[str, DeploymentSession] = {}
+        self.artifact_store: dict[str, Artifact] = {}
 
     async def deploy(
         self,
-        targets: List[str],
-        artifacts: Dict[str, bytes],
-        config: Dict[str, Any] = None,
+        targets: list[str],
+        artifacts: dict[str, bytes],
+        config: dict[str, Any] = None,
     ) -> DeploymentSession:
         artifact_objects = {}
         for name, data in artifacts.items():
             artifact = self.handshake._create_artifact(name, "1.0.0", data)
             self.artifact_store[artifact.artifact_id] = artifact
             artifact_objects[name] = artifact
-        
+
         session = await self.handshake.initiate_deployment(targets, artifact_objects, config)
         self.deployments[session.session_id] = session
         return session
@@ -243,20 +244,20 @@ class DeploymentCoordinator:
         session = self.deployments.get(session_id)
         if not session:
             return False
-        
+
         await self.handshake._send_to_targets(session_id, HandshakePhase.ROLLBACK, {
             "session_id": session_id,
             "reason": "Coordinator initiated rollback",
         })
-        
+
         session.phase = HandshakePhase.ROLLBACK
         return True
 
-    def get_deployment_status(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def get_deployment_status(self, session_id: str) -> dict[str, Any] | None:
         session = self.deployments.get(session_id)
         if not session:
             return None
-        
+
         return {
             "session_id": session.session_id,
             "phase": session.phase.value,
@@ -272,7 +273,7 @@ class DeploymentTarget:
         self.handshake = DeploymentHandshake(node_id, DeploymentRole.TARGET)
         self.artifact_dir = Path(artifact_dir)
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
-        self.deployed_artifacts: Dict[str, Artifact] = {}
+        self.deployed_artifacts: dict[str, Artifact] = {}
 
     async def start(self):
         await self.handshake.start()
@@ -285,11 +286,11 @@ class DeploymentTarget:
     async def _handle_authenticate(self, message: HandshakeMessage):
         session_id = message.payload["session_id"]
         artifacts_data = message.payload["artifacts"]
-        
+
         for name, artifact_data in artifacts_data.items():
             artifact = Artifact(**artifact_data)
             self.deployed_artifacts[name] = artifact
-        
+
         response = HandshakeMessage(
             message_id=str(uuid.uuid4()),
             phase=HandshakePhase.NEGOTIATE,
@@ -314,8 +315,8 @@ class DeploymentTarget:
 
 class DeploymentOrchestrator:
     def __init__(self):
-        self.coordinators: Dict[str, DeploymentCoordinator] = {}
-        self.targets: Dict[str, DeploymentTarget] = {}
+        self.coordinators: dict[str, DeploymentCoordinator] = {}
+        self.targets: dict[str, DeploymentTarget] = {}
 
     def add_coordinator(self, coordinator: DeploymentCoordinator):
         self.coordinators[coordinator.handshake.node_id] = coordinator
@@ -326,12 +327,12 @@ class DeploymentOrchestrator:
     async def deploy_all(
         self,
         coordinator_id: str,
-        targets: List[str],
-        artifacts: Dict[str, bytes],
-        config: Dict[str, Any] = None,
+        targets: list[str],
+        artifacts: dict[str, bytes],
+        config: dict[str, Any] = None,
     ) -> DeploymentSession:
         coordinator = self.coordinators.get(coordinator_id)
         if not coordinator:
             raise ValueError(f"Coordinator not found: {coordinator_id}")
-        
+
         return await coordinator.deploy(targets, artifacts, config)

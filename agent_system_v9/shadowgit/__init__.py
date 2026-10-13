@@ -2,20 +2,20 @@
 Shadow Git Kernel & Zero-Regression Engine (Section 30)
 """
 from .shadowgit_core import (
+    ShadowBranch,
+    ShadowCommit,
+    ShadowDiff,
+    ShadowFile,
     ShadowGit,
     ShadowGitRemote,
-    ShadowFile,
-    ShadowCommit,
-    ShadowBranch,
-    ShadowDiff,
     ShadowGitStatus,
 )
 from .shadowgit_index import (
-    ShadowIndex,
-    IndexMerger,
     IndexEntry,
     IndexEntryStatus,
+    IndexMerger,
     IndexTree,
+    ShadowIndex,
 )
 
 __all__ = [

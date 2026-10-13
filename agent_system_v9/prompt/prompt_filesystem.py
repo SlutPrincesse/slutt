@@ -1,16 +1,16 @@
 """
 Prompt File-System Layer - Virtualized filesystem mapping system prompts and personas to virtual file descriptors
 """
-import os
-import json
+import builtins
 import hashlib
 import threading
 import time
-from typing import Dict, List, Optional, Any, Callable, Union
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import OrderedDict
+from typing import Any
 
 
 class PromptType(Enum):
@@ -28,8 +28,8 @@ class PromptFile:
     path: str
     prompt_type: PromptType
     content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    tags: List[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     access_count: int = 0
@@ -38,22 +38,22 @@ class PromptFile:
 
 
 class PromptFileSystem:
-    def __init__(self, root_path: Optional[str] = None, max_cache_size: int = 1000):
+    def __init__(self, root_path: str | None = None, max_cache_size: int = 1000):
         self.root_path = Path(root_path) if root_path else Path.home() / ".agent_v9" / "prompts"
         self.root_path.mkdir(parents=True, exist_ok=True)
-        
+
         self._fd_counter = 0
-        self._open_files: Dict[int, PromptFile] = {}
-        self._path_to_fd: Dict[str, int] = {}
-        self._type_index: Dict[PromptType, List[int]] = {t: [] for t in PromptType}
-        self._tag_index: Dict[str, List[int]] = {}
+        self._open_files: dict[int, PromptFile] = {}
+        self._path_to_fd: dict[str, int] = {}
+        self._type_index: dict[PromptType, list[int]] = {t: [] for t in PromptType}
+        self._tag_index: dict[str, list[int]] = {}
         self._cache: OrderedDict[str, PromptFile] = OrderedDict()
         self._max_cache_size = max_cache_size
         self._lock = threading.RLock()
-        self._watchers: Dict[str, List[Callable]] = {}
-        
+        self._watchers: dict[str, list[Callable]] = {}
+
         self._load_existing()
-    
+
     def _load_existing(self):
         for prompt_type in PromptType:
             type_dir = self.root_path / prompt_type.value
@@ -63,14 +63,14 @@ class PromptFileSystem:
                         self._load_prompt_file(file_path, prompt_type)
                     except Exception:
                         pass
-    
+
     def _load_prompt_file(self, file_path: Path, prompt_type: PromptType) -> PromptFile:
         content = file_path.read_text(encoding='utf-8')
         checksum = hashlib.sha256(content.encode()).hexdigest()[:16]
-        
+
         rel_path = file_path.relative_to(self.root_path)
         fd = self._allocate_fd()
-        
+
         prompt_file = PromptFile(
             fd=fd,
             path=str(rel_path),
@@ -79,7 +79,7 @@ class PromptFileSystem:
             size=len(content),
             checksum=checksum
         )
-        
+
         # Parse metadata from frontmatter if present
         if content.startswith('---'):
             try:
@@ -92,7 +92,7 @@ class PromptFileSystem:
                         prompt_file.tags = meta.get('tags', [])
             except Exception:
                 pass
-        
+
         with self._lock:
             self._open_files[fd] = prompt_file
             self._path_to_fd[str(rel_path)] = fd
@@ -101,41 +101,41 @@ class PromptFileSystem:
                 if tag not in self._tag_index:
                     self._tag_index[tag] = []
                 self._tag_index[tag].append(fd)
-        
+
         return prompt_file
-    
+
     def _allocate_fd(self) -> int:
         self._fd_counter += 1
         return self._fd_counter
-    
+
     def create(self, path: str, prompt_type: PromptType, content: str,
-               metadata: Dict[str, Any] = None, tags: List[str] = None) -> PromptFile:
+               metadata: dict[str, Any] = None, tags: list[str] = None) -> PromptFile:
         full_path = self.root_path / prompt_type.value / path
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Add frontmatter
         frontmatter = {}
         if metadata:
             frontmatter['metadata'] = metadata
         if tags:
             frontmatter['tags'] = tags
-        
+
         if frontmatter:
             import yaml
             yaml_str = yaml.dump(frontmatter, default_flow_style=False)
             content = f"---\n{yaml_str}---\n{content}"
-        
+
         full_path.write_text(content, encoding='utf-8')
-        
+
         return self._load_prompt_file(full_path, prompt_type)
-    
-    def open(self, path: str) -> Optional[int]:
+
+    def open(self, path: str) -> int | None:
         with self._lock:
             fd = self._path_to_fd.get(path)
             if fd is not None:
                 self._open_files[fd].access_count += 1
                 return fd
-        
+
         # Try to load from disk
         full_path = self.root_path / path
         if full_path.exists():
@@ -145,37 +145,37 @@ class PromptFileSystem:
                 if str(full_path).startswith(str(self.root_path / pt.value)):
                     prompt_type = pt
                     break
-            
+
             prompt_file = self._load_prompt_file(full_path, prompt_type)
             return prompt_file.fd
-        
+
         return None
-    
-    def read(self, fd: int) -> Optional[str]:
+
+    def read(self, fd: int) -> str | None:
         with self._lock:
             prompt_file = self._open_files.get(fd)
             if prompt_file:
                 prompt_file.access_count += 1
                 return prompt_file.content
         return None
-    
+
     def write(self, fd: int, content: str) -> bool:
         with self._lock:
             prompt_file = self._open_files.get(fd)
             if not prompt_file:
                 return False
-            
+
             full_path = self.root_path / prompt_file.path
             full_path.write_text(content, encoding='utf-8')
-            
+
             prompt_file.content = content
             prompt_file.size = len(content)
             prompt_file.checksum = hashlib.sha256(content.encode()).hexdigest()[:16]
             prompt_file.updated_at = time.time()
-            
+
             self._notify_watchers(prompt_file.path, "modified")
             return True
-    
+
     def close(self, fd: int) -> bool:
         with self._lock:
             if fd in self._open_files:
@@ -197,21 +197,21 @@ class PromptFileSystem:
                     del self._path_to_fd[path_to_remove]
                 return True
         return False
-    
+
     def delete(self, path: str) -> bool:
         fd = self._path_to_fd.get(path)
         if fd:
             self.close(fd)
-        
+
         full_path = self.root_path / path
         if full_path.exists():
             full_path.unlink()
             self._notify_watchers(path, "deleted")
             return True
         return False
-    
-    def list(self, prompt_type: Optional[PromptType] = None, 
-             tags: Optional[List[str]] = None) -> List[PromptFile]:
+
+    def list(self, prompt_type: PromptType | None = None,
+             tags: list[str] | None = None) -> list[PromptFile]:
         with self._lock:
             if prompt_type:
                 fds = self._type_index.get(prompt_type, [])
@@ -222,16 +222,16 @@ class PromptFileSystem:
                 fds = list(fds)
             else:
                 fds = list(self._open_files.keys())
-            
+
             return [self._open_files[fd] for fd in fds if fd in self._open_files]
-    
-    def search(self, query: str, prompt_type: Optional[PromptType] = None,
-               tags: Optional[List[str]] = None, limit: int = 50) -> List[PromptFile]:
+
+    def search(self, query: str, prompt_type: PromptType | None = None,
+               tags: builtins.list[str] | None = None, limit: int = 50) -> builtins.list[PromptFile]:
         results = []
         query_lower = query.lower()
-        
+
         candidates = self.list(prompt_type, tags)
-        
+
         for pf in candidates:
             score = 0
             if query_lower in pf.content.lower():
@@ -243,26 +243,26 @@ class PromptFileSystem:
                     score += 3
             if score > 0:
                 results.append((score, pf))
-        
+
         results.sort(key=lambda x: -x[0])
         return [pf for _, pf in results[:limit]]
-    
-    def get_by_fd(self, fd: int) -> Optional[PromptFile]:
+
+    def get_by_fd(self, fd: int) -> PromptFile | None:
         with self._lock:
             return self._open_files.get(fd)
-    
-    def get_by_path(self, path: str) -> Optional[PromptFile]:
+
+    def get_by_path(self, path: str) -> PromptFile | None:
         with self._lock:
             fd = self._path_to_fd.get(path)
             if fd:
                 return self._open_files.get(fd)
         return None
-    
+
     def register_watcher(self, path_pattern: str, callback: Callable):
         if path_pattern not in self._watchers:
             self._watchers[path_pattern] = []
         self._watchers[path_pattern].append(callback)
-    
+
     def _notify_watchers(self, path: str, event: str):
         import fnmatch
         for pattern, callbacks in self._watchers.items():
@@ -272,8 +272,8 @@ class PromptFileSystem:
                         cb(path, event)
                     except Exception:
                         pass
-    
-    def get_stats(self) -> Dict[str, Any]:
+
+    def get_stats(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "open_files": len(self._open_files),
@@ -284,7 +284,8 @@ class PromptFileSystem:
             }
 
 
-_prompt_fs: Optional[PromptFileSystem] = None
+_prompt_fs: PromptFileSystem | None = None
+
 
 def get_prompt_filesystem() -> PromptFileSystem:
     global _prompt_fs

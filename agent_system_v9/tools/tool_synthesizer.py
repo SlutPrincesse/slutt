@@ -1,16 +1,11 @@
-import ast
-import inspect
-import textwrap
 import asyncio
-import hashlib
-from typing import Any, Dict, List, Optional, Callable, Set, Type
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-import importlib.util
-import sys
+from typing import Any
 
-from .exception_hook import HookedException, ExceptionHookInterceptor
+from .exception_hook import ExceptionHookInterceptor, HookedException
 
 
 class SynthesisStrategy(Enum):
@@ -24,12 +19,12 @@ class SynthesisStrategy(Enum):
 class SynthesizedTool:
     name: str
     source_code: str
-    spec: Dict[str, Any]
+    spec: dict[str, Any]
     strategy: SynthesisStrategy
-    trigger_exception: Optional[str] = None
+    trigger_exception: str | None = None
     confidence: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    _compiled: Optional[Callable] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    _compiled: Callable | None = None
 
     def compile(self) -> Callable:
         if self._compiled is None:
@@ -44,7 +39,7 @@ class SynthesizedTool:
             return await func(**kwargs)
         return func(**kwargs)
 
-    def to_tool_entry(self) -> Dict[str, Any]:
+    def to_tool_entry(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.spec.get("description", ""),
@@ -62,8 +57,8 @@ class SynthesisTemplate:
     name: str
     pattern: str
     template: str
-    required_imports: List[str] = field(default_factory=list)
-    parameter_mapping: Dict[str, str] = field(default_factory=dict)
+    required_imports: list[str] = field(default_factory=list)
+    parameter_mapping: dict[str, str] = field(default_factory=dict)
 
 
 DEFAULT_TEMPLATES = [
@@ -159,9 +154,9 @@ async def {name}(func: Callable, **kwargs) -> Any:
 
 
 class ToolSynthesizer:
-    def __init__(self, templates: List[SynthesisTemplate] = None):
+    def __init__(self, templates: list[SynthesisTemplate] = None):
         self.templates = templates or DEFAULT_TEMPLATES
-        self._synthesized_tools: Dict[str, SynthesizedTool] = {}
+        self._synthesized_tools: dict[str, SynthesizedTool] = {}
         self._hook_interceptor = ExceptionHookInterceptor.get_instance()
         self._hook_interceptor.register_hook(self._on_exception, HookPriority.HIGH)
 
@@ -169,7 +164,7 @@ class ToolSynthesizer:
         if hooked.synthesis_requested and hooked.suggested_tool_name:
             asyncio.create_task(self._synthesize_from_exception(hooked))
 
-    async def _synthesize_from_exception(self, hooked: HookedException) -> Optional[SynthesizedTool]:
+    async def _synthesize_from_exception(self, hooked: HookedException) -> SynthesizedTool | None:
         tool_name = hooked.suggested_tool_name
         if tool_name in self._synthesized_tools:
             return self._synthesized_tools[tool_name]
@@ -185,7 +180,7 @@ class ToolSynthesizer:
     def _apply_template(self, template: SynthesisTemplate, hooked: HookedException) -> SynthesizedTool:
         tool_name = hooked.suggested_tool_name
         source = template.template.format(name=tool_name)
-        
+
         imports = "\n".join(f"import {imp}" for imp in template.required_imports)
         if imports:
             source = imports + "\n" + source
@@ -200,7 +195,7 @@ class ToolSynthesizer:
             metadata={"template": template.name, "exception_context": hooked.context},
         )
 
-    async def _llm_guided_synthesis(self, hooked: HookedException) -> Optional[SynthesizedTool]:
+    async def _llm_guided_synthesis(self, hooked: HookedException) -> SynthesizedTool | None:
         return None
 
     def synthesize_from_pattern(
@@ -208,8 +203,8 @@ class ToolSynthesizer:
         name: str,
         description: str,
         pattern: str,
-        parameters: Dict[str, Any],
-        returns: Dict[str, Any],
+        parameters: dict[str, Any],
+        returns: dict[str, Any],
     ) -> SynthesizedTool:
         for template in self.templates:
             if template.pattern.lower() in pattern.lower():
@@ -244,12 +239,12 @@ class ToolSynthesizer:
         self,
         name: str,
         description: str,
-        parameters: Dict[str, Any],
-        returns: Dict[str, Any],
+        parameters: dict[str, Any],
+        returns: dict[str, Any],
     ) -> str:
         param_names = list(parameters.get("properties", {}).keys())
         param_str = ", ".join(param_names)
-        
+
         return f'''
 async def {name}({param_str}) -> Dict[str, Any]:
     """{description}"""
@@ -259,10 +254,10 @@ async def {name}({param_str}) -> Dict[str, Any]:
     def register_template(self, template: SynthesisTemplate):
         self.templates.append(template)
 
-    def get_synthesized(self, name: str) -> Optional[SynthesizedTool]:
+    def get_synthesized(self, name: str) -> SynthesizedTool | None:
         return self._synthesized_tools.get(name)
 
-    def get_all_synthesized(self) -> Dict[str, SynthesizedTool]:
+    def get_all_synthesized(self) -> dict[str, SynthesizedTool]:
         return self._synthesized_tools.copy()
 
     def remove_synthesized(self, name: str) -> bool:

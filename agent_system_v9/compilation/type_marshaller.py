@@ -3,14 +3,13 @@ Type Marshaller - Cross-language type conversion and serialization
 """
 import json
 import struct
-import hashlib
-from typing import Dict, List, Optional, Any, Set, Union, Type, Callable
-from dataclasses import dataclass, field, is_dataclass, asdict
-from enum import Enum
+import uuid
 from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from decimal import Decimal
-import uuid
+from enum import Enum
+from typing import Any, Optional
 
 
 class TypeKind(Enum):
@@ -28,14 +27,14 @@ class TypeKind(Enum):
 class TypeInfo:
     name: str
     kind: TypeKind
-    python_type: Type = None
-    fields: Dict[str, 'TypeInfo'] = field(default_factory=dict)
+    python_type: type = None
+    fields: dict[str, 'TypeInfo'] = field(default_factory=dict)
     item_type: Optional['TypeInfo'] = None
     key_type: Optional['TypeInfo'] = None
     value_type: Optional['TypeInfo'] = None
-    union_types: List['TypeInfo'] = field(default_factory=list)
-    enum_values: List[Any] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    union_types: list['TypeInfo'] = field(default_factory=list)
+    enum_values: list[Any] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Marshaller(ABC):
@@ -58,30 +57,28 @@ class JSONMarshaller(Marshaller):
     def _to_json_serializable(self, value: Any) -> Any:
         if value is None:
             return None
-        elif isinstance(value, (str, int, float, bool)):
+        if isinstance(value, (str, int, float, bool)):
             return value
-        elif isinstance(value, datetime):
+        if isinstance(value, datetime):
             return value.isoformat()
-        elif isinstance(value, Decimal):
+        if isinstance(value, Decimal) or isinstance(value, uuid.UUID):
             return str(value)
-        elif isinstance(value, uuid.UUID):
-            return str(value)
-        elif isinstance(value, Enum):
+        if isinstance(value, Enum):
             return value.value
-        elif is_dataclass(value):
+        if is_dataclass(value):
             return asdict(value)
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             return {k: self._to_json_serializable(v) for k, v in value.items()}
-        elif isinstance(value, (list, tuple, set)):
+        if isinstance(value, (list, tuple, set)):
             return [self._to_json_serializable(v) for v in value]
-        elif hasattr(value, '__dict__'):
+        if hasattr(value, '__dict__'):
             return self._to_json_serializable(value.__dict__)
         return str(value)
 
 
 class BinaryMarshaller(Marshaller):
     def __init__(self):
-        self.type_registry: Dict[str, TypeInfo] = {}
+        self.type_registry: dict[str, TypeInfo] = {}
         self._register_primitives()
 
     def _register_primitives(self):
@@ -109,13 +106,13 @@ class BinaryMarshaller(Marshaller):
     def marshal(self, value: Any, type_info: TypeInfo) -> bytes:
         if type_info.kind == TypeKind.PRIMITIVE:
             return self._marshal_primitive(value, type_info)
-        elif type_info.kind == TypeKind.COMPOSITE:
+        if type_info.kind == TypeKind.COMPOSITE:
             return self._marshal_composite(value, type_info)
-        elif type_info.kind == TypeKind.ARRAY:
+        if type_info.kind == TypeKind.ARRAY:
             return self._marshal_array(value, type_info)
-        elif type_info.kind == TypeKind.MAP:
+        if type_info.kind == TypeKind.MAP:
             return self._marshal_map(value, type_info)
-        elif type_info.kind == TypeKind.OPTIONAL:
+        if type_info.kind == TypeKind.OPTIONAL:
             return self._marshal_optional(value, type_info)
         return b''
 
@@ -123,30 +120,30 @@ class BinaryMarshaller(Marshaller):
         name = type_info.name
         if name == 'bool':
             return struct.pack('?', value)
-        elif name == 'int8':
+        if name == 'int8':
             return struct.pack('b', value)
-        elif name == 'int16':
+        if name == 'int16':
             return struct.pack('h', value)
-        elif name == 'int32':
+        if name == 'int32':
             return struct.pack('i', value)
-        elif name == 'int64':
+        if name == 'int64':
             return struct.pack('q', value)
-        elif name == 'uint8':
+        if name == 'uint8':
             return struct.pack('B', value)
-        elif name == 'uint16':
+        if name == 'uint16':
             return struct.pack('H', value)
-        elif name == 'uint32':
+        if name == 'uint32':
             return struct.pack('I', value)
-        elif name == 'uint64':
+        if name == 'uint64':
             return struct.pack('Q', value)
-        elif name == 'float32':
+        if name == 'float32':
             return struct.pack('f', value)
-        elif name == 'float64':
+        if name == 'float64':
             return struct.pack('d', value)
-        elif name == 'string':
+        if name == 'string':
             encoded = value.encode('utf-8')
             return struct.pack('I', len(encoded)) + encoded
-        elif name == 'bytes':
+        if name == 'bytes':
             return struct.pack('I', len(value)) + value
         return b''
 
@@ -161,13 +158,13 @@ class BinaryMarshaller(Marshaller):
                 result += self.marshal(field_value, field_info)
         return result
 
-    def _marshal_array(self, value: List, type_info: TypeInfo) -> bytes:
+    def _marshal_array(self, value: list, type_info: TypeInfo) -> bytes:
         result = struct.pack('I', len(value))
         for item in value:
             result += self.marshal(item, type_info.item_type)
         return result
 
-    def _marshal_map(self, value: Dict, type_info: TypeInfo) -> bytes:
+    def _marshal_map(self, value: dict, type_info: TypeInfo) -> bytes:
         result = struct.pack('I', len(value))
         for k, v in value.items():
             result += self.marshal(k, type_info.key_type)
@@ -187,13 +184,13 @@ class BinaryMarshaller(Marshaller):
     def _unmarshal_value(self, type_info: TypeInfo) -> Any:
         if type_info.kind == TypeKind.PRIMITIVE:
             return self._unmarshal_primitive(type_info)
-        elif type_info.kind == TypeKind.COMPOSITE:
+        if type_info.kind == TypeKind.COMPOSITE:
             return self._unmarshal_composite(type_info)
-        elif type_info.kind == TypeKind.ARRAY:
+        if type_info.kind == TypeKind.ARRAY:
             return self._unmarshal_array(type_info)
-        elif type_info.kind == TypeKind.MAP:
+        if type_info.kind == TypeKind.MAP:
             return self._unmarshal_map(type_info)
-        elif type_info.kind == TypeKind.OPTIONAL:
+        if type_info.kind == TypeKind.OPTIONAL:
             return self._unmarshal_optional(type_info)
         return None
 
@@ -207,32 +204,32 @@ class BinaryMarshaller(Marshaller):
         name = type_info.name
         if name == 'bool':
             return self._read('?')
-        elif name == 'int8':
+        if name == 'int8':
             return self._read('b')
-        elif name == 'int16':
+        if name == 'int16':
             return self._read('h')
-        elif name == 'int32':
+        if name == 'int32':
             return self._read('i')
-        elif name == 'int64':
+        if name == 'int64':
             return self._read('q')
-        elif name == 'uint8':
+        if name == 'uint8':
             return self._read('B')
-        elif name == 'uint16':
+        if name == 'uint16':
             return self._read('H')
-        elif name == 'uint32':
+        if name == 'uint32':
             return self._read('I')
-        elif name == 'uint64':
+        if name == 'uint64':
             return self._read('Q')
-        elif name == 'float32':
+        if name == 'float32':
             return self._read('f')
-        elif name == 'float64':
+        if name == 'float64':
             return self._read('d')
-        elif name == 'string':
+        if name == 'string':
             length = self._read('I')
             value = self._data[self._offset:self._offset + length].decode('utf-8')
             self._offset += length
             return value
-        elif name == 'bytes':
+        if name == 'bytes':
             length = self._read('I')
             value = self._data[self._offset:self._offset + length]
             self._offset += length
@@ -249,14 +246,14 @@ class BinaryMarshaller(Marshaller):
                 result[field_name] = None
         return result
 
-    def _unmarshal_array(self, type_info: TypeInfo) -> List:
+    def _unmarshal_array(self, type_info: TypeInfo) -> list:
         length = self._read('I')
         result = []
         for _ in range(length):
             result.append(self._unmarshal_value(type_info.item_type))
         return result
 
-    def _unmarshal_map(self, type_info: TypeInfo) -> Dict:
+    def _unmarshal_map(self, type_info: TypeInfo) -> dict:
         length = self._read('I')
         result = {}
         for _ in range(length):
@@ -274,11 +271,11 @@ class BinaryMarshaller(Marshaller):
 
 class TypeMarshaller:
     def __init__(self):
-        self.marshallers: Dict[str, Marshaller] = {
+        self.marshallers: dict[str, Marshaller] = {
             'json': JSONMarshaller(),
             'binary': BinaryMarshaller(),
         }
-        self.type_registry: Dict[str, TypeInfo] = {}
+        self.type_registry: dict[str, TypeInfo] = {}
         self._register_default_types()
 
     def _register_default_types(self):
@@ -298,7 +295,7 @@ class TypeMarshaller:
         if 'binary' in self.marshallers:
             self.marshallers['binary'].register_type(type_info)
 
-    def get_type_info(self, python_type: Type) -> Optional[TypeInfo]:
+    def get_type_info(self, python_type: type) -> TypeInfo | None:
         for info in self.type_registry.values():
             if info.python_type == python_type:
                 return info
@@ -307,51 +304,51 @@ class TypeMarshaller:
     def marshal(self, value: Any, format: str = 'json', type_info: TypeInfo = None) -> bytes:
         if format not in self.marshallers:
             raise ValueError(f"Unknown format: {format}")
-        
+
         if type_info is None:
             type_info = self._infer_type_info(value)
-        
+
         return self.marshallers[format].marshal(value, type_info)
 
     def unmarshal(self, data: bytes, format: str = 'json', type_info: TypeInfo = None) -> Any:
         if format not in self.marshallers:
             raise ValueError(f"Unknown format: {format}")
-        
+
         if type_info is None:
             raise ValueError("Type info required for unmarshaling")
-        
+
         return self.marshallers[format].unmarshal(data, type_info)
 
     def _infer_type_info(self, value: Any) -> TypeInfo:
         if value is None:
             return TypeInfo('null', TypeKind.PRIMITIVE, type(None))
-        elif isinstance(value, bool):
+        if isinstance(value, bool):
             return self.type_registry['bool']
-        elif isinstance(value, int):
+        if isinstance(value, int):
             return self.type_registry['int']
-        elif isinstance(value, float):
+        if isinstance(value, float):
             return self.type_registry['float']
-        elif isinstance(value, str):
+        if isinstance(value, str):
             return self.type_registry['str']
-        elif isinstance(value, bytes):
+        if isinstance(value, bytes):
             return self.type_registry['bytes']
-        elif isinstance(value, datetime):
+        if isinstance(value, datetime):
             return self.type_registry['datetime']
-        elif isinstance(value, uuid.UUID):
+        if isinstance(value, uuid.UUID):
             return self.type_registry['uuid']
-        elif isinstance(value, list):
+        if isinstance(value, list):
             item_info = self._infer_type_info(value[0]) if value else TypeInfo('any', TypeKind.PRIMITIVE)
             return TypeInfo('list', TypeKind.ARRAY, list, item_type=item_info)
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             key_info = self._infer_type_info(next(iter(value.keys()))) if value else TypeInfo('any', TypeKind.PRIMITIVE)
             val_info = self._infer_type_info(next(iter(value.values()))) if value else TypeInfo('any', TypeKind.PRIMITIVE)
             return TypeInfo('dict', TypeKind.MAP, dict, key_type=key_info, value_type=val_info)
-        elif is_dataclass(value):
+        if is_dataclass(value):
             fields = {}
             for f in value.__dataclass_fields__.values():
                 fields[f.name] = self._infer_type_info(getattr(value, f.name))
             return TypeInfo(value.__class__.__name__, TypeKind.COMPOSITE, value.__class__, fields=fields)
-        elif isinstance(value, Enum):
+        if isinstance(value, Enum):
             return TypeInfo(value.__class__.__name__, TypeKind.ENUM, value.__class__, enum_values=[e.value for e in value.__class__])
         return TypeInfo('any', TypeKind.PRIMITIVE, type(value))
 
@@ -364,12 +361,12 @@ class SchemaValidator:
     def __init__(self, marshaller: TypeMarshaller):
         self.marshaller = marshaller
 
-    def validate(self, value: Any, type_info: TypeInfo) -> List[str]:
+    def validate(self, value: Any, type_info: TypeInfo) -> list[str]:
         errors = []
         self._validate_value(value, type_info, "", errors)
         return errors
 
-    def _validate_value(self, value: Any, type_info: TypeInfo, path: str, errors: List[str]):
+    def _validate_value(self, value: Any, type_info: TypeInfo, path: str, errors: list[str]):
         if type_info.kind == TypeKind.PRIMITIVE:
             if not self._check_primitive(value, type_info):
                 errors.append(f"{path}: expected {type_info.name}, got {type(value).__name__}")
@@ -410,7 +407,7 @@ class SchemaValidator:
 
 class CrossLanguageTypeMapper:
     def __init__(self):
-        self.mappings: Dict[str, Dict[str, str]] = {
+        self.mappings: dict[str, dict[str, str]] = {
             'python': {
                 'int': 'int64',
                 'float': 'float64',
@@ -452,7 +449,7 @@ class CrossLanguageTypeMapper:
     def map_type(self, source_lang: str, target_lang: str, type_name: str) -> str:
         source_map = self.mappings.get(source_lang, {})
         canonical = source_map.get(type_name, type_name)
-        
+
         target_map = self.mappings.get(target_lang, {})
         return target_map.get(canonical, canonical)
 

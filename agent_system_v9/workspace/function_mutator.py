@@ -4,12 +4,10 @@ Function Mutator - Mutates functions for testing and evolution
 import ast
 import hashlib
 import random
-import copy
-from typing import Dict, List, Optional, Any, Set, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class MutationType(Enum):
@@ -35,13 +33,13 @@ class Mutation:
     line: int
     column: int
     description: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class MutationResult:
     function_name: str
-    mutations: List[Mutation]
+    mutations: list[Mutation]
     killed_mutants: int = 0
     survived_mutants: int = 0
     total_mutants: int = 0
@@ -50,7 +48,7 @@ class MutationResult:
 
 class FunctionMutator:
     def __init__(self):
-        self.mutators: Dict[MutationType, Callable] = {
+        self.mutators: dict[MutationType, Callable] = {
             MutationType.ARITHMETIC: self._mutate_arithmetic,
             MutationType.COMPARISON: self._mutate_comparison,
             MutationType.LOGICAL: self._mutate_logical,
@@ -59,39 +57,39 @@ class FunctionMutator:
             MutationType.RETURN_VALUE: self._mutate_return_value,
             MutationType.CONDITIONAL_BOUNDARY: self._mutate_conditional_boundary,
         }
-        self.mutations: List[Mutation] = []
+        self.mutations: list[Mutation] = []
 
-    def mutate_function(self, source: str, function_name: str = None, 
-                       mutation_types: List[MutationType] = None) -> MutationResult:
+    def mutate_function(self, source: str, function_name: str = None,
+                       mutation_types: list[MutationType] = None) -> MutationResult:
         tree = ast.parse(source)
-        
+
         if function_name:
             target_node = self._find_function(tree, function_name)
             if not target_node:
                 return MutationResult(function_name=function_name or "unknown", mutations=[])
         else:
             target_node = tree
-        
+
         mutations = []
         for mut_type in mutation_types or list(self.mutators.keys()):
             if mut_type in self.mutators:
                 mutations.extend(self.mutators[mut_type](target_node, source))
-        
+
         self.mutations = mutations
-        
+
         return MutationResult(
             function_name=function_name or "module",
             mutations=mutations,
             total_mutants=len(mutations),
         )
 
-    def _find_function(self, tree: ast.AST, name: str) -> Optional[ast.AST]:
+    def _find_function(self, tree: ast.AST, name: str) -> ast.AST | None:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
                 return node
         return None
 
-    def _mutate_arithmetic(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_arithmetic(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
         operators = {
             ast.Add: [ast.Sub, ast.Mult, ast.Div],
@@ -101,7 +99,7 @@ class FunctionMutator:
             ast.Mod: [ast.Add, ast.Sub, ast.Mult],
             ast.Pow: [ast.Mult, ast.Div],
         }
-        
+
         for n in ast.walk(node):
             if isinstance(n, ast.BinOp) and type(n.op) in operators:
                 for replacement in operators[type(n.op)]:
@@ -110,10 +108,10 @@ class FunctionMutator:
                         MutationType.ARITHMETIC,
                     )
                     mutations.append(mutation)
-        
+
         return mutations
 
-    def _mutate_comparison(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_comparison(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
         operators = {
             ast.Eq: [ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE],
@@ -127,7 +125,7 @@ class FunctionMutator:
             ast.Is: [ast.IsNot],
             ast.IsNot: [ast.Is],
         }
-        
+
         for n in ast.walk(node):
             if isinstance(n, ast.Compare):
                 for op in n.ops:
@@ -138,16 +136,16 @@ class FunctionMutator:
                                 MutationType.COMPARISON,
                             )
                             mutations.append(mutation)
-        
+
         return mutations
 
-    def _mutate_logical(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_logical(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
         operators = {
             ast.And: [ast.Or],
             ast.Or: [ast.And],
         }
-        
+
         for n in ast.walk(node):
             if isinstance(n, ast.BoolOp) and type(n.op) in operators:
                 for replacement in operators[type(n.op)]:
@@ -156,10 +154,10 @@ class FunctionMutator:
                         MutationType.LOGICAL,
                     )
                     mutations.append(mutation)
-        
+
         return mutations
 
-    def _mutate_constant(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_constant(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
         constant_replacements = {
             True: False,
@@ -170,7 +168,7 @@ class FunctionMutator:
             "": "mutated",
             None: 0,
         }
-        
+
         for n in ast.walk(node):
             if isinstance(n, ast.Constant) and n.value in constant_replacements:
                 mutation = self._create_mutation(
@@ -178,12 +176,12 @@ class FunctionMutator:
                     MutationType.CONSTANT,
                 )
                 mutations.append(mutation)
-        
+
         return mutations
 
-    def _mutate_statement_deletion(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_statement_deletion(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
-        
+
         for n in ast.walk(node):
             if isinstance(n, (ast.Expr, ast.Assign, ast.AugAssign, ast.Pass, ast.Break, ast.Continue)):
                 if not self._is_critical(n):
@@ -192,7 +190,7 @@ class FunctionMutator:
                         MutationType.STATEMENT_DELETION,
                     )
                     mutations.append(mutation)
-        
+
         return mutations
 
     def _is_critical(self, node: ast.AST) -> bool:
@@ -204,9 +202,9 @@ class FunctionMutator:
                 return True
         return False
 
-    def _mutate_return_value(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_return_value(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
-        
+
         for n in ast.walk(node):
             if isinstance(n, ast.Return) and n.value:
                 if isinstance(n.value, ast.Constant):
@@ -230,12 +228,12 @@ class FunctionMutator:
                         MutationType.RETURN_VALUE,
                     )
                     mutations.append(mutation)
-        
+
         return mutations
 
-    def _mutate_conditional_boundary(self, node: ast.AST, source: str) -> List[Mutation]:
+    def _mutate_conditional_boundary(self, node: ast.AST, source: str) -> list[Mutation]:
         mutations = []
-        
+
         for n in ast.walk(node):
             if isinstance(n, ast.Compare):
                 for op in n.ops:
@@ -245,18 +243,18 @@ class FunctionMutator:
                             MutationType.CONDITIONAL_BOUNDARY,
                         )
                         mutations.append(mutation)
-        
+
         return mutations
 
     def _create_mutation(self, node: ast.AST, source: str, description: str, mut_type: MutationType) -> Mutation:
         lines = source.split('\n')
         line = getattr(node, 'lineno', 1)
         column = getattr(node, 'col_offset', 0)
-        
+
         start = max(0, line - 3)
         end = min(len(lines), line + 2)
         original = '\n'.join(lines[start:end])
-        
+
         return Mutation(
             mutation_id=hashlib.md5(f"{description}:{line}:{column}".encode()).hexdigest()[:12],
             mutation_type=mut_type,
@@ -275,15 +273,15 @@ class FunctionMutator:
             lines[line_idx] = f"# MUTATED: {mutation.description}\n{lines[line_idx]}"
         return '\n'.join(lines)
 
-    def generate_mutants(self, source: str, function_name: str = None, 
-                        max_mutants: int = 100) -> List[str]:
+    def generate_mutants(self, source: str, function_name: str = None,
+                        max_mutants: int = 100) -> list[str]:
         result = self.mutate_function(source, function_name)
         mutants = []
-        
+
         for mutation in result.mutations[:max_mutants]:
             mutant = self.apply_mutation(source, mutation)
             mutants.append(mutant)
-        
+
         return mutants
 
 
@@ -291,13 +289,13 @@ class MutationTester:
     def __init__(self, mutator: FunctionMutator):
         self.mutator = mutator
 
-    def test_mutants(self, source: str, test_func: Callable, 
+    def test_mutants(self, source: str, test_func: Callable,
                     function_name: str = None) -> MutationResult:
         result = self.mutator.mutate_function(source, function_name)
-        
+
         for mutation in result.mutations:
             mutant_code = self.mutator.apply_mutation(source, mutation)
-            
+
             try:
                 exec(mutant_code)
                 test_func()
@@ -306,7 +304,7 @@ class MutationTester:
                 result.killed_mutants += 1
             except Exception:
                 result.survived_mutants += 1
-        
+
         result.mutation_score = result.killed_mutants / max(result.total_mutants, 1)
         return result
 
@@ -314,8 +312,8 @@ class MutationTester:
 class EvolutionaryMutator:
     def __init__(self, mutator: FunctionMutator):
         self.mutator = mutator
-        self.population: List[str] = []
-        self.fitness_scores: Dict[str, float] = {}
+        self.population: list[str] = []
+        self.fitness_scores: dict[str, float] = {}
 
     def initialize_population(self, source: str, function_name: str, size: int = 20):
         mutants = self.mutator.generate_mutants(source, function_name, size)
@@ -323,7 +321,7 @@ class EvolutionaryMutator:
         for mutant in mutants:
             self.fitness_scores[mutant] = 0.0
 
-    def evaluate_fitness(self, test_func: Callable) -> Dict[str, float]:
+    def evaluate_fitness(self, test_func: Callable) -> dict[str, float]:
         for mutant in self.population:
             try:
                 exec(mutant)
@@ -333,17 +331,17 @@ class EvolutionaryMutator:
                 self.fitness_scores[mutant] = 0.0
             except Exception:
                 self.fitness_scores[mutant] = 0.5
-        
+
         return self.fitness_scores
 
-    def evolve(self, generations: int = 10, test_func: Callable = None) -> List[str]:
+    def evolve(self, generations: int = 10, test_func: Callable = None) -> list[str]:
         for _ in range(generations):
             if test_func:
                 self.evaluate_fitness(test_func)
-            
+
             sorted_pop = sorted(self.population, key=lambda m: self.fitness_scores.get(m, 0), reverse=True)
-            elite = sorted_pop[:len(sorted_pop)//4]
-            
+            elite = sorted_pop[:len(sorted_pop) // 4]
+
             new_pop = list(elite)
             while len(new_pop) < len(self.population):
                 parent1 = random.choice(elite)
@@ -352,9 +350,9 @@ class EvolutionaryMutator:
                 if random.random() < 0.1:
                     child = self._mutate(child)
                 new_pop.append(child)
-            
+
             self.population = new_pop
-        
+
         return self.population
 
     def _crossover(self, parent1: str, parent2: str) -> str:

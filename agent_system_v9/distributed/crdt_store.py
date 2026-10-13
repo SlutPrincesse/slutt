@@ -2,17 +2,15 @@
 CRDT Store - Conflict-free Replicated Data Types for distributed state
 """
 import asyncio
-import uuid
+import builtins
 import time
-import json
-import hashlib
-from typing import Dict, List, Optional, Any, Set, Callable, TypeVar, Generic
+import uuid
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
-from copy import deepcopy
-
+from typing import Any, Generic, TypeVar
 
 T = TypeVar('T')
 
@@ -30,7 +28,7 @@ class CRDTType(Enum):
 
 @dataclass
 class VectorClock:
-    clocks: Dict[str, int] = field(default_factory=dict)
+    clocks: dict[str, int] = field(default_factory=dict)
 
     def increment(self, node_id: str):
         self.clocks[node_id] = self.clocks.get(node_id, 0) + 1
@@ -51,11 +49,11 @@ class VectorClock:
     def concurrent(self, other: 'VectorClock') -> bool:
         return not self.happens_before(other) and not other.happens_before(self)
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         return dict(self.clocks)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, int]) -> 'VectorClock':
+    def from_dict(cls, data: dict[str, int]) -> 'VectorClock':
         return cls(clocks=data)
 
 
@@ -65,19 +63,19 @@ class CRDT(ABC):
         pass
 
     @abstractmethod
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         pass
 
     @classmethod
     @abstractmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'CRDT':
+    def from_dict(cls, data: dict[str, Any]) -> 'CRDT':
         pass
 
 
 class GCounter(CRDT):
     def __init__(self, node_id: str = ""):
         self.node_id = node_id
-        self.counts: Dict[str, int] = defaultdict(int)
+        self.counts: dict[str, int] = defaultdict(int)
 
     def increment(self, node_id: str = None, value: int = 1):
         nid = node_id or self.node_id
@@ -93,11 +91,11 @@ class GCounter(CRDT):
             result.counts[node] = max(self.counts.get(node, 0), other.counts.get(node, 0))
         return result
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"type": "g_counter", "node_id": self.node_id, "counts": dict(self.counts)}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'GCounter':
+    def from_dict(cls, data: dict[str, Any]) -> 'GCounter':
         counter = cls(data.get("node_id", ""))
         counter.counts = defaultdict(int, data.get("counts", {}))
         return counter
@@ -124,7 +122,7 @@ class PNCounter(CRDT):
         result.negative = self.negative.merge(other.negative)
         return result
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "pn_counter",
             "node_id": self.node_id,
@@ -133,7 +131,7 @@ class PNCounter(CRDT):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PNCounter':
+    def from_dict(cls, data: dict[str, Any]) -> 'PNCounter':
         counter = cls(data.get("node_id", ""))
         counter.positive = GCounter.from_dict(data["positive"])
         counter.negative = GCounter.from_dict(data["negative"])
@@ -143,7 +141,7 @@ class PNCounter(CRDT):
 class GSet(CRDT, Generic[T]):
     def __init__(self, node_id: str = ""):
         self.node_id = node_id
-        self.elements: Set[T] = set()
+        self.elements: set[T] = set()
 
     def add(self, element: T):
         self.elements.add(element)
@@ -156,11 +154,11 @@ class GSet(CRDT, Generic[T]):
         result.elements = self.elements | other.elements
         return result
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"type": "g_set", "node_id": self.node_id, "elements": list(self.elements)}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'GSet':
+    def from_dict(cls, data: dict[str, Any]) -> 'GSet':
         gset = cls(data.get("node_id", ""))
         gset.elements = set(data.get("elements", []))
         return gset
@@ -169,9 +167,9 @@ class GSet(CRDT, Generic[T]):
 class ORSet(CRDT, Generic[T]):
     def __init__(self, node_id: str = ""):
         self.node_id = node_id
-        self.elements: Dict[T, Dict[str, float]] = {}
-        self.add_tags: Dict[T, Dict[str, float]] = {}
-        self.remove_tags: Dict[T, Dict[str, float]] = {}
+        self.elements: dict[T, dict[str, float]] = {}
+        self.add_tags: dict[T, dict[str, float]] = {}
+        self.remove_tags: dict[T, dict[str, float]] = {}
 
     def _generate_tag(self) -> str:
         return f"{self.node_id}:{time.time()}:{uuid.uuid4().hex[:8]}"
@@ -196,32 +194,32 @@ class ORSet(CRDT, Generic[T]):
         remove_tags = set(self.remove_tags.get(element, {}).keys())
         return len(add_tags - remove_tags) > 0
 
-    def get_elements(self) -> Set[T]:
+    def get_elements(self) -> set[T]:
         return {e for e in self.elements if self.contains(e)}
 
     def merge(self, other: 'ORSet') -> 'ORSet':
         result = ORSet(self.node_id)
         all_elements = set(self.elements.keys()) | set(other.elements.keys())
-        
+
         for element in all_elements:
             result.add_tags[element] = {}
             result.remove_tags[element] = {}
-            
+
             result.add_tags[element].update(self.add_tags.get(element, {}))
             result.add_tags[element].update(other.add_tags.get(element, {}))
-            
+
             result.remove_tags[element].update(self.remove_tags.get(element, {}))
             result.remove_tags[element].update(other.remove_tags.get(element, {}))
-            
+
             add_tags = set(result.add_tags[element].keys())
             remove_tags = set(result.remove_tags[element].keys())
-            
+
             if add_tags - remove_tags:
                 result.elements[element] = {}
-        
+
         return result
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "or_set",
             "node_id": self.node_id,
@@ -231,10 +229,10 @@ class ORSet(CRDT, Generic[T]):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ORSet':
+    def from_dict(cls, data: dict[str, Any]) -> 'ORSet':
         orset = cls(data.get("node_id", ""))
         for k, v in data.get("elements", {}).items():
-            orset.elements[eval(k)] = {tag: True for tag in v}
+            orset.elements[eval(k)] = dict.fromkeys(v, True)
         for k, v in data.get("add_tags", {}).items():
             orset.add_tags[eval(k)] = v
         for k, v in data.get("remove_tags", {}).items():
@@ -252,7 +250,7 @@ class LWWRegister(CRDT, Generic[T]):
     def set(self, value: T, node_id: str = None, timestamp: float = None):
         ts = timestamp or time.time()
         nid = node_id or self.node_id
-        
+
         if ts > self.timestamp or (ts == self.timestamp and nid > self.node_ts):
             self.value = value
             self.timestamp = ts
@@ -274,7 +272,7 @@ class LWWRegister(CRDT, Generic[T]):
             result.node_ts = self.node_ts
         return result
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "lww_register",
             "node_id": self.node_id,
@@ -284,7 +282,7 @@ class LWWRegister(CRDT, Generic[T]):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'LWWRegister':
+    def from_dict(cls, data: dict[str, Any]) -> 'LWWRegister':
         reg = cls(data.get("node_id", ""))
         reg.value = data.get("value")
         reg.timestamp = data.get("timestamp", 0)
@@ -295,7 +293,7 @@ class LWWRegister(CRDT, Generic[T]):
 class LWWMap(CRDT):
     def __init__(self, node_id: str = ""):
         self.node_id = node_id
-        self.registers: Dict[str, LWWRegister] = {}
+        self.registers: dict[str, LWWRegister] = {}
 
     def set(self, key: str, value: Any, node_id: str = None, timestamp: float = None):
         if key not in self.registers:
@@ -309,10 +307,10 @@ class LWWMap(CRDT):
     def delete(self, key: str, node_id: str = None, timestamp: float = None):
         self.set(key, None, node_id, timestamp)
 
-    def keys(self) -> Set[str]:
+    def keys(self) -> builtins.set[str]:
         return {k for k, v in self.registers.items() if v.get() is not None}
 
-    def items(self) -> Dict[str, Any]:
+    def items(self) -> dict[str, Any]:
         return {k: v.get() for k, v in self.registers.items() if v.get() is not None}
 
     def merge(self, other: 'LWWMap') -> 'LWWMap':
@@ -327,7 +325,7 @@ class LWWMap(CRDT):
                 result.registers[key] = other.registers[key]
         return result
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "lww_map",
             "node_id": self.node_id,
@@ -335,7 +333,7 @@ class LWWMap(CRDT):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'LWWMap':
+    def from_dict(cls, data: dict[str, Any]) -> 'LWWMap':
         lww_map = cls(data.get("node_id", ""))
         for k, v in data.get("registers", {}).items():
             lww_map.registers[k] = LWWRegister.from_dict(v)
@@ -345,16 +343,16 @@ class LWWMap(CRDT):
 class CRDTStore:
     def __init__(self, node_id: str):
         self.node_id = node_id
-        self.crdts: Dict[str, CRDT] = {}
+        self.crdts: dict[str, CRDT] = {}
         self.vector_clock = VectorClock()
-        self.peers: Dict[str, 'CRDTStore'] = {}
+        self.peers: dict[str, CRDTStore] = {}
         self._lock = asyncio.Lock()
-        self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
+        self._callbacks: dict[str, list[Callable]] = defaultdict(list)
 
     def register_crdt(self, name: str, crdt: CRDT):
         self.crdts[name] = crdt
 
-    def get_crdt(self, name: str) -> Optional[CRDT]:
+    def get_crdt(self, name: str) -> CRDT | None:
         return self.crdts.get(name)
 
     def g_counter(self, name: str) -> GCounter:
@@ -394,7 +392,7 @@ class CRDTStore:
                     self.crdts[name] = self.crdts[name].merge(other_crdt)
                 else:
                     self.crdts[name] = other_crdt
-            
+
             self.vector_clock.merge(other_store.vector_clock)
             await self._notify_callbacks()
 
@@ -421,14 +419,14 @@ class CRDTStore:
                 except Exception:
                     pass
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         return {
             "node_id": self.node_id,
             "vector_clock": self.vector_clock.to_dict(),
             "crdts": {name: crdt.to_dict() for name, crdt in self.crdts.items()},
         }
 
-    def load_state(self, state: Dict[str, Any]):
+    def load_state(self, state: dict[str, Any]):
         self.vector_clock = VectorClock.from_dict(state.get("vector_clock", {}))
         for name, crdt_data in state.get("crdts", {}).items():
             crdt_type = crdt_data.get("type")
@@ -449,7 +447,7 @@ class CRDTStore:
 class CRDTCluster:
     def __init__(self, node_id: str):
         self.local_store = CRDTStore(node_id)
-        self.peers: Dict[str, CRDTStore] = {}
+        self.peers: dict[str, CRDTStore] = {}
 
     def add_peer(self, peer_id: str, peer_store: CRDTStore):
         self.peers[peer_id] = peer_store

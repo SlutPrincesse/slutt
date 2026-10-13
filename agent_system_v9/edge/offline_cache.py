@@ -2,17 +2,15 @@
 Offline Cache - Local caching for offline operation
 """
 import asyncio
-import hashlib
 import json
-import time
+import pickle
 import sqlite3
-import os
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import pickle
+from typing import Any
 
 
 class CacheStrategy(Enum):
@@ -30,9 +28,9 @@ class CacheEntry:
     created_at: float = field(default_factory=time.time)
     accessed_at: float = field(default_factory=time.time)
     access_count: int = 0
-    ttl: Optional[float] = None
+    ttl: float | None = None
     size: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def is_expired(self) -> bool:
         if self.ttl is None:
@@ -57,28 +55,28 @@ class CacheConfig:
 class MemoryCache:
     def __init__(self, config: CacheConfig):
         self.config = config
-        self.cache: Dict[str, CacheEntry] = {}
+        self.cache: dict[str, CacheEntry] = {}
         self._lock = asyncio.Lock()
         self.hits = 0
         self.misses = 0
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         async with self._lock:
             entry = self.cache.get(key)
             if entry and not entry.is_expired():
                 entry.touch()
                 self.hits += 1
                 return entry.value
-            elif entry:
+            if entry:
                 del self.cache[key]
             self.misses += 1
             return None
 
-    async def set(self, key: str, value: Any, ttl: float = None, metadata: Dict = None):
+    async def set(self, key: str, value: Any, ttl: float = None, metadata: dict = None):
         async with self._lock:
             if len(self.cache) >= self.config.max_size:
                 await self._evict()
-            
+
             entry = CacheEntry(
                 key=key,
                 value=value,
@@ -114,7 +112,7 @@ class MemoryCache:
                 oldest = min(self.cache.items(), key=lambda x: x[1].created_at)
         else:
             oldest = min(self.cache.items(), key=lambda x: x[1].accessed_at)
-        
+
         del self.cache[oldest[0]]
 
     def _estimate_size(self, value: Any) -> int:
@@ -123,7 +121,7 @@ class MemoryCache:
         except Exception:
             return 1024
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         async with self._lock:
             total_size = sum(e.size for e in self.cache.values())
             return {
@@ -160,7 +158,7 @@ class DiskCache:
         conn.commit()
         conn.close()
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.execute(
             "SELECT value, created_at, ttl, accessed_at, access_count FROM cache WHERE key = ?",
@@ -168,23 +166,23 @@ class DiskCache:
         )
         row = cursor.fetchone()
         conn.close()
-        
+
         if row:
             value, created_at, ttl, accessed_at, access_count = row
             if ttl and time.time() - created_at > ttl:
                 await self.delete(key)
                 return None
-            
+
             await self._touch(key, access_count + 1)
             return pickle.loads(value)
         return None
 
-    async def set(self, key: str, value: Any, ttl: float = None, metadata: Dict = None):
+    async def set(self, key: str, value: Any, ttl: float = None, metadata: dict = None):
         data = pickle.dumps(value)
         size = len(data)
         now = time.time()
         ttl = ttl or self.config.default_ttl
-        
+
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
             INSERT OR REPLACE INTO cache (key, value, created_at, accessed_at, access_count, ttl, size, metadata)
@@ -224,7 +222,7 @@ class DiskCache:
         conn.close()
         return deleted
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.execute("SELECT COUNT(*), SUM(size) FROM cache")
         count, total_size = cursor.fetchone()
@@ -241,7 +239,7 @@ class OfflineCache:
         self.memory_cache = MemoryCache(self.config)
         self.disk_cache = DiskCache(self.config) if self.config.persist_to_disk else None
         self._running = False
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_task: asyncio.Task | None = None
 
     async def start(self):
         self._running = True
@@ -257,20 +255,20 @@ class OfflineCache:
             except asyncio.CancelledError:
                 pass
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         value = await self.memory_cache.get(key)
         if value is not None:
             return value
-        
+
         if self.disk_cache:
             value = await self.disk_cache.get(key)
             if value is not None:
                 await self.memory_cache.set(key, value)
                 return value
-        
+
         return None
 
-    async def set(self, key: str, value: Any, ttl: float = None, metadata: Dict = None):
+    async def set(self, key: str, value: Any, ttl: float = None, metadata: dict = None):
         await self.memory_cache.set(key, value, ttl, metadata)
         if self.disk_cache:
             await self.disk_cache.set(key, value, ttl, metadata)
@@ -291,7 +289,7 @@ class OfflineCache:
             if self.disk_cache:
                 await self.disk_cache.cleanup_expired()
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         mem_stats = await self.memory_cache.get_stats()
         disk_stats = await self.disk_cache.get_stats() if self.disk_cache else {}
         return {
@@ -299,7 +297,7 @@ class OfflineCache:
             "disk": disk_stats,
         }
 
-    async def prefetch(self, keys: List[str], loader: Callable[[str], Awaitable[Any]]):
+    async def prefetch(self, keys: list[str], loader: Callable[[str], Awaitable[Any]]):
         for key in keys:
             if await self.get(key) is None:
                 try:
@@ -310,7 +308,7 @@ class OfflineCache:
 
 
 class WriteThroughCache(OfflineCache):
-    async def set(self, key: str, value: Any, ttl: float = None, metadata: Dict = None, writer: Callable = None):
+    async def set(self, key: str, value: Any, ttl: float = None, metadata: dict = None, writer: Callable = None):
         if writer:
             try:
                 await writer(key, value)
@@ -324,7 +322,7 @@ class WriteBehindCache(OfflineCache):
         super().__init__(config)
         self.flush_interval = flush_interval
         self.write_queue: asyncio.Queue = asyncio.Queue()
-        self._flush_task: Optional[asyncio.Task] = None
+        self._flush_task: asyncio.Task | None = None
 
     async def start(self):
         await super().start()
@@ -339,7 +337,7 @@ class WriteBehindCache(OfflineCache):
             except asyncio.CancelledError:
                 pass
 
-    async def set(self, key: str, value: Any, ttl: float = None, metadata: Dict = None, writer: Callable = None):
+    async def set(self, key: str, value: Any, ttl: float = None, metadata: dict = None, writer: Callable = None):
         await super().set(key, value, ttl, metadata)
         if writer:
             await self.write_queue.put((key, value, writer))
@@ -363,9 +361,9 @@ class CacheWarmer:
     def __init__(self, cache: OfflineCache):
         self.cache = cache
 
-    async def warm(self, keys: List[str], loader: Callable[[str], Awaitable[Any]], concurrency: int = 10):
+    async def warm(self, keys: list[str], loader: Callable[[str], Awaitable[Any]], concurrency: int = 10):
         semaphore = asyncio.Semaphore(concurrency)
-        
+
         async def load(key: str):
             async with semaphore:
                 if await self.cache.get(key) is None:
@@ -374,7 +372,7 @@ class CacheWarmer:
                         await self.cache.set(key, value)
                     except Exception:
                         pass
-        
+
         await asyncio.gather(*[load(key) for key in keys])
 
     async def warm_from_pattern(self, pattern: str, loader: Callable[[str], Awaitable[Any]], max_keys: int = 100):

@@ -1,15 +1,14 @@
 """
 Release Tagger - Automated release tagging and versioning
 """
-import hashlib
 import re
 import subprocess
 import time
-from typing import Dict, List, Optional, Any, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class VersionScheme(Enum):
@@ -56,7 +55,7 @@ class Version:
 @dataclass
 class ReleaseConfig:
     scheme: VersionScheme = VersionScheme.SEMVER
-    branch_patterns: Dict[str, ReleaseType] = field(default_factory=lambda: {
+    branch_patterns: dict[str, ReleaseType] = field(default_factory=lambda: {
         "main": ReleaseType.PATCH,
         "release/*": ReleaseType.MINOR,
         "hotfix/*": ReleaseType.PATCH,
@@ -73,11 +72,11 @@ class ReleaseConfig:
 class ReleaseNote:
     version: Version
     date: float = field(default_factory=time.time)
-    commits: List[Dict[str, Any]] = field(default_factory=list)
-    features: List[str] = field(default_factory=list)
-    fixes: List[str] = field(default_factory=list)
-    breaking_changes: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    commits: list[dict[str, Any]] = field(default_factory=list)
+    features: list[str] = field(default_factory=list)
+    fixes: list[str] = field(default_factory=list)
+    breaking_changes: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,14 +87,14 @@ class Release:
     notes: ReleaseNote
     created_at: float = field(default_factory=time.time)
     published: bool = False
-    assets: List[str] = field(default_factory=list)
+    assets: list[str] = field(default_factory=list)
 
 
 class ReleaseTagger:
     def __init__(self, config: ReleaseConfig = None, repo_path: str = "."):
         self.config = config or ReleaseConfig()
         self.repo_path = Path(repo_path)
-        self.releases: List[Release] = []
+        self.releases: list[Release] = []
         self._load_releases()
 
     def _load_releases(self):
@@ -107,7 +106,7 @@ class ReleaseTagger:
                 text=True,
             )
             tags = result.stdout.strip().split('\n')
-            
+
             for tag in tags:
                 if tag:
                     version_str = tag[len(self.config.tag_prefix):]
@@ -134,20 +133,20 @@ class ReleaseTagger:
         except Exception:
             return ""
 
-    def _get_commits_since(self, since_tag: str = None) -> List[Dict[str, Any]]:
+    def _get_commits_since(self, since_tag: str = None) -> list[dict[str, Any]]:
         try:
             if since_tag:
                 cmd = ["git", "log", f"{since_tag}..HEAD", "--pretty=format:%H|%s|%an|%ad"]
             else:
                 cmd = ["git", "log", "-n", "50", "--pretty=format:%H|%s|%an|%ad"]
-            
+
             result = subprocess.run(
                 cmd,
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
             )
-            
+
             commits = []
             for line in result.stdout.strip().split('\n'):
                 if line:
@@ -166,9 +165,9 @@ class ReleaseTagger:
     def _generate_notes(self, version: Version) -> ReleaseNote:
         previous = self._get_previous_version(version)
         commits = self._get_commits_since(f"{self.config.tag_prefix}{previous}" if previous else None)
-        
+
         note = ReleaseNote(version=version, commits=commits)
-        
+
         for commit in commits:
             msg = commit["message"].lower()
             if any(kw in msg for kw in ["feat", "feature"]):
@@ -177,29 +176,29 @@ class ReleaseTagger:
                 note.fixes.append(commit["message"])
             elif "breaking" in msg or "break" in msg:
                 note.breaking_changes.append(commit["message"])
-        
+
         return note
 
-    def _get_previous_version(self, version: Version) -> Optional[Version]:
+    def _get_previous_version(self, version: Version) -> Version | None:
         sorted_releases = sorted(self.releases, key=lambda r: (r.version.major, r.version.minor, r.version.patch))
         for release in reversed(sorted_releases):
             if (release.version.major, release.version.minor, release.version.patch) < (version.major, version.minor, version.patch):
                 return release.version
         return None
 
-    def determine_release_type(self, branch: str, commits: List[Dict] = None) -> ReleaseType:
+    def determine_release_type(self, branch: str, commits: list[dict] = None) -> ReleaseType:
         for pattern, rtype in self.config.branch_patterns.items():
             if self._match_branch(branch, pattern):
                 return rtype
-        
+
         if commits:
             for commit in commits:
                 msg = commit.get("message", "").lower()
                 if "breaking" in msg or "break" in msg:
                     return ReleaseType.MAJOR
-                elif any(kw in msg for kw in ["feat", "feature"]):
+                if any(kw in msg for kw in ["feat", "feature"]):
                     return ReleaseType.MINOR
-        
+
         return ReleaseType.PATCH
 
     def _match_branch(self, branch: str, pattern: str) -> bool:
@@ -211,11 +210,11 @@ class ReleaseTagger:
     def calculate_next_version(self, current: Version, release_type: ReleaseType) -> Version:
         if release_type == ReleaseType.MAJOR:
             return Version(current.major + 1, 0, 0)
-        elif release_type == ReleaseType.MINOR:
+        if release_type == ReleaseType.MINOR:
             return Version(current.major, current.minor + 1, 0)
-        elif release_type == ReleaseType.PATCH:
+        if release_type == ReleaseType.PATCH:
             return Version(current.major, current.minor, current.patch + 1)
-        elif release_type == ReleaseType.PRE_RELEASE:
+        if release_type == ReleaseType.PRE_RELEASE:
             return Version(current.major, current.minor, current.patch, "rc.1")
         return Version(current.major, current.minor, current.patch + 1)
 
@@ -227,9 +226,9 @@ class ReleaseTagger:
     ) -> Release:
         if not branch:
             branch = self._get_current_branch()
-        
+
         current = self.get_latest_version()
-        
+
         if custom_version:
             next_version = custom_version
         else:
@@ -237,16 +236,16 @@ class ReleaseTagger:
                 commits = self._get_commits_since(f"{self.config.tag_prefix}{current}" if current else None)
                 release_type = self.determine_release_type(branch, commits)
             next_version = self.calculate_next_version(current, release_type)
-        
+
         tag_name = f"{self.config.tag_prefix}{next_version}"
-        
+
         try:
             subprocess.run(
                 ["git", "tag", "-a", tag_name, "-m", f"Release {tag_name}"],
                 cwd=self.repo_path,
                 check=True,
             )
-            
+
             if self.config.sign_tags:
                 subprocess.run(
                     ["git", "tag", "-s", tag_name, "-m", f"Release {tag_name}"],
@@ -255,17 +254,17 @@ class ReleaseTagger:
                 )
         except subprocess.CalledProcessError:
             pass
-        
+
         commit_hash = self._get_current_commit()
         notes = self._generate_notes(next_version)
-        
+
         release = Release(
             version=next_version,
             tag_name=tag_name,
             commit_hash=commit_hash,
             notes=notes,
         )
-        
+
         self.releases.append(release)
         return release
 
@@ -298,38 +297,38 @@ class ReleaseTagger:
             return Version(0, 0, 0)
         return max(self.releases, key=lambda r: (r.version.major, r.version.minor, r.version.patch)).version
 
-    def get_release(self, version: Version) -> Optional[Release]:
+    def get_release(self, version: Version) -> Release | None:
         for release in self.releases:
             if release.version == version:
                 return release
         return None
 
-    def list_releases(self) -> List[Release]:
+    def list_releases(self) -> list[Release]:
         return sorted(self.releases, key=lambda r: (r.version.major, r.version.minor, r.version.patch), reverse=True)
 
     def update_changelog(self, release: Release):
         if not self.config.changelog_path:
             return
-        
+
         changelog_path = self.repo_path / self.config.changelog_path
-        
+
         entry = f"\n## [{release.version}] - {time.strftime('%Y-%m-%d', time.localtime(release.created_at))}\n"
-        
+
         if release.notes.features:
             entry += "\n### Added\n"
             for feat in release.notes.features:
                 entry += f"- {feat}\n"
-        
+
         if release.notes.fixes:
             entry += "\n### Fixed\n"
             for fix in release.notes.fixes:
                 entry += f"- {fix}\n"
-        
+
         if release.notes.breaking_changes:
             entry += "\n### Breaking Changes\n"
             for breaking in release.notes.breaking_changes:
                 entry += f"- {breaking}\n"
-        
+
         if changelog_path.exists():
             content = changelog_path.read_text()
             lines = content.split('\n')
@@ -362,16 +361,16 @@ class VersionCalculator:
         if self.scheme == VersionScheme.SEMVER:
             if release_type == ReleaseType.MAJOR:
                 return Version(version.major + 1, 0, 0)
-            elif release_type == ReleaseType.MINOR:
+            if release_type == ReleaseType.MINOR:
                 return Version(version.major, version.minor + 1, 0)
-            elif release_type == ReleaseType.PATCH:
+            if release_type == ReleaseType.PATCH:
                 return Version(version.major, version.minor, version.patch + 1)
         elif self.scheme == VersionScheme.CALVER:
             now = time.localtime()
             return Version(now.tm_year, now.tm_mon, now.tm_mday)
         elif self.scheme == VersionScheme.SERIAL:
             return Version(version.major, version.minor, version.patch + 1)
-        
+
         return version
 
     def compare(self, v1: Version, v2: Version) -> int:
@@ -385,7 +384,7 @@ class VersionCalculator:
 class ReleaseAutomator:
     def __init__(self, tagger: ReleaseTagger):
         self.tagger = tagger
-        self.rules: List[Callable] = []
+        self.rules: list[Callable] = []
 
     def add_rule(self, condition: Callable, action: Callable):
         self.rules.append((condition, action))

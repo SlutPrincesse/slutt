@@ -1,9 +1,8 @@
-import asyncio
 import uuid
-from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 
 class IsolationLevel(Enum):
@@ -20,9 +19,9 @@ class IsolationBoundary:
     id: str
     name: str
     level: IsolationLevel
-    allowed_contexts: Set[str] = field(default_factory=set)
-    denied_contexts: Set[str] = field(default_factory=set)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    allowed_contexts: set[str] = field(default_factory=set)
+    denied_contexts: set[str] = field(default_factory=set)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
     def __post_init__(self):
@@ -39,16 +38,16 @@ class IsolationBoundary:
 
 class ContextIsolationLayer:
     def __init__(self):
-        self.boundaries: Dict[str, IsolationBoundary] = {}
-        self.context_boundaries: Dict[str, Set[str]] = {}
+        self.boundaries: dict[str, IsolationBoundary] = {}
+        self.context_boundaries: dict[str, set[str]] = {}
         self.default_level = IsolationLevel.TASK
 
     def create_boundary(
         self,
         name: str,
         level: IsolationLevel = IsolationLevel.TASK,
-        allowed: List[str] = None,
-        denied: List[str] = None,
+        allowed: list[str] = None,
+        denied: list[str] = None,
     ) -> IsolationBoundary:
         boundary = IsolationBoundary(
             id="",
@@ -60,24 +59,24 @@ class ContextIsolationLayer:
         self.boundaries[boundary.id] = boundary
         return boundary
 
-    def assign_context(self, context_id: str, boundary_ids: List[str]):
+    def assign_context(self, context_id: str, boundary_ids: list[str]):
         self.context_boundaries[context_id] = set(boundary_ids)
 
     def can_access(self, source_context: str, target_context: str) -> bool:
         source_boundaries = self.context_boundaries.get(source_context, set())
         if not source_boundaries:
             return True
-        
+
         for boundary_id in source_boundaries:
             boundary = self.boundaries.get(boundary_id)
             if boundary and not boundary.allows(target_context):
                 return False
         return True
 
-    def get_isolated_context(self, context_id: str, all_contexts: List[str]) -> List[str]:
+    def get_isolated_context(self, context_id: str, all_contexts: list[str]) -> list[str]:
         return [ctx for ctx in all_contexts if self.can_access(context_id, ctx)]
 
-    def merge_contexts(self, context_ids: List[str], new_boundary_name: str) -> IsolationBoundary:
+    def merge_contexts(self, context_ids: list[str], new_boundary_name: str) -> IsolationBoundary:
         allowed = set()
         for cid in context_ids:
             allowed.add(cid)
@@ -86,16 +85,16 @@ class ContextIsolationLayer:
                 boundary = self.boundaries.get(bid)
                 if boundary:
                     allowed.update(boundary.allowed_contexts)
-        
+
         boundary = self.create_boundary(
             name=new_boundary_name,
             level=IsolationLevel.SESSION,
             allowed=list(allowed),
         )
-        
+
         for cid in context_ids:
             self.assign_context(cid, [boundary.id])
-        
+
         return boundary
 
     def remove_boundary(self, boundary_id: str) -> bool:
@@ -106,12 +105,12 @@ class ContextIsolationLayer:
             return True
         return False
 
-    def get_boundary(self, boundary_id: str) -> Optional[IsolationBoundary]:
+    def get_boundary(self, boundary_id: str) -> IsolationBoundary | None:
         return self.boundaries.get(boundary_id)
 
-    def list_boundaries(self) -> List[IsolationBoundary]:
+    def list_boundaries(self) -> list[IsolationBoundary]:
         return list(self.boundaries.values())
 
-    def get_context_boundaries(self, context_id: str) -> List[IsolationBoundary]:
+    def get_context_boundaries(self, context_id: str) -> list[IsolationBoundary]:
         boundary_ids = self.context_boundaries.get(context_id, set())
         return [self.boundaries[bid] for bid in boundary_ids if bid in self.boundaries]

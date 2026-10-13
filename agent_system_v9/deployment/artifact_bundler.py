@@ -3,17 +3,15 @@ Artifact Bundler - Packaging and distribution of deployment artifacts
 """
 import hashlib
 import json
+import shutil
 import tarfile
-import zipfile
+import tempfile
 import time
-import asyncio
-from typing import Dict, List, Optional, Any, Set, Callable, IO, Tuple
+import zipfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import tempfile
-import shutil
+from typing import Any
 
 
 class BundleFormat(Enum):
@@ -39,11 +37,11 @@ class Artifact:
     size: int
     hash: str
     content_type: str = "application/octet-stream"
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    dependencies: List[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    dependencies: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "artifact_id": self.artifact_id,
             "name": self.name,
@@ -58,7 +56,7 @@ class Artifact:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Artifact':
+    def from_dict(cls, data: dict[str, Any]) -> 'Artifact':
         return cls(**data)
 
 
@@ -67,12 +65,12 @@ class BundleManifest:
     bundle_id: str
     name: str
     version: str
-    artifacts: List[Artifact] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    artifacts: list[Artifact] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     hash: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "bundle_id": self.bundle_id,
             "name": self.name,
@@ -91,14 +89,14 @@ class BundleConfig:
     include_manifest: bool = True
     verify_hashes: bool = True
     sign: bool = False
-    signing_key: Optional[str] = None
+    signing_key: str | None = None
 
 
 class ArtifactHasher:
     @staticmethod
     def hash_file(file_path: str, algorithm: str = "sha256") -> str:
         hasher = hashlib.new(algorithm)
-        with open(file_path, 'rb') as f:
+        with Path(file_path).open('rb') as f:
             for chunk in iter(lambda: f.read(8192), b''):
                 hasher.update(chunk)
         return hasher.hexdigest()
@@ -120,21 +118,21 @@ class ArtifactCollector:
 
     def collect(
         self,
-        patterns: List[str] = None,
-        exclude_patterns: List[str] = None,
-    ) -> List[Artifact]:
+        patterns: list[str] = None,
+        exclude_patterns: list[str] = None,
+    ) -> list[Artifact]:
         if patterns is None:
             patterns = ["**/*"]
         if exclude_patterns is None:
             exclude_patterns = ["**/__pycache__/**", "**/.git/**", "**/*.pyc"]
-        
+
         artifacts = []
         for pattern in patterns:
             for file_path in self.root_path.glob(pattern):
                 if file_path.is_file():
                     if self._should_exclude(file_path, exclude_patterns):
                         continue
-                    
+
                     rel_path = file_path.relative_to(self.root_path)
                     artifact = Artifact(
                         artifact_id=hashlib.sha256(str(rel_path).encode()).hexdigest()[:16],
@@ -145,10 +143,10 @@ class ArtifactCollector:
                         hash=ArtifactHasher.hash_file(str(file_path)),
                     )
                     artifacts.append(artifact)
-        
+
         return artifacts
 
-    def _should_exclude(self, path: Path, patterns: List[str]) -> bool:
+    def _should_exclude(self, path: Path, patterns: list[str]) -> bool:
         import fnmatch
         rel_path = str(path.relative_to(self.root_path))
         for pattern in patterns:
@@ -170,15 +168,15 @@ class ArtifactBundler:
         self,
         name: str,
         version: str,
-        artifacts: List[Artifact] = None,
+        artifacts: list[Artifact] = None,
         output_path: str = None,
-        metadata: Dict[str, Any] = None,
+        metadata: dict[str, Any] = None,
     ) -> BundleManifest:
         if artifacts is None:
             artifacts = self.collector.collect()
-        
+
         bundle_id = hashlib.sha256(f"{name}:{version}:{time.time()}".encode()).hexdigest()[:16]
-        
+
         manifest = BundleManifest(
             bundle_id=bundle_id,
             name=name,
@@ -186,12 +184,12 @@ class ArtifactBundler:
             artifacts=artifacts,
             metadata=metadata or {},
         )
-        
+
         manifest.hash = self._compute_manifest_hash(manifest)
-        
+
         if output_path:
             self._write_bundle(manifest, output_path)
-        
+
         return manifest
 
     def _compute_manifest_hash(self, manifest: BundleManifest) -> str:
@@ -206,7 +204,7 @@ class ArtifactBundler:
     def _write_bundle(self, manifest: BundleManifest, output_path: str):
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
-        
+
         if self.config.format == BundleFormat.TAR_GZ:
             self._write_tar_gz(manifest, output)
         elif self.config.format == BundleFormat.ZIP:
@@ -217,13 +215,13 @@ class ArtifactBundler:
             self._write_dir(manifest, output)
 
     def _write_tar_gz(self, manifest: BundleManifest, output: Path):
-        with tarfile.open(output, f"w:gz", compresslevel=self.config.compression.value) as tar:
+        with tarfile.open(output, "w:gz", compresslevel=self.config.compression.value) as tar:
             if self.config.include_manifest:
                 manifest_data = json.dumps(manifest.to_dict(), indent=2).encode()
                 manifest_info = tarfile.TarInfo(name="manifest.json")
                 manifest_info.size = len(manifest_data)
                 tar.addfile(manifest_info, io.BytesIO(manifest_data))
-            
+
             for artifact in manifest.artifacts:
                 src = self.collector.root_path / artifact.path
                 if src.exists():
@@ -234,7 +232,7 @@ class ArtifactBundler:
             if self.config.include_manifest:
                 manifest_data = json.dumps(manifest.to_dict(), indent=2).encode()
                 zf.writestr("manifest.json", manifest_data)
-            
+
             for artifact in manifest.artifacts:
                 src = self.collector.root_path / artifact.path
                 if src.exists():
@@ -247,7 +245,7 @@ class ArtifactBundler:
                 manifest_info = tarfile.TarInfo(name="manifest.json")
                 manifest_info.size = len(manifest_data)
                 tar.addfile(manifest_info, io.BytesIO(manifest_data))
-            
+
             for artifact in manifest.artifacts:
                 src = self.collector.root_path / artifact.path
                 if src.exists():
@@ -255,10 +253,10 @@ class ArtifactBundler:
 
     def _write_dir(self, manifest: BundleManifest, output: Path):
         output.mkdir(parents=True, exist_ok=True)
-        
+
         if self.config.include_manifest:
             (output / "manifest.json").write_text(json.dumps(manifest.to_dict(), indent=2))
-        
+
         for artifact in manifest.artifacts:
             src = self.collector.root_path / artifact.path
             if src.exists():
@@ -270,9 +268,9 @@ class ArtifactBundler:
         path = Path(bundle_path)
         extract_path = Path(extract_to)
         extract_path.mkdir(parents=True, exist_ok=True)
-        
+
         manifest = None
-        
+
         if self.config.format == BundleFormat.TAR_GZ or self.config.format == BundleFormat.TAR:
             with tarfile.open(path, "r:*") as tar:
                 tar.extractall(extract_path)
@@ -285,10 +283,10 @@ class ArtifactBundler:
                 manifest_file = extract_path / "manifest.json"
                 if manifest_file.exists():
                     manifest = BundleManifest(**json.loads(manifest_file.read_text()))
-        
+
         if not manifest:
             manifest = self._reconstruct_manifest(extract_path)
-        
+
         return manifest
 
     def _reconstruct_manifest(self, extract_path: Path) -> BundleManifest:
@@ -305,7 +303,7 @@ class ArtifactBundler:
                     hash=ArtifactHasher.hash_file(str(file_path)),
                 )
                 artifacts.append(artifact)
-        
+
         return BundleManifest(
             bundle_id=hashlib.sha256(f"reconstructed:{time.time()}".encode()).hexdigest()[:16],
             name=extract_path.name,
@@ -313,7 +311,7 @@ class ArtifactBundler:
             artifacts=artifacts,
         )
 
-    def verify_bundle(self, bundle_path: str) -> Dict[str, Any]:
+    def verify_bundle(self, bundle_path: str) -> dict[str, Any]:
         manifest = self.extract_bundle(bundle_path, tempfile.mkdtemp())
         results = {
             "valid": True,
@@ -321,7 +319,7 @@ class ArtifactBundler:
             "artifacts_failed": 0,
             "errors": [],
         }
-        
+
         for artifact in manifest.artifacts:
             file_path = Path(bundle_path).parent / artifact.path
             if file_path.exists():
@@ -335,7 +333,7 @@ class ArtifactBundler:
                 results["valid"] = False
                 results["artifacts_failed"] += 1
                 results["errors"].append(f"Missing file: {artifact.path}")
-        
+
         return results
 
 
@@ -346,8 +344,8 @@ class ArtifactRegistry:
     def __init__(self, storage_path: str):
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        self.index: Dict[str, Artifact] = {}
-        self.bundles: Dict[str, BundleManifest] = {}
+        self.index: dict[str, Artifact] = {}
+        self.bundles: dict[str, BundleManifest] = {}
 
     def register_artifact(self, artifact: Artifact) -> str:
         self.index[artifact.artifact_id] = artifact
@@ -357,19 +355,19 @@ class ArtifactRegistry:
         self.bundles[manifest.bundle_id] = manifest
         return manifest.bundle_id
 
-    def get_artifact(self, artifact_id: str) -> Optional[Artifact]:
+    def get_artifact(self, artifact_id: str) -> Artifact | None:
         return self.index.get(artifact_id)
 
-    def get_bundle(self, bundle_id: str) -> Optional[BundleManifest]:
+    def get_bundle(self, bundle_id: str) -> BundleManifest | None:
         return self.bundles.get(bundle_id)
 
-    def list_artifacts(self, name_filter: str = None) -> List[Artifact]:
+    def list_artifacts(self, name_filter: str = None) -> list[Artifact]:
         artifacts = list(self.index.values())
         if name_filter:
             artifacts = [a for a in artifacts if name_filter in a.name]
         return artifacts
 
-    def list_bundles(self, name_filter: str = None) -> List[BundleManifest]:
+    def list_bundles(self, name_filter: str = None) -> list[BundleManifest]:
         bundles = list(self.bundles.values())
         if name_filter:
             bundles = [b for b in bundles if name_filter in b.name]
@@ -396,30 +394,30 @@ class DependencyResolver:
     def __init__(self, registry: ArtifactRegistry):
         self.registry = registry
 
-    def resolve(self, artifact_ids: List[str]) -> List[Artifact]:
+    def resolve(self, artifact_ids: list[str]) -> list[Artifact]:
         resolved = []
         visited = set()
-        
+
         def visit(art_id: str):
             if art_id in visited:
                 return
             visited.add(art_id)
-            
+
             artifact = self.registry.get_artifact(art_id)
             if artifact:
                 for dep in artifact.dependencies:
                     visit(dep)
                 resolved.append(artifact)
-        
+
         for art_id in artifact_ids:
             visit(art_id)
-        
+
         return resolved
 
-    def check_conflicts(self, artifact_ids: List[str]) -> List[Tuple[str, str]]:
+    def check_conflicts(self, artifact_ids: list[str]) -> list[tuple[str, str]]:
         conflicts = []
         seen = {}
-        
+
         for art_id in artifact_ids:
             artifact = self.registry.get_artifact(art_id)
             if artifact:
@@ -428,5 +426,5 @@ class DependencyResolver:
                     conflicts.append((seen[key], art_id))
                 else:
                     seen[key] = art_id
-        
+
         return conflicts

@@ -2,11 +2,10 @@
 Typing Guard - Enforces type hints in Python code
 """
 import ast
-import sys
-from typing import Dict, List, Optional, Any, Set, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class TypeHintLevel(Enum):
@@ -37,24 +36,24 @@ class TypingReport:
     typed_parameters: int = 0
     total_returns: int = 0
     typed_returns: int = 0
-    issues: List[TypingIssue] = None
-    
+    issues: list[TypingIssue] = None
+
     def __post_init__(self):
         if self.issues is None:
             self.issues = []
-    
+
     @property
     def function_coverage(self) -> float:
         return self.typed_functions / max(self.total_functions, 1)
-    
+
     @property
     def parameter_coverage(self) -> float:
         return self.typed_parameters / max(self.total_parameters, 1)
-    
+
     @property
     def return_coverage(self) -> float:
         return self.typed_returns / max(self.total_returns, 1)
-    
+
     @property
     def overall_coverage(self) -> float:
         return (self.function_coverage + self.parameter_coverage + self.return_coverage) / 3
@@ -85,34 +84,34 @@ class TypingGuard:
                 message=f"Syntax error: {e.msg}",
                 severity="error",
             )])
-        
+
         report = TypingReport(file_path=file_path)
         visitor = TypingVisitor(report, self)
         visitor.visit(tree)
         return report
 
-    def check_directory(self, dir_path: str, pattern: str = "*.py") -> Dict[str, TypingReport]:
+    def check_directory(self, dir_path: str, pattern: str = "*.py") -> dict[str, TypingReport]:
         reports = {}
         for file_path in Path(dir_path).rglob(pattern):
             reports[str(file_path)] = self.check_file(str(file_path))
         return reports
 
-    def get_summary(self, reports: Dict[str, TypingReport]) -> Dict[str, Any]:
+    def get_summary(self, reports: dict[str, TypingReport]) -> dict[str, Any]:
         total_functions = sum(r.total_functions for r in reports.values())
         total_typed = sum(r.typed_functions for r in reports.values())
         total_params = sum(r.total_parameters for r in reports.values())
         total_typed_params = sum(r.typed_parameters for r in reports.values())
         total_returns = sum(r.total_returns for r in reports.values())
         total_typed_returns = sum(r.typed_returns for r in reports.values())
-        
+
         all_issues = []
         for report in reports.values():
             all_issues.extend(report.issues)
-        
+
         by_severity = {}
         for issue in all_issues:
             by_severity[issue.severity] = by_severity.get(issue.severity, 0) + 1
-        
+
         return {
             "files_checked": len(reports),
             "total_functions": total_functions,
@@ -128,32 +127,32 @@ class TypingGuard:
             "total_issues": len(all_issues),
         }
 
-    def auto_fix(self, file_path: str, dry_run: bool = True) -> Tuple[int, List[str]]:
+    def auto_fix(self, file_path: str, dry_run: bool = True) -> tuple[int, list[str]]:
         path = Path(file_path)
         content = path.read_text(encoding='utf-8', errors='ignore')
-        
+
         report = self.check_string(content, file_path)
         fixes_applied = 0
         changes = []
-        
+
         lines = content.split('\n')
-        
+
         for issue in report.issues:
             if issue.auto_fixable and issue.issue_type == "missing_return_type":
                 if self._fix_missing_return(lines, issue):
                     fixes_applied += 1
                     changes.append(f"Added return type at line {issue.line_number}")
-        
+
         if not dry_run and fixes_applied > 0:
             path.write_text('\n'.join(lines))
-        
+
         return fixes_applied, changes
 
-    def _fix_missing_return(self, lines: List[str], issue: TypingIssue) -> bool:
+    def _fix_missing_return(self, lines: list[str], issue: TypingIssue) -> bool:
         line_idx = issue.line_number - 1
         if line_idx >= len(lines):
             return False
-        
+
         line = lines[line_idx]
         if '->' not in line and ':' in line:
             if 'def ' in line:
@@ -185,31 +184,31 @@ class TypingVisitor(ast.NodeVisitor):
             for decorator in node.decorator_list:
                 if isinstance(decorator, ast.Name) and decorator.id == 'overload':
                     return
-        
+
         self.report.total_functions += 1
-        
+
         has_any_param_type = False
         has_all_param_types = True
-        
+
         for arg in node.args.args:
             if arg.arg == 'self' or arg.arg == 'cls':
                 continue
-            
+
             self.report.total_parameters += 1
             if arg.annotation:
                 self.report.typed_parameters += 1
                 has_any_param_type = True
             else:
                 has_all_param_types = False
-        
+
         if has_all_param_types and self.report.total_parameters > 0:
             self.report.typed_functions += 1
-        
+
         if node.returns:
             self.report.typed_returns += 1
         else:
             self.report.total_returns += 1
-            
+
             if self.guard.level in (TypeHintLevel.STRICT, TypeHintLevel.FULL):
                 self.report.issues.append(TypingIssue(
                     file_path=self.report.file_path,
@@ -221,7 +220,7 @@ class TypingVisitor(ast.NodeVisitor):
                     suggestion="Add return type annotation (e.g., '-> int')",
                     auto_fixable=True,
                 ))
-        
+
         if self.guard.level == TypeHintLevel.FULL:
             if not has_any_param_type and self.report.total_parameters > 0:
                 self.report.issues.append(TypingIssue(
@@ -259,13 +258,13 @@ class TypeAnnotationGenerator:
         if isinstance(default, ast.Constant):
             if isinstance(default.value, str):
                 return 'str'
-            elif isinstance(default.value, int):
+            if isinstance(default.value, int):
                 return 'int'
-            elif isinstance(default.value, float):
+            if isinstance(default.value, float):
                 return 'float'
-            elif isinstance(default.value, bool):
+            if isinstance(default.value, bool):
                 return 'bool'
-            elif default.value is None:
+            if default.value is None:
                 return 'Optional[Any]'
         elif isinstance(default, ast.List):
             return 'List[Any]'
@@ -287,13 +286,13 @@ class TypeAnnotationGenerator:
         if isinstance(expr, ast.Constant):
             if isinstance(expr.value, str):
                 return 'str'
-            elif isinstance(expr.value, int):
+            if isinstance(expr.value, int):
                 return 'int'
-            elif isinstance(expr.value, float):
+            if isinstance(expr.value, float):
                 return 'float'
-            elif isinstance(expr.value, bool):
+            if isinstance(expr.value, bool):
                 return 'bool'
-            elif expr.value is None:
+            if expr.value is None:
                 return 'None'
         elif isinstance(expr, ast.List):
             return 'List[Any]'

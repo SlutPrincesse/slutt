@@ -3,15 +3,14 @@ RPC Gateway - Distributed RPC communication layer
 """
 import asyncio
 import json
-import uuid
-import time
+import ssl
 import threading
-from typing import Dict, List, Optional, Any, Callable, Awaitable, Union
+import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-import socket
-import ssl
+from typing import Any
 
 
 class RPCErrorCode(Enum):
@@ -29,11 +28,11 @@ class RPCErrorCode(Enum):
 class RPCRequest:
     id: str
     method: str
-    params: Optional[Union[List, Dict]] = None
+    params: list | dict | None = None
     jsonrpc: str = "2.0"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "jsonrpc": self.jsonrpc,
             "method": self.method,
@@ -42,7 +41,7 @@ class RPCRequest:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'RPCRequest':
+    def from_dict(cls, data: dict[str, Any]) -> 'RPCRequest':
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             method=data["method"],
@@ -55,10 +54,10 @@ class RPCRequest:
 class RPCResponse:
     id: str
     result: Any = None
-    error: Optional[Dict[str, Any]] = None
+    error: dict[str, Any] | None = None
     jsonrpc: str = "2.0"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         resp = {"jsonrpc": self.jsonrpc, "id": self.id}
         if self.error:
             resp["error"] = self.error
@@ -67,7 +66,7 @@ class RPCResponse:
         return resp
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'RPCResponse':
+    def from_dict(cls, data: dict[str, Any]) -> 'RPCResponse':
         return cls(
             id=data["id"],
             result=data.get("result"),
@@ -86,10 +85,10 @@ class RPCResponse:
 @dataclass
 class RPCNotification:
     method: str
-    params: Optional[Union[List, Dict]] = None
+    params: list | dict | None = None
     jsonrpc: str = "2.0"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "jsonrpc": self.jsonrpc,
             "method": self.method,
@@ -103,8 +102,8 @@ class RPCMethod:
         name: str,
         handler: Callable,
         description: str = "",
-        params_schema: Optional[Dict] = None,
-        return_schema: Optional[Dict] = None,
+        params_schema: dict | None = None,
+        return_schema: dict | None = None,
     ):
         self.name = name
         self.handler = handler
@@ -118,17 +117,17 @@ class RPCGateway:
         self,
         host: str = "0.0.0.0",
         port: int = 8080,
-        ssl_context: Optional[ssl.SSLContext] = None,
+        ssl_context: ssl.SSLContext | None = None,
     ):
         self.host = host
         self.port = port
         self.ssl_context = ssl_context
-        self.methods: Dict[str, RPCMethod] = {}
-        self.middlewares: List[Callable] = []
-        self.server: Optional[asyncio.Server] = None
+        self.methods: dict[str, RPCMethod] = {}
+        self.middlewares: list[Callable] = []
+        self.server: asyncio.Server | None = None
         self._running = False
         self._request_id = 0
-        self._pending: Dict[str, asyncio.Future] = {}
+        self._pending: dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
 
     def register(self, method: RPCMethod):
@@ -165,7 +164,7 @@ class RPCGateway:
                 data = await reader.readline()
                 if not data:
                     break
-                
+
                 try:
                     request = json.loads(data.decode())
                     response = await self._process_request(request)
@@ -184,14 +183,14 @@ class RPCGateway:
             writer.close()
             await writer.wait_closed()
 
-    async def _process_request(self, request_data: Dict) -> Optional[RPCResponse]:
+    async def _process_request(self, request_data: dict) -> RPCResponse | None:
         if "method" not in request_data:
             return RPCResponse.error_response(
                 request_data.get("id", ""), RPCErrorCode.INVALID_REQUEST.value, "Invalid request"
             )
 
         request = RPCRequest.from_dict(request_data)
-        
+
         for middleware in self.middlewares:
             request = await middleware(request) if asyncio.iscoroutinefunction(middleware) else middleware(request)
 
@@ -201,13 +200,13 @@ class RPCGateway:
             )
 
         method = self.methods[request.method]
-        
+
         try:
             if asyncio.iscoroutinefunction(method.handler):
                 result = await method.handler(request.params)
             else:
                 result = method.handler(request.params)
-            
+
             return RPCResponse(id=request.id, result=result)
         except Exception as e:
             return RPCResponse.error_response(
@@ -219,7 +218,7 @@ class RPCGateway:
         host: str,
         port: int,
         method: str,
-        params: Optional[Union[List, Dict]] = None,
+        params: list | dict | None = None,
         timeout: float = 30.0,
         use_ssl: bool = False,
     ) -> Any:
@@ -247,7 +246,7 @@ class RPCGateway:
 
             if response.error:
                 raise Exception(f"RPC Error: {response.error['message']}")
-            
+
             return response.result
         finally:
             writer.close()
@@ -255,7 +254,7 @@ class RPCGateway:
             async with self._lock:
                 self._pending.pop(request.id, None)
 
-    def notify(self, host: str, port: int, method: str, params: Optional[Union[List, Dict]] = None):
+    def notify(self, host: str, port: int, method: str, params: list | dict | None = None):
         notification = RPCNotification(method=method, params=params)
         # Fire and forget - would need persistent connection pool in production
         pass
@@ -268,16 +267,16 @@ class RPCClient:
         port: int,
         timeout: float = 30.0,
         use_ssl: bool = False,
-        ssl_context: Optional[ssl.SSLContext] = None,
+        ssl_context: ssl.SSLContext | None = None,
     ):
         self.host = host
         self.port = port
         self.timeout = timeout
         self.use_ssl = use_ssl
         self.ssl_context = ssl_context
-        self._reader: Optional[asyncio.StreamReader] = None
-        self._writer: Optional[asyncio.StreamWriter] = None
-        self._pending: Dict[str, asyncio.Future] = {}
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._pending: dict[str, asyncio.Future] = {}
         _lock = asyncio.Lock()
 
     async def connect(self):
@@ -302,7 +301,7 @@ class RPCClient:
             except Exception:
                 break
 
-    async def call(self, method: str, params: Optional[Union[List, Dict]] = None) -> Any:
+    async def call(self, method: str, params: list | dict | None = None) -> Any:
         if not self._writer or self._writer.is_closing():
             await self.connect()
 
@@ -327,10 +326,10 @@ class RPCClient:
 
 class ServiceRegistry:
     def __init__(self):
-        self.services: Dict[str, Dict[str, Any]] = {}
+        self.services: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
-    def register(self, name: str, host: str, port: int, metadata: Dict[str, Any] = None):
+    def register(self, name: str, host: str, port: int, metadata: dict[str, Any] = None):
         with self._lock:
             self.services[name] = {
                 "host": host,
@@ -347,11 +346,11 @@ class ServiceRegistry:
                 return True
         return False
 
-    def discover(self, name: str) -> Optional[Dict[str, Any]]:
+    def discover(self, name: str) -> dict[str, Any] | None:
         with self._lock:
             return self.services.get(name)
 
-    def list_services(self) -> List[Dict[str, Any]]:
+    def list_services(self) -> list[dict[str, Any]]:
         with self._lock:
             return [{"name": k, **v} for k, v in self.services.items()]
 

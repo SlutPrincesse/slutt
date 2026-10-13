@@ -1,11 +1,10 @@
-import sys
-import traceback
-import inspect
 import asyncio
-from typing import Any, Callable, Dict, List, Optional, Type, Set
-from dataclasses import dataclass, field
+import sys
+from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Optional
 
 
 class HookPriority(Enum):
@@ -18,21 +17,21 @@ class HookPriority(Enum):
 @dataclass
 class HookedException:
     exception: BaseException
-    exc_type: Type[BaseException]
+    exc_type: type[BaseException]
     exc_value: BaseException
     exc_traceback: Any
     frame: Any
     timestamp: float
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
     handled: bool = False
     synthesis_requested: bool = False
-    suggested_tool_name: Optional[str] = None
-    suggested_tool_spec: Optional[Dict[str, Any]] = None
+    suggested_tool_name: str | None = None
+    suggested_tool_spec: dict[str, Any] | None = None
 
 
 class ExceptionHookInterceptor:
     _instance: Optional["ExceptionHookInterceptor"] = None
-    _original_excepthook: Optional[Callable] = None
+    _original_excepthook: Callable | None = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -43,9 +42,9 @@ class ExceptionHookInterceptor:
     def __init__(self):
         if self._initialized:
             return
-        self._hooks: List[Callable[[HookedException], Any]] = []
-        self._async_hooks: List[Callable[[HookedException], Any]] = []
-        self._exception_counts: Dict[str, int] = {}
+        self._hooks: list[Callable[[HookedException], Any]] = []
+        self._async_hooks: list[Callable[[HookedException], Any]] = []
+        self._exception_counts: dict[str, int] = {}
         self._synthesis_threshold = 3
         self._enabled = True
         self._initialized = True
@@ -66,7 +65,7 @@ class ExceptionHookInterceptor:
             sys.excepthook = self._original_excepthook
             self._original_excepthook = None
 
-    def _handle_exception(self, exc_type: Type[BaseException], exc_value: BaseException, exc_traceback: Any):
+    def _handle_exception(self, exc_type: type[BaseException], exc_value: BaseException, exc_traceback: Any):
         frame = exc_traceback.tb_frame if exc_traceback else None
         while frame and frame.f_back:
             frame = frame.f_back
@@ -98,7 +97,7 @@ class ExceptionHookInterceptor:
         if self._original_excepthook:
             self._original_excepthook(exc_type, exc_value, exc_traceback)
 
-    def _extract_context(self, frame: Any) -> Dict[str, Any]:
+    def _extract_context(self, frame: Any) -> dict[str, Any]:
         if not frame:
             return {}
         context = {
@@ -110,7 +109,7 @@ class ExceptionHookInterceptor:
         }
         return context
 
-    def _generate_tool_spec(self, exc_type: Type[BaseException], exc_value: BaseException, frame: Any) -> Dict[str, Any]:
+    def _generate_tool_spec(self, exc_type: type[BaseException], exc_value: BaseException, frame: Any) -> dict[str, Any]:
         return {
             "name": f"handle_{exc_type.__name__.lower()}",
             "description": f"Auto-generated handler for {exc_type.__name__}: {str(exc_value)[:100]}",
@@ -161,7 +160,7 @@ class ExceptionHookInterceptor:
     def disable(self):
         self._enabled = False
 
-    def get_exception_stats(self) -> Dict[str, int]:
+    def get_exception_stats(self) -> dict[str, int]:
         return self._exception_counts.copy()
 
     @contextmanager

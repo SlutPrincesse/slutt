@@ -2,14 +2,13 @@
 Backpressure Controller - Flow control and backpressure management
 """
 import asyncio
-import time
 import threading
-from typing import Dict, List, Optional, Any, Callable, Awaitable
-from dataclasses import dataclass, field
-from enum import Enum
+import time
 from collections import deque
-from collections.abc import AsyncIterator
-from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
 
 
 class BackpressureStrategy(Enum):
@@ -92,12 +91,12 @@ class AsyncBuffer:
                     self._buffer.popleft()
                     self.metrics.items_dropped += 1
                     break
-                elif self.strategy == BackpressureStrategy.DROP_NEWEST:
+                if self.strategy == BackpressureStrategy.DROP_NEWEST:
                     self.metrics.items_dropped += 1
                     return False
-                elif self.strategy == BackpressureStrategy.REJECT:
+                if self.strategy == BackpressureStrategy.REJECT:
                     raise BufferFullException("Buffer full")
-                elif self.strategy == BackpressureStrategy.BLOCK:
+                if self.strategy == BackpressureStrategy.BLOCK:
                     self._not_full.clear()
                     try:
                         await asyncio.wait_for(self._not_full.wait(), timeout=timeout)
@@ -111,7 +110,7 @@ class AsyncBuffer:
             self._not_empty.set()
             return True
 
-    async def get(self, timeout: float = None) -> Optional[Any]:
+    async def get(self, timeout: float = None) -> Any | None:
         async with self._lock:
             while not self._buffer and not self._closed:
                 self._not_empty.clear()
@@ -137,7 +136,7 @@ class AsyncBuffer:
         self._not_empty.set()
         return True
 
-    def try_get(self) -> Optional[Any]:
+    def try_get(self) -> Any | None:
         if not self._buffer:
             return None
         item = self._buffer.popleft()
@@ -177,7 +176,7 @@ class TokenBucket:
             elapsed = now - self.last_update
             self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
             self.last_update = now
-            
+
             if self.tokens >= tokens:
                 self.tokens -= tokens
                 return True
@@ -207,7 +206,7 @@ class LeakyBucket:
             elapsed = now - self.last_update
             self.level = max(0, self.level - elapsed * self.rate)
             self.last_update = now
-            
+
             if self.level + amount <= self.capacity:
                 self.level += amount
                 return True
@@ -219,10 +218,10 @@ class BackpressureController:
         self.config = config or BackpressureConfig()
         self.signal = BackpressureSignal()
         self.buffer = AsyncBuffer(self.config.max_buffer_size, self.config.strategy)
-        self.token_bucket: Optional[TokenBucket] = None
-        self._monitor_task: Optional[asyncio.Task] = None
+        self.token_bucket: TokenBucket | None = None
+        self._monitor_task: asyncio.Task | None = None
         self._running = False
-        self._callbacks: List[Callable] = []
+        self._callbacks: list[Callable] = []
 
     def set_rate_limit(self, rate: float, burst: int = None):
         self.token_bucket = TokenBucket(rate, burst or int(rate * 2))
@@ -248,7 +247,7 @@ class BackpressureController:
 
     async def _check_watermarks(self):
         usage = self.buffer.metrics.current_buffer_size / self.config.max_buffer_size
-        
+
         if usage >= self.config.high_watermark and not self.signal.is_active:
             self.signal.apply()
             self.buffer.metrics.backpressure_activations += 1
@@ -274,10 +273,10 @@ class BackpressureController:
         if self.token_bucket and not self.token_bucket.consume():
             if not await self.token_bucket.wait_for_tokens(timeout=timeout):
                 return False
-        
+
         return await self.buffer.put(item, timeout=timeout)
 
-    async def receive(self, timeout: float = None) -> Optional[Any]:
+    async def receive(self, timeout: float = None) -> Any | None:
         await self.signal.wait()
         return await self.buffer.get(timeout=timeout)
 
@@ -325,7 +324,7 @@ class ReactiveStream(AsyncIterator):
 
 class FlowController:
     def __init__(self):
-        self.controllers: Dict[str, BackpressureController] = {}
+        self.controllers: dict[str, BackpressureController] = {}
         self._lock = threading.RLock()
 
     def create_controller(self, name: str, config: BackpressureConfig = None) -> BackpressureController:
@@ -334,7 +333,7 @@ class FlowController:
             self.controllers[name] = controller
             return controller
 
-    def get_controller(self, name: str) -> Optional[BackpressureController]:
+    def get_controller(self, name: str) -> BackpressureController | None:
         with self._lock:
             return self.controllers.get(name)
 
@@ -353,5 +352,5 @@ class FlowController:
         for controller in self.controllers.values():
             await controller.stop()
 
-    def get_all_metrics(self) -> Dict[str, FlowMetrics]:
+    def get_all_metrics(self) -> dict[str, FlowMetrics]:
         return {name: ctrl.get_metrics() for name, ctrl in self.controllers.items()}

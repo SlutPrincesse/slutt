@@ -1,15 +1,11 @@
 """
 COM-B Behavioral Framework - Digital Behavior Change Models
 """
-import asyncio
 import hashlib
-import json
 import time
-from typing import Dict, List, Optional, Any, Callable, Set, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class COMComponent(Enum):
@@ -51,16 +47,16 @@ class Behavior:
     description: str
     target_population: str = ""
     context: str = ""
-    com_factors: List[COMFactor] = field(default_factory=list)
-    interventions: List['Intervention'] = field(default_factory=list)
+    com_factors: list[COMFactor] = field(default_factory=list)
+    interventions: list['Intervention'] = field(default_factory=list)
 
-    def get_capability_factors(self) -> List[COMFactor]:
+    def get_capability_factors(self) -> list[COMFactor]:
         return [f for f in self.com_factors if f.component == COMComponent.CAPABILITY]
-    
-    def get_opportunity_factors(self) -> List[COMFactor]:
+
+    def get_opportunity_factors(self) -> list[COMFactor]:
         return [f for f in self.com_factors if f.component == COMComponent.OPPORTUNITY]
-    
-    def get_motivation_factors(self) -> List[COMFactor]:
+
+    def get_motivation_factors(self) -> list[COMFactor]:
         return [f for f in self.com_factors if f.component == COMComponent.MOTIVATION]
 
 
@@ -69,8 +65,8 @@ class Intervention:
     intervention_id: str
     name: str
     description: str
-    bct_codes: List[str] = field(default_factory=list)
-    target_components: List[COMComponent] = field(default_factory=list)
+    bct_codes: list[str] = field(default_factory=list)
+    target_components: list[COMComponent] = field(default_factory=list)
     delivery_mode: str = "digital"
     intensity: float = 1.0
     duration_weeks: int = 4
@@ -177,15 +173,15 @@ class BCTTaxonomy:
         return cls.BCTS.get(code, "Unknown BCT")
 
     @classmethod
-    def search_bcts(cls, keyword: str) -> List[Tuple[str, str]]:
+    def search_bcts(cls, keyword: str) -> list[tuple[str, str]]:
         keyword = keyword.lower()
         return [(code, desc) for code, desc in cls.BCTS.items() if keyword in desc.lower()]
 
 
 class COMModel:
     def __init__(self):
-        self.behaviors: Dict[str, Behavior] = {}
-        self.interventions: Dict[str, Intervention] = {}
+        self.behaviors: dict[str, Behavior] = {}
+        self.interventions: dict[str, Intervention] = {}
 
     def add_behavior(self, behavior: Behavior):
         self.behaviors[behavior.behavior_id] = behavior
@@ -193,17 +189,17 @@ class COMModel:
     def add_intervention(self, intervention: Intervention):
         self.interventions[intervention.intervention_id] = intervention
 
-    def analyze_behavior(self, behavior_id: str) -> Dict[str, Any]:
+    def analyze_behavior(self, behavior_id: str) -> dict[str, Any]:
         behavior = self.behaviors.get(behavior_id)
         if not behavior:
             return {"error": "Behavior not found"}
-        
+
         capability_score = self._score_component(behavior.get_capability_factors())
         opportunity_score = self._score_component(behavior.get_opportunity_factors())
         motivation_score = self._score_component(behavior.get_motivation_factors())
-        
+
         total_score = (capability_score + opportunity_score + motivation_score) / 3
-        
+
         return {
             "behavior_id": behavior_id,
             "behavior_name": behavior.name,
@@ -215,7 +211,7 @@ class COMModel:
             "recommended_interventions": self._recommend_interventions(behavior),
         }
 
-    def _score_component(self, factors: List[COMFactor]) -> float:
+    def _score_component(self, factors: list[COMFactor]) -> float:
         if not factors:
             return 0.0
         weighted_sum = sum(f.weight for f in factors)
@@ -226,13 +222,13 @@ class COMModel:
         scores = {COMComponent.CAPABILITY: cap, COMComponent.OPPORTUNITY: opp, COMComponent.MOTIVATION: mot}
         return min(scores, key=scores.get)
 
-    def _recommend_interventions(self, behavior: Behavior) -> List[Dict]:
+    def _recommend_interventions(self, behavior: Behavior) -> list[dict]:
         bottleneck = self._identify_bottleneck(
             self._score_component(behavior.get_capability_factors()),
             self._score_component(behavior.get_opportunity_factors()),
             self._score_component(behavior.get_motivation_factors()),
         )
-        
+
         recommendations = []
         for intervention in self.interventions.values():
             if bottleneck in intervention.target_components:
@@ -244,7 +240,7 @@ class COMModel:
                     "intensity": intervention.intensity,
                     "evidence_level": intervention.evidence_level,
                 })
-        
+
         return sorted(recommendations, key=lambda x: x["intensity"], reverse=True)
 
 
@@ -262,14 +258,14 @@ class NudgeEngine:
             "framing": {"description": "Reframe the choice", "bct": "13.2"},
         }
 
-    def design_nudge(self, behavior_id: str, context: Dict[str, Any] = None) -> List[Dict]:
+    def design_nudge(self, behavior_id: str, context: dict[str, Any] = None) -> list[dict]:
         analysis = self.com_model.analyze_behavior(behavior_id)
         if "error" in analysis:
             return []
-        
+
         bottleneck = analysis["bottleneck"]
         nudges = []
-        
+
         if bottleneck == COMComponent.CAPABILITY:
             nudges.append(self._create_nudge("simplification", behavior_id, context))
             nudges.append(self._create_nudge("feedback", behavior_id, context))
@@ -282,10 +278,10 @@ class NudgeEngine:
             nudges.append(self._create_nudge("commitment", behavior_id, context))
             nudges.append(self._create_nudge("incentive", behavior_id, context))
             nudges.append(self._create_nudge("framing", behavior_id, context))
-        
+
         return nudges
 
-    def _create_nudge(self, nudge_type: str, behavior_id: str, context: Dict = None) -> Dict:
+    def _create_nudge(self, nudge_type: str, behavior_id: str, context: dict = None) -> dict:
         nudge_info = self.nudge_types.get(nudge_type, {})
         return {
             "nudge_id": hashlib.md5(f"{nudge_type}:{behavior_id}:{time.time()}".encode()).hexdigest()[:12],
@@ -298,15 +294,15 @@ class NudgeEngine:
             "timestamp": time.time(),
         }
 
-    def evaluate_nudge_effectiveness(self, nudge_id: str, before_data: List[float], after_data: List[float]) -> Dict[str, Any]:
+    def evaluate_nudge_effectiveness(self, nudge_id: str, before_data: list[float], after_data: list[float]) -> dict[str, Any]:
         if not before_data or not after_data:
             return {"error": "Insufficient data"}
-        
+
         before_mean = statistics.mean(before_data)
         after_mean = statistics.mean(after_data)
-        
+
         effect_size = (after_mean - before_mean) / statistics.stdev(before_data) if statistics.stdev(before_data) > 0 else 0
-        
+
         return {
             "nudge_id": nudge_id,
             "before_mean": before_mean,
@@ -324,16 +320,16 @@ class BehavioralDesigner:
         self.com_model = COMModel()
         self.nudge_engine = NudgeEngine(self.com_model)
 
-    def create_behavior(self, name: str, description: str, 
-                       capability_factors: List[Dict] = None,
-                       opportunity_factors: List[Dict] = None,
-                       motivation_factors: List[Dict] = None) -> Behavior:
+    def create_behavior(self, name: str, description: str,
+                       capability_factors: list[dict] = None,
+                       opportunity_factors: list[dict] = None,
+                       motivation_factors: list[dict] = None) -> Behavior:
         behavior = Behavior(
             behavior_id=hashlib.md5(f"{name}:{time.time()}".encode()).hexdigest()[:12],
             name=name,
             description=description,
         )
-        
+
         for factor_data in capability_factors or []:
             behavior.com_factors.append(COMFactor(
                 component=COMComponent.CAPABILITY,
@@ -342,7 +338,7 @@ class BehavioralDesigner:
                 description=factor_data.get("description", ""),
                 weight=factor_data.get("weight", 1.0),
             ))
-        
+
         for factor_data in opportunity_factors or []:
             behavior.com_factors.append(COMFactor(
                 component=COMComponent.OPPORTUNITY,
@@ -351,7 +347,7 @@ class BehavioralDesigner:
                 description=factor_data.get("description", ""),
                 weight=factor_data.get("weight", 1.0),
             ))
-        
+
         for factor_data in motivation_factors or []:
             behavior.com_factors.append(COMFactor(
                 component=COMComponent.MOTIVATION,
@@ -360,13 +356,13 @@ class BehavioralDesigner:
                 description=factor_data.get("description", ""),
                 weight=factor_data.get("weight", 1.0),
             ))
-        
+
         self.com_model.add_behavior(behavior)
         return behavior
 
     def create_intervention(self, name: str, description: str,
-                           bct_codes: List[str] = None,
-                           target_components: List[COMComponent] = None,
+                           bct_codes: list[str] = None,
+                           target_components: list[COMComponent] = None,
                            **kwargs) -> Intervention:
         intervention = Intervention(
             intervention_id=hashlib.md5(f"{name}:{time.time()}".encode()).hexdigest()[:12],
@@ -379,16 +375,16 @@ class BehavioralDesigner:
         self.com_model.add_intervention(intervention)
         return intervention
 
-    def run_behavioral_analysis(self, behavior_id: str) -> Dict[str, Any]:
+    def run_behavioral_analysis(self, behavior_id: str) -> dict[str, Any]:
         return self.com_model.analyze_behavior(behavior_id)
 
-    def design_intervention_package(self, behavior_id: str) -> Dict[str, Any]:
+    def design_intervention_package(self, behavior_id: str) -> dict[str, Any]:
         analysis = self.com_model.analyze_behavior(behavior_id)
         if "error" in analysis:
             return {"error": analysis["error"]}
-        
+
         nudges = self.nudge_engine.design_nudge(behavior_id)
-        
+
         return {
             "behavior_analysis": analysis,
             "recommended_nudges": nudges,
@@ -396,9 +392,9 @@ class BehavioralDesigner:
             "measurement_plan": self._create_measurement_plan(behavior_id),
         }
 
-    def _create_intervention_sequence(self, analysis: Dict, nudges: List[Dict]) -> List[Dict]:
+    def _create_intervention_sequence(self, analysis: dict, nudges: list[dict]) -> list[dict]:
         sequence = []
-        
+
         for i, nudge in enumerate(nudges):
             sequence.append({
                 "phase": i + 1,
@@ -407,10 +403,10 @@ class BehavioralDesigner:
                 "intensity": 1.0 - (i * 0.1),
                 "evaluation_point": i + 1 == len(nudges),
             })
-        
+
         return sequence
 
-    def _create_measurement_plan(self, behavior_id: str) -> Dict[str, Any]:
+    def _create_measurement_plan(self, behavior_id: str) -> dict[str, Any]:
         return {
             "baseline_period_weeks": 2,
             "intervention_period_weeks": 4,

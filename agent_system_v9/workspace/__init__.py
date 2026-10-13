@@ -1,47 +1,50 @@
 """
 Workspace Isolation & Multilingual AST Engine (Section 27)
 """
-from .workspace_manager import (
-    WorkspaceManager,
-    WorkspaceConfig,
-    Workspace,
-    WorkspaceType,
-    WorkspaceStatus,
-    WorkspaceTemplate,
-    WorkspaceIsolation,
-    WorkspaceSnapshot,
-)
-from .polyglot_ast_driver import (
-    PolyglotASTDriver,
-    ASTParser,
-    ASTNode,
-    ParseResult,
-    Language,
-    ASTTransformer,
-    ASTIndexer,
-    TreeSitterManager,
-    TreeSitterConfig,
-    TREE_SITTER_AVAILABLE,
-)
 from .function_mutator import (
-    FunctionMutator,
-    MutationTester,
     EvolutionaryMutator,
+    FunctionMutator,
     Mutation,
     MutationResult,
+    MutationTester,
     MutationType,
 )
+from .polyglot_ast_driver import (
+    TREE_SITTER_AVAILABLE,
+    ASTIndexer,
+    ASTNode,
+    ASTParser,
+    ASTTransformer,
+    Language,
+    ParseResult,
+    PolyglotASTDriver,
+    TreeSitterConfig,
+    TreeSitterManager,
+)
+from .workspace_manager import (
+    Workspace,
+    WorkspaceConfig,
+    WorkspaceIsolation,
+    WorkspaceManager,
+    WorkspaceSnapshot,
+    WorkspaceStatus,
+    WorkspaceTemplate,
+    WorkspaceType,
+)
 from .workspace_synchronizer import (
-    WorkspaceSynchronizer,
-    WorkspaceReplicator,
-    SyncScheduler,
     ConflictResolver,
-    SyncConfig,
-    SyncMode,
     ConflictStrategy,
     FileInfo,
+    SyncConfig,
+    SyncMode,
     SyncResult,
+    SyncScheduler,
+    WorkspaceReplicator,
+    WorkspaceSynchronizer,
 )
+
+# Alias for AGENT_SYSTEM_V9 main package to avoid naming conflict with storage.ConflictResolver
+WorkspaceConflictResolver = ConflictResolver
 
 __all__ = [
     # Workspace Manager
@@ -76,6 +79,7 @@ __all__ = [
     "WorkspaceReplicator",
     "SyncScheduler",
     "ConflictResolver",
+    "WorkspaceConflictResolver",
     "SyncConfig",
     "SyncMode",
     "ConflictStrategy",

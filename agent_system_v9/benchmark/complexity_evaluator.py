@@ -2,12 +2,11 @@
 Complexity Evaluator - Code complexity analysis and metrics
 """
 import ast
-import hashlib
-from typing import Dict, List, Optional, Any, Set, Callable
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class ComplexityMetric(Enum):
@@ -25,12 +24,12 @@ class ComplexityResult:
     function_name: str
     file_path: str
     line_number: int
-    metrics: Dict[ComplexityMetric, float] = field(default_factory=dict)
+    metrics: dict[ComplexityMetric, float] = field(default_factory=dict)
     overall_score: float = 0.0
     grade: str = "A"
-    recommendations: List[str] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "function_name": self.function_name,
             "file_path": self.file_path,
@@ -49,11 +48,11 @@ class FileComplexity:
     code_lines: int
     comment_lines: int
     blank_lines: int
-    functions: List[ComplexityResult] = field(default_factory=list)
-    classes: List[ComplexityResult] = field(default_factory=list)
-    overall_metrics: Dict[ComplexityMetric, float] = field(default_factory=dict)
+    functions: list[ComplexityResult] = field(default_factory=list)
+    classes: list[ComplexityResult] = field(default_factory=list)
+    overall_metrics: dict[ComplexityMetric, float] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "file_path": self.file_path,
             "total_lines": self.total_lines,
@@ -70,7 +69,7 @@ class CyclomaticComplexityVisitor(ast.NodeVisitor):
     def __init__(self):
         self.complexity = 1
         self.current_function = None
-        self.results: Dict[str, int] = {}
+        self.results: dict[str, int] = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         old_complexity = self.complexity
@@ -119,7 +118,7 @@ class CognitiveComplexityVisitor(ast.NodeVisitor):
         self.complexity = 0
         self.nesting = 0
         self.current_function = None
-        self.results: Dict[str, int] = {}
+        self.results: dict[str, int] = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         old_complexity = self.complexity
@@ -175,8 +174,8 @@ class CognitiveComplexityVisitor(ast.NodeVisitor):
 
 class HalsteadMetrics:
     def __init__(self):
-        self.operators: Dict[str, int] = defaultdict(int)
-        self.operands: Dict[str, int] = defaultdict(int)
+        self.operators: dict[str, int] = defaultdict(int)
+        self.operands: dict[str, int] = defaultdict(int)
 
     def visit(self, node: ast.AST):
         if isinstance(node, ast.BinOp):
@@ -207,17 +206,17 @@ class HalsteadMetrics:
             self.operands[str(node.value)] += 1
         elif isinstance(node, ast.Attribute):
             self.operands[node.attr] += 1
-        
+
         for child in ast.iter_child_nodes(node):
             if not isinstance(child, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.BoolOp, ast.Call, ast.Name, ast.Constant, ast.Attribute)):
                 self.visit(child)
 
-    def calculate(self) -> Dict[str, float]:
+    def calculate(self) -> dict[str, float]:
         n1 = len(self.operators)
         n2 = len(self.operands)
         N1 = sum(self.operators.values())
         N2 = sum(self.operands.values())
-        
+
         vocabulary = n1 + n2
         length = N1 + N2
         volume = length * (vocabulary.bit_length() if vocabulary > 0 else 0)
@@ -225,7 +224,7 @@ class HalsteadMetrics:
         effort = difficulty * volume
         time = effort / 18
         bugs = volume / 3000
-        
+
         return {
             "vocabulary": vocabulary,
             "length": length,
@@ -242,7 +241,7 @@ class NestingDepthVisitor(ast.NodeVisitor):
         self.max_depth = 0
         self.current_depth = 0
         self.current_function = None
-        self.results: Dict[str, int] = {}
+        self.results: dict[str, int] = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         old_max = self.max_depth
@@ -303,42 +302,42 @@ class ComplexityEvaluator:
     def evaluate_file(self, file_path: str) -> FileComplexity:
         source = Path(file_path).read_text(encoding='utf-8', errors='ignore')
         tree = ast.parse(source)
-        
+
         lines = source.split('\n')
         total_lines = len(lines)
         code_lines = sum(1 for l in lines if l.strip() and not l.strip().startswith('#'))
         comment_lines = sum(1 for l in lines if l.strip().startswith('#'))
         blank_lines = total_lines - code_lines - comment_lines
-        
+
         cyclomatic_visitor = CyclomaticComplexityVisitor()
         cyclomatic_visitor.visit(tree)
-        
+
         cognitive_visitor = CognitiveComplexityVisitor()
         cognitive_visitor.visit(tree)
-        
+
         nesting_visitor = NestingDepthVisitor()
         nesting_visitor.visit(tree)
-        
+
         halstead = HalsteadMetrics()
         halstead.visit(tree)
         halstead_metrics = halstead.calculate()
-        
+
         functions = []
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                result = self._evaluate_function(node, file_path, cyclomatic_visitor.results, 
+                result = self._evaluate_function(node, file_path, cyclomatic_visitor.results,
                                                 cognitive_visitor.results, nesting_visitor.results,
                                                 halstead_metrics)
                 functions.append(result)
-        
+
         classes = []
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 result = self._evaluate_class(node, file_path)
                 classes.append(result)
-        
+
         overall = self._calculate_overall(functions)
-        
+
         return FileComplexity(
             file_path=file_path,
             total_lines=total_lines,
@@ -354,23 +353,23 @@ class ComplexityEvaluator:
         self,
         node: ast.FunctionDef,
         file_path: str,
-        cyclomatic_results: Dict,
-        cognitive_results: Dict,
-        nesting_results: Dict,
-        halstead_metrics: Dict,
+        cyclomatic_results: dict,
+        cognitive_results: dict,
+        nesting_results: dict,
+        halstead_metrics: dict,
     ) -> ComplexityResult:
         metrics = {}
-        
+
         metrics[ComplexityMetric.CYCLOMATIC] = cyclomatic_results.get(node.name, 1)
         metrics[ComplexityMetric.COGNITIVE] = cognitive_results.get(node.name, 0)
         metrics[ComplexityMetric.NESTING_DEPTH] = nesting_results.get(node.name, 0)
         metrics[ComplexityMetric.PARAMETER_COUNT] = len(node.args.args)
         metrics[ComplexityMetric.LINES_OF_CODE] = getattr(node, 'end_lineno', node.lineno) - node.lineno + 1
-        
+
         overall_score = self._calculate_score(metrics)
         grade = self._calculate_grade(overall_score)
         recommendations = self._generate_recommendations(metrics)
-        
+
         return ComplexityResult(
             function_name=node.name,
             file_path=file_path,
@@ -383,15 +382,15 @@ class ComplexityEvaluator:
 
     def _evaluate_class(self, node: ast.ClassDef, file_path: str) -> ComplexityResult:
         method_count = sum(1 for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
-        
+
         metrics = {
             ComplexityMetric.PARAMETER_COUNT: len(node.bases),
             ComplexityMetric.LINES_OF_CODE: getattr(node, 'end_lineno', node.lineno) - node.lineno + 1,
         }
-        
+
         overall_score = self._calculate_score(metrics)
         grade = self._calculate_grade(overall_score)
-        
+
         return ComplexityResult(
             function_name=node.name,
             file_path=file_path,
@@ -402,7 +401,7 @@ class ComplexityEvaluator:
             recommendations=[f"Class has {method_count} methods"] if method_count > 20 else [],
         )
 
-    def _calculate_score(self, metrics: Dict[ComplexityMetric, float]) -> float:
+    def _calculate_score(self, metrics: dict[ComplexityMetric, float]) -> float:
         weights = {
             ComplexityMetric.CYCLOMATIC: 0.3,
             ComplexityMetric.COGNITIVE: 0.3,
@@ -410,7 +409,7 @@ class ComplexityEvaluator:
             ComplexityMetric.PARAMETER_COUNT: 0.1,
             ComplexityMetric.LINES_OF_CODE: 0.1,
         }
-        
+
         score = 0
         for metric, weight in weights.items():
             value = metrics.get(metric, 0)
@@ -422,7 +421,7 @@ class ComplexityEvaluator:
                     break
             else:
                 score += 20 * weight
-        
+
         return score
 
     def _calculate_grade(self, score: float) -> str:
@@ -432,7 +431,7 @@ class ComplexityEvaluator:
         if score >= 60: return "D"
         return "F"
 
-    def _generate_recommendations(self, metrics: Dict[ComplexityMetric, float]) -> List[str]:
+    def _generate_recommendations(self, metrics: dict[ComplexityMetric, float]) -> list[str]:
         recs = []
         if metrics.get(ComplexityMetric.CYCLOMATIC, 0) > 10:
             recs.append("Consider breaking down complex function")
@@ -446,10 +445,10 @@ class ComplexityEvaluator:
             recs.append("Function too long - extract smaller functions")
         return recs
 
-    def _calculate_overall(self, functions: List[ComplexityResult]) -> Dict[ComplexityMetric, float]:
+    def _calculate_overall(self, functions: list[ComplexityResult]) -> dict[ComplexityMetric, float]:
         if not functions:
             return {}
-        
+
         overall = {}
         for metric in ComplexityMetric:
             values = [f.metrics.get(metric, 0) for f in functions]
@@ -457,10 +456,10 @@ class ComplexityEvaluator:
                 overall[metric] = sum(values) / len(values)
         return overall
 
-    def evaluate_project(self, root_path: str, extensions: List[str] = None) -> List[FileComplexity]:
+    def evaluate_project(self, root_path: str, extensions: list[str] = None) -> list[FileComplexity]:
         if extensions is None:
             extensions = ['.py']
-        
+
         results = []
         for ext in extensions:
             for file_path in Path(root_path).rglob(f'*{ext}'):
@@ -468,7 +467,7 @@ class ComplexityEvaluator:
                     results.append(self.evaluate_file(str(file_path)))
                 except Exception:
                     pass
-        
+
         return results
 
 
@@ -476,14 +475,14 @@ class ComplexityReporter:
     def __init__(self, evaluator: ComplexityEvaluator):
         self.evaluator = evaluator
 
-    def generate_report(self, results: List[FileComplexity], format: str = "text") -> str:
+    def generate_report(self, results: list[FileComplexity], format: str = "text") -> str:
         if format == "json":
             return self._json_report(results)
         return self._text_report(results)
 
-    def _text_report(self, results: List[FileComplexity]) -> str:
+    def _text_report(self, results: list[FileComplexity]) -> str:
         lines = ["# Complexity Analysis Report", ""]
-        
+
         for file_result in results:
             lines.append(f"## {file_result.file_path}")
             lines.append(f"- Total Lines: {file_result.total_lines}")
@@ -491,7 +490,7 @@ class ComplexityReporter:
             lines.append(f"- Functions: {len(file_result.functions)}")
             lines.append(f"- Classes: {len(file_result.classes)}")
             lines.append("")
-            
+
             for func in file_result.functions:
                 lines.append(f"### {func.function_name} (Grade: {func.grade})")
                 for metric, value in func.metrics.items():
@@ -501,9 +500,9 @@ class ComplexityReporter:
                     for rec in func.recommendations:
                         lines.append(f"  - {rec}")
                 lines.append("")
-        
+
         return "\n".join(lines)
 
-    def _json_report(self, results: List[FileComplexity]) -> str:
+    def _json_report(self, results: list[FileComplexity]) -> str:
         import json
         return json.dumps([r.to_dict() for r in results], indent=2)

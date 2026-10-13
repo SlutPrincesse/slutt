@@ -1,48 +1,48 @@
 """
 Evolution & Self-Improvement Engine (Section 31)
 """
-from .evolution_engine import (
-    EvolutionEngine,
-    EvolutionConfig,
-    EvolutionResult,
-    Individual,
-    FitnessFunction,
-    EvolutionStrategy,
-    SelectionMethod,
-    MultiObjectiveEvolution,
-    AdaptiveEvolution,
+from .architecture_evolution import (
+    ArchitectureDecision,
+    ArchitectureEvolutionConfig,
+    ArchitectureEvolutionEngine,
+    ArchitectureFitnessFunction,
+    ArchitectureIndividual,
+    ArchitectureOptimizer,
+    ArchitecturePattern,
+    EvolutionaryArchitectureReviewer,
+    QualityAttribute,
 )
 from .code_evolution import (
-    CodeEvolutionEngine,
     CodeEvolutionConfig,
+    CodeEvolutionEngine,
     CodeIndividual,
     CodeMutationType,
     CodeOptimizer,
     RefactoringEvolution,
 )
-from .architecture_evolution import (
-    ArchitectureEvolutionEngine,
-    ArchitectureEvolutionConfig,
-    ArchitectureIndividual,
-    ArchitectureDecision,
-    ArchitecturePattern,
-    QualityAttribute,
-    ArchitectureFitnessFunction,
-    ArchitectureOptimizer,
-    EvolutionaryArchitectureReviewer,
+from .evolution_engine import (
+    AdaptiveEvolution,
+    EvolutionConfig,
+    EvolutionEngine,
+    EvolutionResult,
+    EvolutionStrategy,
+    FitnessFunction,
+    Individual,
+    MultiObjectiveEvolution,
+    SelectionMethod,
 )
 from .evolution_strategies import (
-    EvolutionStrategy,
     CMAES,
-    ParticleSwarmOptimization,
+    AdaptiveStrategySelector,
     DifferentialEvolution,
-    EvolutionStrategyPlus,
+    EvolutionStrategy,
     EvolutionStrategyComma,
+    EvolutionStrategyPlus,
+    ParticleSwarmOptimization,
+    PortfolioOptimizer,
     StrategyConfig,
     StrategyResult,
     StrategySelector,
-    AdaptiveStrategySelector,
-    PortfolioOptimizer,
     StrategyType,
 )
 

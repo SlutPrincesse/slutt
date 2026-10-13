@@ -2,15 +2,15 @@
 Semantic Memory & Knowledge Graph (Section 15)
 CodeMemory, Episode, SemanticIndexer, KnowledgeGraph, QueryEngine
 """
-from .code_memory import CodeMemory, CodeNode, CodeEdge
-from .episodic_store import EpisodicStore, Episode, EpisodeType
-from .semantic_indexer import SemanticIndexer, IndexConfig, SearchResult
-from .knowledge_graph import KnowledgeGraph, Entity, Relation, GraphQuery
+from .code_memory import CodeEdge, CodeMemory, CodeNode
+from .episodic_store import Episode, EpisodeType, EpisodicStore
+from .knowledge_graph import Entity, GraphQuery, KnowledgeGraph, Relation
 from .query_engine import QueryEngine, QueryPlan, QueryResult
+from .semantic_indexer import IndexConfig, SearchResult, SemanticIndexer
 
 __all__ = [
     "CodeMemory",
-    "CodeNode", 
+    "CodeNode",
     "CodeEdge",
     "EpisodicStore",
     "Episode",

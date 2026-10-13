@@ -1,0 +1,2542 @@
+#!/bin/bash
+# shellcheck disable=SC2034  # Arrays are consumed by modules and scripts that source this file
+# installers.sh — Install method helpers for cybersec-toolkit
+# Provides batch install functions for: apt, pipx, go, cargo, gem, git, binary, docker
+# Source AFTER common.sh
+
+# Global tool failure counter — incremented by batch install functions.
+# Used by install.sh to detect per-module failures without relying on
+# the module function's return code (which only reflects the last command).
+TOTAL_TOOL_FAILURES=0
+
+# Distro compatibility layer — data-driven package name translation
+# Maps Debian package names to equivalents for dnf/pacman/zypper/pkg.
+# Mappings are loaded from lib/distro_compat.tsv (lazy, once).
+
+# Associative arrays populated by _load_distro_compat()
+declare -gA _COMPAT_DNF=()
+declare -gA _COMPAT_PACMAN=()
+declare -gA _COMPAT_ZYPPER=()
+declare -gA _COMPAT_PKG=()
+_COMPAT_LOADED=false
+
+# Load distro_compat.tsv into the four associative arrays.
+# Called once on first use; subsequent calls are no-ops.
+_load_distro_compat() {
+    [[ "$_COMPAT_LOADED" == "true" ]] && return 0
+
+    local tsv_path="${SCRIPT_DIR:-.}/lib/distro_compat.tsv"
+    if [[ ! -f "$tsv_path" ]]; then
+        log_warn "distro_compat.tsv not found at $tsv_path — package names will pass through unchanged"
+        _COMPAT_LOADED=true
+        return 0
+    fi
+
+    # Read each line raw and split manually on the first 4 tabs, since IFS=$'\t' would collapse consecutive tabs (empty fields).
+    local _line _rest debian dnf pacman zypper pkg
+    while IFS='' read -r _line; do
+        # Skip comments and blank lines
+        [[ -z "$_line" || "$_line" == \#* ]] && continue
+        # Strip trailing \r in case of CRLF line endings
+        _line="${_line%$'\r'}"
+        # Split on tabs positionally (preserves empty fields)
+        _rest="$_line"
+        debian="${_rest%%	*}"; _rest="${_rest#*	}"
+        dnf="${_rest%%	*}";    _rest="${_rest#*	}"
+        pacman="${_rest%%	*}"; _rest="${_rest#*	}"
+        zypper="${_rest%%	*}"; _rest="${_rest#*	}"
+        pkg="${_rest%%	*}"   # 5th column only; ignore any trailing tabs
+        [[ -n "$dnf" ]]    && _COMPAT_DNF["$debian"]="$dnf"
+        [[ -n "$pacman" ]] && _COMPAT_PACMAN["$debian"]="$pacman"
+        [[ -n "$zypper" ]] && _COMPAT_ZYPPER["$debian"]="$zypper"
+        [[ -n "$pkg" ]]    && _COMPAT_PKG["$debian"]="$pkg"
+    done < "$tsv_path"
+
+    _COMPAT_LOADED=true
+    log_debug "_load_distro_compat: loaded from $tsv_path"
+}
+
+# Translate Debian package names in-place for the current PKG_MANAGER.
+# Usage: fixup_package_names <array_nameref>
+fixup_package_names() {
+    local -n __arr=$1
+    local new_arr=()
+    local -a _parts
+
+    _load_distro_compat
+
+    for pkg in "${__arr[@]}"; do
+        # WSL: skip kernel/hardware-dependent tools (no kernel module access)
+        if [[ "$IS_WSL" == "true" ]]; then
+            case "$pkg" in
+                auditd|apparmor-utils|rr) continue ;;
+            esac
+        fi
+
+        # ARM: skip x86-only packages
+        if [[ "$IS_ARM" == "true" ]]; then
+            case "$pkg" in
+                qemu-system-x86) continue ;;
+            esac
+        fi
+
+        case "$PKG_MANAGER" in
+            apt)
+                # Skip Kali/Parrot-only packages on standard Debian/Ubuntu
+                if [[ "$DISTRO_ID" != "kali" && "$DISTRO_ID" != "parrot" ]]; then
+                    case "$pkg" in
+                        spike|enum4linux|bing-ip2hosts) continue ;;
+                        ghidra|rizin|radare2) continue ;;
+                        bulk-extractor|forensics-extra) continue ;;
+                        kismet|spooftooph|crackle|asleap|fern-wifi-cracker) continue ;;
+                        smali) continue ;;
+                        sentrypeer|chaosreader) continue ;;
+                        outguess|sslstrip) continue ;;
+                    esac
+                fi
+                ;;
+            dnf|pacman|zypper|pkg)
+                # Select the right lookup table for this package manager
+                local -n _map="_COMPAT_${PKG_MANAGER^^}"
+                local mapped="${_map[$pkg]:-}"
+
+                if [[ "$mapped" == "-" ]]; then
+                    # Skip — package unavailable on this distro
+                    continue
+                elif [[ -n "$mapped" ]]; then
+                    if [[ "$mapped" == *"+"* ]]; then
+                        # Multi-expand: a+b → two packages (e.g. clang+make)
+                        IFS='+' read -ra _parts <<< "$mapped"
+                        new_arr+=("${_parts[@]}")
+                        continue
+                    fi
+                    pkg="$mapped"
+                fi
+                # else: no mapping → passthrough (keep Debian name)
+                ;;
+        esac
+        new_arr+=("$pkg")
+    done
+    if [[ ${#new_arr[@]} -gt 0 ]]; then
+        __arr=("${new_arr[@]}")
+    else
+        __arr=()
+    fi
+}
+
+# Packages already installed before the current install_apt_batch call. Reset per
+# call; read by _track_pkg, which outlives the call that defines it.
+declare -gA _APT_PREEXISTING=()
+# Same lifetime and the same `set -u` hazard: without -A the subscript is
+# evaluated arithmetically and a package name aborts the install.
+declare -gA _APT_PRIOR_TOOLKIT=()
+
+# Batch APT install with progress and distro fixup
+install_apt_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a packages=("$@")
+
+    fixup_package_names packages
+
+    local total=${#packages[@]}
+    [[ "$total" -eq 0 ]] && return 0
+    local failed=0
+
+    # Provenance: record what is already installed BEFORE touching anything, so the
+    # uninstall paths never remove a package the user had first. '@group' entries
+    # cannot be queried per-package, so treat them as pre-existing.
+    _APT_PREEXISTING=()
+    _APT_PRIOR_TOOLKIT=()
+    for pkg in "${packages[@]}"; do
+        if [[ "$pkg" == @* ]]; then
+            _APT_PREEXISTING["$pkg"]=1
+        elif pkg_is_installed "$pkg"; then
+            if ! _version_known "$pkg" || _is_preexisting "$pkg"; then
+                _APT_PREEXISTING["$pkg"]=1
+            else
+                _APT_PRIOR_TOOLKIT["$pkg"]=1
+            fi
+        fi
+    done
+    # _APT_PREEXISTING is file-scope, not a caller local: bash leaves this function
+    # defined after install_apt_batch returns, and subscripting an out-of-scope
+    # associative array aborts under `set -u`.
+    _track_pkg() {
+        if [[ -n "${_APT_PREEXISTING[$1]:-}" ]]; then
+            track_version "$1" "$PKG_MANAGER" "existing"
+        elif [[ -n "${_APT_PRIOR_TOOLKIT[$1]:-}" ]]; then
+            _track_already_present "$1" "$PKG_MANAGER"
+        else
+            track_version "$1" "$PKG_MANAGER" "system"
+        fi
+    }
+
+    log_debug "install_apt_batch: starting '$label' with $total items"
+    local _batch_start; _batch_start=$(date +%s)
+
+    log_info "Installing ${label} ($total packages)..."
+
+    # Fast path: try all packages in one transaction (~50-80% faster)
+    if pkg_install "${packages[@]}" >> "$LOG_FILE" 2>&1; then
+        # All succeeded — track versions in bulk
+        for pkg in "${packages[@]}"; do
+            _track_pkg "$pkg"
+        done
+        echo ""
+        log_success "${label}: ${total}/${total} installed (0 failed) [batch]"
+    else
+        # Fallback: install in small groups of 10 to isolate broken packages faster
+        # than one-by-one, while still finding which specific packages fail.
+        log_warn "${label}: batch install failed — falling back to grouped install$(_disk_hint)"
+        local current=0 group_size=10
+        local -a group=()
+        for pkg in "${packages[@]}"; do
+            group+=("$pkg")
+            if [[ ${#group[@]} -ge $group_size ]]; then
+                if pkg_install "${group[@]}" >> "$LOG_FILE" 2>&1; then
+                    for _g in "${group[@]}"; do
+                        current=$((current + 1))
+                        show_progress "$current" "$total" "$_g"
+                        _track_pkg "$_g"
+                    done
+                else
+                    # Group failed — fall back to per-package within this group
+                    for _g in "${group[@]}"; do
+                        current=$((current + 1))
+                        show_progress "$current" "$total" "$_g"
+                        if ! pkg_install "$_g" >> "$LOG_FILE" 2>&1; then
+                            log_error "Failed: $_g$(_disk_hint)"
+                            failed=$((failed + 1))
+                            track_session "$_g" "$PKG_MANAGER" "failed" 2>/dev/null || true
+                        else
+                            _track_pkg "$_g"
+                        fi
+                    done
+                fi
+                group=()
+            fi
+        done
+        # Handle remaining packages
+        if [[ ${#group[@]} -gt 0 ]]; then
+            if pkg_install "${group[@]}" >> "$LOG_FILE" 2>&1; then
+                for _g in "${group[@]}"; do
+                    current=$((current + 1))
+                    show_progress "$current" "$total" "$_g"
+                    _track_pkg "$_g"
+                done
+            else
+                for _g in "${group[@]}"; do
+                    current=$((current + 1))
+                    show_progress "$current" "$total" "$_g"
+                    if ! pkg_install "$_g" >> "$LOG_FILE" 2>&1; then
+                        log_error "Failed: $_g$(_disk_hint)"
+                        failed=$((failed + 1))
+                        track_session "$_g" "$PKG_MANAGER" "failed" 2>/dev/null || true
+                    else
+                        _track_pkg "$_g"
+                    fi
+                done
+            fi
+        fi
+        echo ""
+        log_success "${label}: $((total - failed))/$total installed ($failed failed) [fallback]"
+    fi
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_apt_batch: '$label' completed in ${_batch_elapsed}s"
+    [[ "$failed" -gt 0 ]] && { TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed)); return 1; }
+    return 0
+}
+
+install_pipx_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a tools=("$@")
+    local total=${#tools[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_PIPX:-false}" == "true" ]]; then
+        log_warn "Skipping ${label} (--skip-pipx)"
+        _report_method_total "pipx" 0
+        return 0
+    fi
+
+    log_debug "install_pipx_batch: starting '$label' with $total items"
+    local _batch_start; _batch_start=$(date +%s)
+
+    ensure_pipx
+    # Cache the installed list once to avoid calling pipx list per tool
+    local installed_pipx=""
+    if command_exists pipx; then
+        installed_pipx=$(pipx list --short 2>/dev/null || true)
+    fi
+
+    log_info "Installing ${label} ($total pipx tools)..."
+    _report_method_total "pipx" "$total"
+
+    if [[ "$PARALLEL_JOBS" -gt 1 ]]; then
+        # Parallel mode
+        # pipx venvs are isolated per-package, so parallel installs are safe.
+        # pip's download cache has built-in locking for concurrent access.
+        local _results_dir; _results_dir=$(mktemp -d); _register_cleanup "$_results_dir"
+
+        for tool in "${tools[@]}"; do
+            # Skip-check in main process
+            if echo "$installed_pipx" | awk -v t="$tool" 'tolower($1)==tolower(t){f=1} END{exit !f}'; then
+                printf 'skip\nexisting\n' > "$_results_dir/$tool"
+                _report_tool_done "pipx" "$tool" "skip"
+                continue
+            fi
+
+            _wait_for_job_slot
+
+            (
+                trap '_release_job_slot' EXIT
+                _report_tool_start "pipx" "$tool"
+                if pipx_install "$tool" >> "$LOG_FILE" 2>&1; then
+                    printf 'ok\nlatest\n' > "$_results_dir/$tool"
+                    _report_tool_done "pipx" "$tool" "ok"
+                else
+                    log_error "Failed pipx: $tool"
+                    printf 'fail\n\n' > "$_results_dir/$tool"
+                    _report_tool_done "pipx" "$tool" "fail"
+                fi
+            ) &
+        done
+        wait
+
+        _collect_parallel_results "$_results_dir" "pipx"
+        # shellcheck disable=SC2154  # _par_failed/_par_skipped set by _collect_parallel_results
+        local failed=$_par_failed skipped=$_par_skipped
+    else
+        # Sequential mode
+        local current=0 failed=0 skipped=0
+        for tool in "${tools[@]}"; do
+            current=$((current + 1))
+            show_progress "$current" "$total" "$tool"
+            _report_tool_start "pipx" "$tool"
+            if echo "$installed_pipx" | awk -v t="$tool" 'tolower($1)==tolower(t){f=1} END{exit !f}'; then
+                skipped=$((skipped + 1))
+                _track_already_present "$tool" "pipx"
+                _report_tool_done "pipx" "$tool" "skip"
+                continue
+            fi
+            if ! pipx_install "$tool" >> "$LOG_FILE" 2>&1; then
+                log_error "Failed pipx: $tool$(_disk_hint)"
+                failed=$((failed + 1))
+                track_session "$tool" "pipx" "failed" 2>/dev/null || true
+                _report_tool_done "pipx" "$tool" "fail"
+            else
+                track_version "$tool" "pipx" "latest"
+                _report_tool_done "pipx" "$tool" "ok"
+            fi
+        done
+    fi
+
+    local _fallback_dir="$HOME/.local/bin"
+    if [[ -d "$_fallback_dir" ]] && [[ "$_fallback_dir" != "$PIPX_BIN_DIR" ]]; then
+        local _symlinked=0
+        for _f in "$_fallback_dir"/*; do
+            [[ -f "$_f" ]] && [[ -x "$_f" ]] || continue
+            local _bname
+            _bname=$(basename "$_f")
+            if [[ ! -f "$PIPX_BIN_DIR/$_bname" ]] && [[ ! -L "$PIPX_BIN_DIR/$_bname" ]]; then
+                ln -sf "$_f" "$PIPX_BIN_DIR/$_bname" 2>/dev/null && _symlinked=$((_symlinked + 1))
+            fi
+        done
+        [[ "$_symlinked" -gt 0 ]] && log_info "Symlinked $_symlinked pipx binaries from $_fallback_dir → $PIPX_BIN_DIR"
+    fi
+
+    local _py_major _py_minor
+    _py_major=$(python3 -c 'import sys; print(sys.version_info.major)' 2>/dev/null || echo 3)
+    _py_minor=$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)
+    if [[ "$_py_major" -ge 3 ]] && [[ "$_py_minor" -ge 12 ]] && [[ -d "$PIPX_HOME/venvs" ]]; then
+        local _injected=0
+        for _venv_dir in "$PIPX_HOME/venvs"/*/; do
+            [[ -x "$_venv_dir/bin/python" ]] || continue
+            "$_venv_dir/bin/python" -c 'import setuptools' 2>/dev/null && continue
+            # Some pipx venvs lack the pip binary — use python -m pip instead.
+            # Bootstrap pip via ensurepip if neither is available.
+            if ! "$_venv_dir/bin/python" -m pip --version &>/dev/null; then
+                "$_venv_dir/bin/python" -m ensurepip --default-pip >> "$LOG_FILE" 2>&1 || continue
+            fi
+            # Pin setuptools<75: version 75+ removed pkg_resources
+            "$_venv_dir/bin/python" -m pip install -q 'setuptools<75' >> "$LOG_FILE" 2>&1 && _injected=$((_injected + 1))
+        done
+        [[ "$_injected" -gt 0 ]] && log_info "Injected setuptools into $_injected pipx venvs (Python $_py_major.$_py_minor compat)"
+    fi
+
+    echo ""
+    log_success "${label}: $((total - failed - skipped))/$total new, ${skipped} existing, ${failed} failed"
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_pipx_batch: '$label' completed in ${_batch_elapsed}s"
+    [[ "$failed" -gt 0 ]] && { TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed)); return 1; }
+    return 0
+}
+
+# install_ctf_venv — create/populate a named venv under CYBERSEC_MCP_VENVS_DIR
+# (default ~/.ctf-venvs) so the MCP server can hand it to run_script(venv=NAME).
+# Python libraries without console scripts cannot go through pipx at all
+# ("No apps associated with package pycryptodome"), and installing them
+# system-wide fights PEP 668 — a venv is the only path that serves both.
+# One pip call per package: a single library with no wheel for the host
+# Python/arch then fails alone instead of taking the whole set with it.
+install_ctf_venv() {
+    local name="$1"; shift
+    local -a libs=("$@")
+    [[ ${#libs[@]} -eq 0 ]] && return 0
+
+    if [[ "${SKIP_PIPX:-false}" == "true" ]]; then
+        log_warn "Skipping ${name} venv (--skip-pipx)"
+        return 0
+    fi
+
+    # $HOME is root's under sudo; the venv has to land in the invoking user's home.
+    local venvs_dir="${CYBERSEC_MCP_VENVS_DIR:-$(_builder_home)/.ctf-venvs}"
+    local venv_dir="$venvs_dir/$name"
+    local venv_esc; venv_esc="$(_escape_single_quoted "$venv_dir")"
+
+    # ~/.ctf-venvs is a directory users populate by hand too (mcp_server/README.md
+    # documents it for pwntools). Decide provenance before we touch the tree so a
+    # venv we only added libraries to is never uninstalled by remove.sh.
+    local venv_provenance="latest"
+    [[ "$(_tree_provenance "ctf-${name}-venv" "$venv_dir")" == "existing" ]] && venv_provenance="existing"
+
+    if ! mkdir -p "$venvs_dir" 2>/dev/null; then
+        log_error "Cannot create venv directory: $venvs_dir"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+        return 1
+    fi
+    _chown_for_builder "$venvs_dir"
+
+    if [[ ! -x "$venv_dir/bin/python" ]]; then
+        log_info "Creating ${name} venv at $venv_dir..."
+        if ! _as_builder "python3 -m venv '$venv_esc'" >> "$LOG_FILE" 2>&1; then
+            log_error "Failed to create ${name} venv"
+            TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+            return 1
+        fi
+    fi
+
+    local lib lib_esc current=0 failed=0
+    local total=${#libs[@]}
+    log_info "Installing ${name} venv libraries ($total packages)..."
+    for lib in "${libs[@]}"; do
+        current=$((current + 1))
+        show_progress "$current" "$total" "$lib"
+        lib_esc="$(_escape_single_quoted "$lib")"
+        if ! _as_builder "'$venv_esc/bin/pip' install -q '$lib_esc'" >> "$LOG_FILE" 2>&1; then
+            log_warn "${name} venv: $lib failed (no wheel for this Python/arch?)"
+            failed=$((failed + 1))
+        fi
+    done
+    echo ""
+
+    if [[ "$failed" -gt 0 ]]; then
+        log_warn "${name} venv: $((total - failed))/$total libraries installed"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed))
+        return 1
+    fi
+
+    log_success "${name} venv ready — run_script(venv=\"${name}\") can import ${libs[*]}"
+    track_version "ctf-${name}-venv" "special" "$venv_provenance"
+    return 0
+}
+
+# _install_staged_bin — copy a builder-built binary into a root-owned bin dir as a
+# fresh root-owned 0755 file; mv would keep builder ownership, letting a user-level
+# process swap a binary root runs later. A symlink is refused, not followed.
+_install_staged_bin() {
+    local src="$1" dest="$2"
+    [[ -f "$src" && ! -L "$src" ]] || return 1
+    install -m 0755 -- "$src" "$dest" && rm -f -- "$src"
+}
+
+install_go_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a tools=("$@")
+    local total=${#tools[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_GO:-false}" == "true" ]]; then
+        log_warn "Skipping ${label} (--skip-go)"
+        _report_method_total "Go" 0
+        return 0
+    fi
+
+    if ! command_exists go; then
+        log_error "Go not found — cannot install ${label}"
+        _report_method_total "Go" "$total"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + total))
+        return 1
+    fi
+    # GOPATH and GOBIN are set in common.sh
+    # When privilege-dropping via _as_builder, $SUDO_USER cannot write to root-owned
+    # GOBIN (/usr/local/bin) or GOPATH (/opt/go).  Use a staging GOBIN that $SUDO_USER
+    # owns, then move completed binaries to the real GOBIN as root.
+    local _gobin_stage=""
+    if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER:-}" != "root" ]] && [[ "$PKG_MANAGER" != "pkg" ]]; then
+        _gobin_stage=$(mktemp -d "${TMPDIR:-/tmp}/cybersec-gobin.XXXXXX")
+        _register_cleanup "$_gobin_stage"
+        _chown_for_builder "$_gobin_stage"
+        mkdir -p "$GOPATH" 2>/dev/null || true
+        chown -R "$SUDO_USER" "$GOPATH" 2>/dev/null || true
+    fi
+    local _effective_gobin="${_gobin_stage:-$GOBIN}"
+
+    log_debug "install_go_batch: starting '$label' with $total items"
+    local _batch_start; _batch_start=$(date +%s)
+
+    log_info "Installing ${label} ($total Go tools)..."
+    _report_method_total "Go" "$total"
+
+    if [[ "$PARALLEL_JOBS" -gt 1 ]]; then
+        # Parallel mode
+        local _results_dir; _results_dir=$(mktemp -d); _register_cleanup "$_results_dir"
+
+        for tool in "${tools[@]}"; do
+            local name
+            name=$(_go_bin_name "$tool")
+
+            # Skip-check in main process
+            if command_exists "$name"; then
+                printf 'skip\nexisting\n' > "$_results_dir/$name"
+                _report_tool_done "Go" "$name" "skip"
+                continue
+            fi
+
+            _wait_for_job_slot
+
+            # Escape for safe use inside _as_builder (single-quoted bash -c string)
+            local _go_gopath_escaped _go_gobin_escaped _go_tool_escaped
+            _go_gopath_escaped="$(_escape_single_quoted "$GOPATH")"
+            _go_gobin_escaped="$(_escape_single_quoted "$_effective_gobin")"
+            _go_tool_escaped="$(_escape_single_quoted "$tool")"
+            (
+                trap '_release_job_slot' EXIT
+                _report_tool_start "Go" "$name"
+                # Mark ok only if go install succeeded and (when staged) the binary moved into GOBIN.
+                if _as_builder "GOPATH='$_go_gopath_escaped' GOBIN='$_go_gobin_escaped' $(_builder_cmd go) install $_go_tool_escaped" >> "$LOG_FILE" 2>&1 \
+                    && { [[ -z "$_gobin_stage" ]] || _install_staged_bin "$_gobin_stage/$name" "$GOBIN/$name"; }; then
+                    printf 'ok\nlatest\n' > "$_results_dir/$name"
+                    _report_tool_done "Go" "$name" "ok"
+                else
+                    log_error "Failed go: $name"
+                    printf 'fail\n\n' > "$_results_dir/$name"
+                    _report_tool_done "Go" "$name" "fail"
+                fi
+            ) &
+        done
+        wait
+
+        _collect_parallel_results "$_results_dir" "go"
+        # shellcheck disable=SC2154  # _par_failed/_par_skipped set by _collect_parallel_results
+        local failed=$_par_failed skipped=$_par_skipped
+    else
+        local current=0 failed=0 skipped=0
+        for tool in "${tools[@]}"; do
+            current=$((current + 1))
+            local name
+            name=$(_go_bin_name "$tool")
+            show_progress "$current" "$total" "$name"
+            _report_tool_start "Go" "$name"
+            # Skip if binary already exists (GOBIN is in PATH, so command_exists suffices)
+            if command_exists "$name"; then
+                skipped=$((skipped + 1))
+                _track_already_present "$name" "go"
+                _report_tool_done "Go" "$name" "skip"
+                continue
+            fi
+            _go_gopath_escaped="$(_escape_single_quoted "$GOPATH")"
+            _go_gobin_escaped="$(_escape_single_quoted "$_effective_gobin")"
+            _go_tool_escaped="$(_escape_single_quoted "$tool")"
+            if _as_builder "GOPATH='$_go_gopath_escaped' GOBIN='$_go_gobin_escaped' $(_builder_cmd go) install $_go_tool_escaped" >> "$LOG_FILE" 2>&1 \
+                && { [[ -z "$_gobin_stage" ]] || _install_staged_bin "$_gobin_stage/$name" "$GOBIN/$name"; }; then
+                track_version "$name" "go" "latest"
+                _report_tool_done "Go" "$name" "ok"
+            else
+                log_error "Failed go: $name$(_disk_hint)"
+                failed=$((failed + 1))
+                track_session "$name" "go" "failed" 2>/dev/null || true
+                _report_tool_done "Go" "$name" "fail"
+            fi
+        done
+    fi
+
+    echo ""
+    log_success "${label}: $((total - failed - skipped))/$total new, ${skipped} existing, ${failed} failed"
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_go_batch: '$label' completed in ${_batch_elapsed}s"
+    [[ "$failed" -gt 0 ]] && { TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed)); return 1; }
+    return 0
+}
+
+# Cargo crate name → installed binary name, for the crates where they differ.
+# Most cargo crates install a binary of the same name; these are the exceptions
+# (e.g. yara-x-cli → yr). Shared by verify.sh, update.sh and remove.sh so the
+# crate↔binary mapping lives in one place.
+declare -gA _CARGO_BIN_NAMES=(
+    [yara-x-cli]="yr"
+)
+
+# npm package name → installed binary name, for the packages where they differ.
+# Verified against `npm view <pkg> bin`; most global packages install a binary of
+# the same name, so only exceptions belong here.
+declare -gA _NPM_BIN_NAMES=(
+    [rms-runtime-mobile-security]="rms"
+)
+
+install_cargo_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a crates=("$@")
+    local total=${#crates[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_CARGO:-false}" == "true" ]]; then
+        log_warn "Skipping ${label} (--skip-cargo)"
+        _report_method_total "Cargo" 0
+        return 0
+    fi
+
+    # Resolve cargo as the builder will run it, not as root sees it (_builder_cmd).
+    local _cargo_cmd
+    if ! _cargo_cmd=$(_builder_cmd cargo); then
+        log_error "Cargo not found for ${SUDO_USER:-root} — cannot install ${label}"
+        log_error "Install Rust first: https://rustup.rs/"
+        _report_method_total "Cargo" "$total"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + total))
+        return 1
+    fi
+    _path_append "$(_builder_home)/.cargo/bin"
+
+    # Try to set up cargo-binstall for faster pre-compiled downloads.
+    # cargo-binstall fetches prebuilt binaries (and its QuickInstall fallback) with
+    # no checksum verification, so skip it under --require-checksums/--production and
+    # compile via `cargo install`, which validates against the crates.io index.
+    local _use_binstall=false
+    if [[ "${REQUIRE_CHECKSUMS:-false}" == "true" ]]; then
+        log_info "Checksums required — building ${label} from source (skipping cargo-binstall)"
+    elif type ensure_cargo_binstall &>/dev/null; then
+        ensure_cargo_binstall && _use_binstall=true
+    elif command_exists cargo-binstall; then
+        _use_binstall=true
+    fi
+
+    log_debug "install_cargo_batch: starting '$label' with $total items (binstall=$_use_binstall)"
+    local _batch_start; _batch_start=$(date +%s)
+
+    if [[ "$_use_binstall" == "true" ]]; then
+        log_info "Installing ${label} ($total Rust tools via cargo-binstall)..."
+    else
+        log_info "Installing ${label} ($total Rust tools)..."
+    fi
+    _report_method_total "Cargo" "$total"
+
+    # cargo uses a shared registry lock — always sequential to avoid conflicts
+    local current=0 failed=0 skipped=0
+    for crate in "${crates[@]}"; do
+        current=$((current + 1))
+        show_progress "$current" "$total" "$crate"
+        _report_tool_start "Cargo" "$crate"
+        # Some crates install a binary whose name differs from the crate
+        # (e.g. yara-x-cli -> yr); resolve it so the skip-check and symlink
+        # below key off the real executable name. See _CARGO_BIN_NAMES.
+        local _cbin="${_CARGO_BIN_NAMES[$crate]:-$crate}"
+        if command_exists "$_cbin"; then
+            skipped=$((skipped + 1))
+            _track_already_present "$crate" "cargo"
+            _report_tool_done "Cargo" "$crate" "skip"
+            continue
+        fi
+        local _installed=false
+        local _crate_escaped; _crate_escaped="$(_escape_single_quoted "$crate")"
+        # Try cargo-binstall first (downloads pre-compiled binary, ~3s vs ~20s)
+        if [[ "$_use_binstall" == "true" ]]; then
+            if _as_builder "$_cargo_cmd binstall $_crate_escaped --no-confirm" >> "$LOG_FILE" 2>&1; then
+                _installed=true
+                log_debug "Installed $crate via cargo-binstall"
+            else
+                log_debug "cargo-binstall failed for $crate — falling back to cargo install"
+            fi
+        fi
+        # Fall back to cargo install (compiles from source)
+        if [[ "$_installed" == "false" ]]; then
+            if ! _as_builder "$_cargo_cmd install $_crate_escaped" >> "$LOG_FILE" 2>&1; then
+                log_error "Failed cargo: $crate$(_disk_hint)"
+                failed=$((failed + 1))
+                track_session "$crate" "cargo" "failed" 2>/dev/null || true
+                _report_tool_done "Cargo" "$crate" "fail"
+                continue
+            fi
+        fi
+        local _cargo_bin_dir; _cargo_bin_dir="$(_builder_home)/.cargo/bin"
+        if [[ -f "$_cargo_bin_dir/$_cbin" ]]; then
+            ln -sf "$_cargo_bin_dir/$_cbin" "$PIPX_BIN_DIR/$_cbin" 2>/dev/null || true
+        fi
+        track_version "$crate" "cargo" "latest"
+        _report_tool_done "Cargo" "$crate" "ok"
+    done
+
+    echo ""
+    log_success "${label}: $((total - failed - skipped))/$total new, ${skipped} existing, ${failed} failed"
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_cargo_batch: '$label' completed in ${_batch_elapsed}s"
+    [[ "$failed" -gt 0 ]] && { TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed)); return 1; }
+    return 0
+}
+
+install_gem_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a gems=("$@")
+    local total=${#gems[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_GEMS:-false}" == "true" ]]; then
+        log_warn "Skipping ${label} (--skip-gems)"
+        _report_method_total "Gems" 0
+        return 0
+    fi
+
+    if ! command_exists gem; then
+        # Count as failures (consistent with go/cargo) so a missing toolchain is
+        # surfaced in the summary rather than silently dropped.
+        log_error "Ruby gem not found — cannot install ${label}"
+        _report_method_total "Gems" "$total"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + total))
+        return 1
+    fi
+
+    log_debug "install_gem_batch: starting '$label' with $total items"
+    local _batch_start; _batch_start=$(date +%s)
+
+    # Cache the installed list once
+    local installed_gems=""
+    installed_gems=$(gem list --no-details 2>/dev/null || true)
+
+    log_info "Installing ${label} ($total Ruby gems)..."
+    _report_method_total "Gems" "$total"
+
+    # gem uses a shared gem dir — always sequential to avoid conflicts
+    local current=0 failed=0 skipped=0
+    for gem_name in "${gems[@]}"; do
+        current=$((current + 1))
+        show_progress "$current" "$total" "$gem_name"
+        _report_tool_start "Gems" "$gem_name"
+        if echo "$installed_gems" | awk -v t="$gem_name" '$1==t{f=1} END{exit !f}'; then
+            skipped=$((skipped + 1))
+            _track_already_present "$gem_name" "gem"
+            _report_tool_done "Gems" "$gem_name" "skip"
+            continue
+        fi
+        local _gem_escaped; _gem_escaped="$(_escape_single_quoted "$gem_name")"
+        if _as_builder "$(_builder_cmd gem) install $_gem_escaped --no-document" >> "$LOG_FILE" 2>&1; then
+            # Symlink gem executables to PIPX_BIN_DIR (gems install to user-local
+            # dir under _as_builder, which isn't in system PATH)
+            local _gem_bin_dir=""
+            local _gdir
+            for _gdir in "$(_builder_home)/.local/share/gem/ruby"/*/bin; do
+                [[ -d "$_gdir" ]] && _gem_bin_dir="$_gdir" && break
+            done
+            if [[ -n "$_gem_bin_dir" && -f "$_gem_bin_dir/$gem_name" ]]; then
+                ln -sf "$_gem_bin_dir/$gem_name" "$PIPX_BIN_DIR/$gem_name" 2>/dev/null || true
+            fi
+            track_version "$gem_name" "gem" "latest"
+            _report_tool_done "Gems" "$gem_name" "ok"
+        else
+            log_error "Failed gem: $gem_name$(_disk_hint)"
+            failed=$((failed + 1))
+            track_session "$gem_name" "gem" "failed" 2>/dev/null || true
+            _report_tool_done "Gems" "$gem_name" "fail"
+        fi
+    done
+
+    echo ""
+    log_success "${label}: $((total - failed - skipped))/$total new, ${skipped} existing, ${failed} failed"
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_gem_batch: '$label' completed in ${_batch_elapsed}s"
+    [[ "$failed" -gt 0 ]] && { TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed)); return 1; }
+    return 0
+}
+
+# Post-clone setup for git repos
+# Creates isolated venvs for Python repos with requirements.txt.
+# Does NOT execute setup.py/pyproject.toml (supply-chain risk: arbitrary code as root).
+# Only installs pinned dependencies from requirements.txt into the venv.
+#
+# Wrapper creation cascade (first match wins):
+#   1. Python + requirements.txt → venv + symlink entry points
+#   2. Java JAR → java -jar wrapper
+#   3. Python script → python3 wrapper (case-insensitive, underscore/hyphen variants)
+#   4. Shell script → symlink (case-insensitive)
+#   5. Perl script → perl wrapper
+#   6. Ruby script → ruby wrapper
+#   7. Executable matching name → symlink (fallback for compiled tools)
+setup_git_repo() {
+    local dest="$1"
+    local name
+    name=$(basename "$dest")
+    local name_lower="${name,,}"
+    local name_under="${name_lower//-/_}"
+    _SETUP_GIT_DEP_WARN=false
+
+    # Early exit: don't clobber existing wrappers
+    [[ -f "$PIPX_BIN_DIR/$name_lower" ]] && return 0
+
+    # 1. Python project with requirements.txt
+    # The venv and ALL pip operations run as $SUDO_USER via _as_builder (not root).
+    # setup.py is not invoked directly, but `pip install -r requirements.txt` can still
+    # build sdists (running their setup.py/PEP-517 backend) — running as the unprivileged
+    # builder limits the blast radius of a malicious/compromised cloned-repo dependency,
+    # and keeps the venv owned by $SUDO_USER (so later privilege-dropped git pulls work).
+    # The final symlink into $PIPX_BIN_DIR stays as root (system path), matching how
+    # go/cargo/gem stage user-built binaries then symlink as root.
+    if [[ -f "$dest/requirements.txt" ]]; then
+        local _dest_esc; _dest_esc="$(_escape_single_quoted "$dest")"
+        if [[ ! -d "$dest/venv" ]]; then
+            _as_builder "python3 -m venv '$_dest_esc/venv'" 2>>"$LOG_FILE" || return 0
+        fi
+        _as_builder "'$_dest_esc/venv/bin/pip' install -q --upgrade pip" >> "$LOG_FILE" 2>&1 || true
+        # Replace abandoned pycrypto with drop-in pycryptodome (Python 3.12+ compat).
+        # Anchor the match to the bare 'pycrypto' package only — it must be followed
+        # by a version specifier ([<>=!~ ]) or end-of-line, so 'pycryptodome' and
+        # 'pycryptodomex' (where 'pycrypto' is followed by 'd') are left untouched.
+        if grep -qiE '^pycrypto([<>=!~ ]|$)' "$dest/requirements.txt" 2>/dev/null; then
+            _as_builder "sed -E 's/^pycrypto([<>=!~ ].*|$)/pycryptodome/I' '$_dest_esc/requirements.txt' > '$_dest_esc/requirements.txt.tmp' \
+                && mv '$_dest_esc/requirements.txt.tmp' '$_dest_esc/requirements.txt'" || true
+        fi
+        if ! _as_builder "'$_dest_esc/venv/bin/pip' install -q -r '$_dest_esc/requirements.txt'" >> "$LOG_FILE" 2>&1; then
+            # Some packages fail to build against the latest Python (e.g. lxml on 3.13).
+            # Try an older Python if available on the system.
+            local _fallback_ok=false
+            for _pyver in python3.13 python3.12 python3.11 python3.10; do
+                command -v "$_pyver" &>/dev/null || continue
+                log_info "Retrying $name with $_pyver (build failed on $(python3 --version 2>&1))..."
+                rm -rf "$dest/venv"
+                if _as_builder "$_pyver -m venv '$_dest_esc/venv'" 2>>"$LOG_FILE"; then
+                    _as_builder "'$_dest_esc/venv/bin/pip' install -q --upgrade pip" >> "$LOG_FILE" 2>&1 || true
+                    if _as_builder "'$_dest_esc/venv/bin/pip' install -q -r '$_dest_esc/requirements.txt'" >> "$LOG_FILE" 2>&1; then
+                        _fallback_ok=true
+                    fi
+                fi
+                [[ "$_fallback_ok" == "true" ]] && break
+            done
+            # Last resort: relax pinned versions (== → >=) and retry with system Python.
+            # Only triggers when strict pins exist and all older-Python fallbacks failed.
+            if [[ "$_fallback_ok" != "true" ]] && grep -qE '^[^#].*==' "$dest/requirements.txt" 2>/dev/null; then
+                log_info "Retrying $name with relaxed version pins (== → >=)..."
+                rm -rf "$dest/venv"
+                if _as_builder "python3 -m venv '$_dest_esc/venv'" 2>>"$LOG_FILE"; then
+                    _as_builder "'$_dest_esc/venv/bin/pip' install -q --upgrade pip" >> "$LOG_FILE" 2>&1 || true
+                    _as_builder "sed 's/==/>=/' '$_dest_esc/requirements.txt' > '$_dest_esc/requirements.relaxed.txt'" || true
+                    if _as_builder "'$_dest_esc/venv/bin/pip' install -q -r '$_dest_esc/requirements.relaxed.txt'" >> "$LOG_FILE" 2>&1; then
+                        _fallback_ok=true
+                        log_debug "Relaxed-pins install succeeded for $name"
+                    fi
+                    rm -f "$dest/requirements.relaxed.txt"
+                fi
+            fi
+            if [[ "$_fallback_ok" != "true" ]]; then
+                log_warn "pip install failed for $name (some dependencies may be missing)"
+                _SETUP_GIT_DEP_WARN=true
+            fi
+        fi
+
+        # Symlink venv entry points to PATH (system bin — runs as root, the correct boundary)
+        if [[ -d "$dest/venv/bin" ]]; then
+            for candidate in "$dest/venv/bin/$name" "$dest/venv/bin/$name_lower" "$dest/venv/bin/$name_under"; do
+                if [[ -f "$candidate" ]] && [[ -x "$candidate" ]]; then
+                    ln -sf "$candidate" "$PIPX_BIN_DIR/$(basename "$candidate")" 2>/dev/null || true
+                    return 0
+                fi
+            done
+        fi
+    fi
+
+    # 2. Java JAR → java -jar wrapper
+    local jar_file=""
+    for jar_candidate in "$dest/$name.jar" "$dest/$name_lower.jar" \
+                         "$dest/${name_under}.jar" "$dest/target/$name.jar" \
+                         "$dest/target/${name_lower}.jar" "$dest/build/$name.jar" \
+                         "$dest/build/${name_lower}.jar"; do
+        if [[ -f "$jar_candidate" ]]; then
+            jar_file="$jar_candidate"
+            break
+        fi
+    done
+    # Broader search (maxdepth 2) if exact matches miss
+    if [[ -z "$jar_file" ]]; then
+        jar_file=$(find "$dest" -maxdepth 2 -iname "*.jar" -type f 2>/dev/null | head -1)
+    fi
+    if [[ -n "$jar_file" ]]; then
+        cat > "$PIPX_BIN_DIR/$name_lower" 2>/dev/null << JARWRAP || true
+#!/bin/bash
+exec java -jar "$jar_file" "\$@"
+JARWRAP
+        chmod +x "$PIPX_BIN_DIR/$name_lower" 2>/dev/null || true
+        return 0
+    fi
+
+    # 3. Python script → python3 wrapper (case-insensitive, variants)
+    if [[ ! -d "$dest/venv" ]]; then
+        local py_file=""
+        for py_candidate in "$dest/$name.py" "$dest/$name_lower.py" \
+                            "$dest/${name_under}.py" "$dest/__main__.py"; do
+            if [[ -f "$py_candidate" ]]; then
+                py_file="$py_candidate"
+                break
+            fi
+        done
+        # Case-insensitive fallback: find <name>.py anywhere in top-level
+        if [[ -z "$py_file" ]]; then
+            py_file=$(find "$dest" -maxdepth 1 -iname "${name}.py" -type f 2>/dev/null | head -1)
+        fi
+        if [[ -n "$py_file" ]]; then
+            chmod +x "$py_file" 2>/dev/null || true
+            cat > "$PIPX_BIN_DIR/$name_lower" 2>/dev/null << PYWRAP || true
+#!/bin/bash
+exec python3 "$py_file" "\$@"
+PYWRAP
+            chmod +x "$PIPX_BIN_DIR/$name_lower" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    # 4. Shell script → symlink (case-insensitive, variants)
+    local sh_file=""
+    for sh_candidate in "$dest/$name.sh" "$dest/$name_lower.sh" \
+                        "$dest/${name_under}.sh"; do
+        if [[ -f "$sh_candidate" ]]; then
+            sh_file="$sh_candidate"
+            break
+        fi
+    done
+    if [[ -z "$sh_file" ]]; then
+        sh_file=$(find "$dest" -maxdepth 1 -iname "${name}.sh" -type f 2>/dev/null | head -1)
+    fi
+    if [[ -n "$sh_file" ]]; then
+        chmod +x "$sh_file" 2>/dev/null || true
+        ln -sf "$sh_file" "$PIPX_BIN_DIR/$name_lower" 2>/dev/null || true
+        return 0
+    fi
+
+    # 5. Perl script → perl wrapper
+    local pl_file=""
+    for pl_candidate in "$dest/$name.pl" "$dest/$name_lower.pl" \
+                        "$dest/${name_under}.pl"; do
+        if [[ -f "$pl_candidate" ]]; then
+            pl_file="$pl_candidate"
+            break
+        fi
+    done
+    if [[ -z "$pl_file" ]]; then
+        pl_file=$(find "$dest" -maxdepth 1 -iname "${name}.pl" -type f 2>/dev/null | head -1)
+    fi
+    if [[ -n "$pl_file" ]]; then
+        chmod +x "$pl_file" 2>/dev/null || true
+        cat > "$PIPX_BIN_DIR/$name_lower" 2>/dev/null << PLWRAP || true
+#!/bin/bash
+exec perl "$pl_file" "\$@"
+PLWRAP
+        chmod +x "$PIPX_BIN_DIR/$name_lower" 2>/dev/null || true
+        return 0
+    fi
+
+    # 6. Ruby script → ruby wrapper
+    local rb_file=""
+    for rb_candidate in "$dest/$name.rb" "$dest/$name_lower.rb" \
+                        "$dest/${name_under}.rb"; do
+        if [[ -f "$rb_candidate" ]]; then
+            rb_file="$rb_candidate"
+            break
+        fi
+    done
+    if [[ -z "$rb_file" ]]; then
+        rb_file=$(find "$dest" -maxdepth 1 -iname "${name}.rb" -type f 2>/dev/null | head -1)
+    fi
+    if [[ -n "$rb_file" ]]; then
+        chmod +x "$rb_file" 2>/dev/null || true
+        cat > "$PIPX_BIN_DIR/$name_lower" 2>/dev/null << RBWRAP || true
+#!/bin/bash
+exec ruby "$rb_file" "\$@"
+RBWRAP
+        chmod +x "$PIPX_BIN_DIR/$name_lower" 2>/dev/null || true
+        return 0
+    fi
+
+    # 7. Executable matching name → symlink (fallback for compiled tools)
+    local exec_file=""
+    for exec_candidate in "$dest/$name" "$dest/$name_lower" "$dest/$name_under" \
+                          "$dest/bin/$name" "$dest/bin/$name_lower" "$dest/bin/$name_under"; do
+        if [[ -f "$exec_candidate" ]] && [[ -x "$exec_candidate" ]]; then
+            exec_file="$exec_candidate"
+            break
+        fi
+    done
+    if [[ -n "$exec_file" ]]; then
+        ln -sf "$exec_file" "$PIPX_BIN_DIR/$name_lower" 2>/dev/null || true
+        return 0
+    fi
+}
+
+# Batch git clone with auto-setup
+# Usage: install_git_batch "Label" name1=url1 name2=url2 ...
+install_git_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a repos=("$@")
+    local total=${#repos[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_GIT:-false}" == "true" ]]; then
+        log_warn "Skipping ${label} (--skip-git)"
+        _report_method_total "Git" 0
+        return 0
+    fi
+
+    log_debug "install_git_batch: starting '$label' with $total items"
+    local _batch_start; _batch_start=$(date +%s)
+
+    local base_dir="$GITHUB_TOOL_DIR"
+    log_info "Installing ${label} ($total repos)..."
+    _report_method_total "Git" "$total"
+
+    if [[ "$PARALLEL_JOBS" -gt 1 ]]; then
+        # Parallel mode
+        local _results_dir; _results_dir=$(mktemp -d); _register_cleanup "$_results_dir"
+
+        for entry in "${repos[@]}"; do
+            local name="${entry%%=*}"
+            local url="${entry#*=}"
+            local dest="$base_dir/$name"
+
+            _wait_for_job_slot
+
+            (
+                trap '_release_job_slot' EXIT
+                _report_tool_start "Git" "$name"
+                local is_existing=false
+                [[ -d "$dest/.git" ]] && is_existing=true
+                # Provenance before we touch it — a clone we did not create stays put.
+                local _ver; _ver=$(_tree_provenance "$name" "$dest/.git")
+                if git_clone_or_pull "$url" "$dest" >> "$LOG_FILE" 2>&1; then
+                    _SETUP_GIT_DEP_WARN=false
+                    setup_git_repo "$dest" >> "$LOG_FILE" 2>&1 || log_warn "setup_git_repo failed for $(basename "$dest")"
+                    local _status="ok"
+                    [[ "$is_existing" == "true" ]] && _status="skip"
+                    [[ "$_SETUP_GIT_DEP_WARN" == "true" ]] && _status="${_status}:depwarn"
+                    printf '%s\n%s\n' "$_status" "$_ver" > "$_results_dir/$name"
+                    _report_tool_done "Git" "$name" "ok"
+                else
+                    log_error "Failed git: $name"
+                    printf 'fail\n\n' > "$_results_dir/$name"
+                    _report_tool_done "Git" "$name" "fail"
+                fi
+            ) &
+        done
+        wait
+
+        _collect_parallel_results "$_results_dir" "git"
+        # shellcheck disable=SC2154  # _par_failed/_par_skipped/_par_dep_warns set by _collect_parallel_results
+        local failed=$_par_failed skipped=$_par_skipped dep_warns=$_par_dep_warns
+    else
+        local current=0 failed=0 skipped=0 dep_warns=0
+        for entry in "${repos[@]}"; do
+            current=$((current + 1))
+            local name="${entry%%=*}"
+            local url="${entry#*=}"
+            local dest="$base_dir/$name"
+            show_progress "$current" "$total" "$name"
+            _report_tool_start "Git" "$name"
+            local is_existing=false
+            [[ -d "$dest/.git" ]] && is_existing=true
+            local _ver; _ver=$(_tree_provenance "$name" "$dest/.git")
+            if ! git_clone_or_pull "$url" "$dest" >> "$LOG_FILE" 2>&1; then
+                log_error "Failed git: $name$(_disk_hint)"
+                failed=$((failed + 1))
+                track_session "$name" "git" "failed" 2>/dev/null || true
+                _report_tool_done "Git" "$name" "fail"
+            else
+                # Auto-setup: venv, requirements, symlinks
+                _SETUP_GIT_DEP_WARN=false
+                setup_git_repo "$dest" >> "$LOG_FILE" 2>&1 || true
+                [[ "$_SETUP_GIT_DEP_WARN" == "true" ]] && dep_warns=$((dep_warns + 1))
+                [[ "$is_existing" == "true" ]] && skipped=$((skipped + 1))
+                if [[ "$is_existing" == "true" ]]; then
+                    _track_already_present "$name" "git"
+                else
+                    track_version "$name" "git" "$_ver"
+                fi
+                _report_tool_done "Git" "$name" "ok"
+            fi
+        done
+    fi
+
+    echo ""
+    local _git_summary="${label}: $((total - failed - skipped))/$total new, ${skipped} updated, ${failed} failed"
+    [[ "${dep_warns:-0}" -gt 0 ]] && _git_summary+=", ${dep_warns} with dependency warnings"
+    log_success "$_git_summary"
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_git_batch: '$label' completed in ${_batch_elapsed}s"
+    [[ "$failed" -gt 0 ]] && { TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed)); return 1; }
+    return 0
+}
+
+# GitHub API curl options (with optional token auth)
+# Sets the global _CURL_OPTS array — callers expand it as "${_CURL_OPTS[@]}".
+_CURL_OPTS=()
+# Security: GITHUB_TOKEN is passed via a temporary netrc file instead of a
+# command-line -H header to prevent the token from appearing in process listings
+# and bash debug trace (set -x) output written to the log file.
+_GH_NETRC_FILE=""
+# Lazy, idempotent: token discovery + netrc setup run only when an actual
+# GitHub network op is about to fire (first _gh_api_get / install_binary_releases
+# call), NOT at module-source time. This keeps --help/--version/--list-modules
+# and verify/update/remove from probing `gh auth token` or logging a token notice.
+_CURL_OPTS_DONE=false
+# Set inside the xtrace-suppressed block so later checks never expand the token.
+_GH_TOKEN_SET=false
+_setup_curl_opts() {
+    [[ "$_CURL_OPTS_DONE" == "true" ]] && return 0
+    _CURL_OPTS_DONE=true
+    # Suppress xtrace across the whole token-detection + netrc-write block so
+    # `set -x` (-v/--verbose) never traces the plaintext token — the assignment
+    # and the [[ -n "$GITHUB_TOKEN" ]] tests would otherwise echo it to the log.
+    local _xt=false; [[ $- == *x* ]] && _xt=true
+    { set +x; } 2>/dev/null
+    # --proto/--proto-redir '=https' + --tlsv1.2: no redirect may downgrade off HTTPS.
+    # Timeouts bound the small API/checksum requests so a stalled server can't hang the run.
+    _CURL_OPTS=(-sSL --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 30 --max-time 120)
+    # Auto-detect token from gh CLI if not explicitly set
+    if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+        if command -v gh &>/dev/null; then
+            GITHUB_TOKEN=$(gh auth token 2>/dev/null) || true
+        fi
+        # Under sudo, root's gh has no login; ask the invoking user's gh instead.
+        if [[ -z "${GITHUB_TOKEN:-}" && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+            GITHUB_TOKEN=$(_as_builder "gh auth token" 2>/dev/null) || true
+        fi
+        [[ -n "${GITHUB_TOKEN:-}" ]] && log_info "Using GitHub token from gh CLI (5000 req/hr API limit)"
+    fi
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        _GH_TOKEN_SET=true
+        _GH_NETRC_FILE=$(mktemp "${TMPDIR:-/tmp}/gh-netrc.XXXXXX")
+        chmod 600 "$_GH_NETRC_FILE"
+        printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > "$_GH_NETRC_FILE"
+        printf 'machine api.github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" >> "$_GH_NETRC_FILE"
+        _register_cleanup "$_GH_NETRC_FILE"
+        _CURL_OPTS+=(--netrc-file "$_GH_NETRC_FILE")
+    fi
+    # if-form (not `&& …`) so the function returns 0, not the test's exit status.
+    if [[ "$_xt" == "true" ]]; then { set -x; } 2>/dev/null; fi
+}
+
+# GitHub API response cache — avoids redundant API calls and rate limit exhaustion.
+# GitHub allows 60 requests/hour unauthenticated, 5000 with a token.
+# Cache dir is per-run. Must be initialized BEFORE forking parallel subshells
+# so all children share the same cache and rate-limit coordination files.
+_GH_API_CACHE_DIR=""
+_gh_api_cache_init() {
+    if [[ -z "$_GH_API_CACHE_DIR" ]]; then
+        _GH_API_CACHE_DIR=$(mktemp -d)
+        _register_cleanup "$_GH_API_CACHE_DIR"
+    fi
+}
+_gh_api_cache_cleanup() {
+    [[ -n "${_GH_API_CACHE_DIR:-}" && -d "${_GH_API_CACHE_DIR:-}" ]] && rm -rf "$_GH_API_CACHE_DIR"
+    _GH_API_CACHE_DIR=""
+}
+
+# _gh_api_get — cached GitHub API GET with coordinated rate-limit backoff.
+# Uses a shared lock file so parallel subshells don't all retry simultaneously
+# when the 60 req/hr unauthenticated limit is hit.
+# Usage: _gh_api_get "https://api.github.com/repos/owner/repo/releases/latest"
+# Outputs the response body. Returns 1 on failure.
+_gh_api_get() {
+    local url="$1"
+    _setup_curl_opts   # lazy, idempotent: build _CURL_OPTS on first network use
+    _gh_api_cache_init
+
+    # Cache key: sanitize URL to filename
+    local cache_key
+    cache_key=$(echo "$url" | sed 's|[/:?&=]|_|g')
+    local cache_file="$_GH_API_CACHE_DIR/$cache_key"
+
+    if [[ -f "$cache_file" ]]; then
+        cat "$cache_file"
+        return 0
+    fi
+
+    # Shared rate-limit state file — parallel jobs coordinate through this.
+    # Contains the epoch timestamp when the rate limit resets.
+    local _rl_file="$_GH_API_CACHE_DIR/.rate_limit_reset"
+
+    # If another job already detected a rate limit, wait for the reset time
+    # before even attempting the request (avoids wasting the retry).
+    if [[ -f "$_rl_file" ]]; then
+        local _reset_ts _now _wait_secs
+        read -r _reset_ts < "$_rl_file" 2>/dev/null || _reset_ts=0
+        _now=$(date +%s)
+        if [[ "$_reset_ts" -gt "$_now" ]]; then
+            _wait_secs=$((_reset_ts - _now + 2))  # +2s safety margin
+            [[ "$_wait_secs" -gt 120 ]] && _wait_secs=120
+            log_debug "_gh_api_get: rate-limited, waiting ${_wait_secs}s (reset at $_reset_ts)"
+            sleep "$_wait_secs"
+        fi
+    fi
+
+    local http_code _attempt
+    local tmp_body; tmp_body=$(mktemp); _register_cleanup "$tmp_body"
+    local tmp_headers; tmp_headers=$(mktemp); _register_cleanup "$tmp_headers"
+
+    for _attempt in 1 2 3; do
+        http_code=$(curl "${_CURL_OPTS[@]}" -D "$tmp_headers" -w "%{http_code}" \
+            -o "$tmp_body" "$url" 2>>"$LOG_FILE") || http_code="000"
+
+        if [[ "$http_code" == "200" ]]; then
+            break
+        fi
+
+        if [[ "$http_code" == "403" || "$http_code" == "429" ]]; then
+            # Parse X-RateLimit-Reset header (epoch timestamp) from GitHub response
+            local _reset_epoch
+            _reset_epoch=$(sed -n 's/^[Xx]-[Rr]ate[Ll]imit-[Rr]eset: *\([0-9]*\).*/\1/p' "$tmp_headers" | head -1)
+
+            if [[ -n "$_reset_epoch" && "$_reset_epoch" =~ ^[0-9]+$ ]]; then
+                # Write reset timestamp for other parallel jobs to see
+                echo "$_reset_epoch" > "$_rl_file" 2>/dev/null || true
+                local _now _wait
+                _now=$(date +%s)
+                _wait=$((_reset_epoch - _now + 2))
+                [[ "$_wait" -lt 10 ]] && _wait=10
+                [[ "$_wait" -gt 120 ]] && _wait=120
+            else
+                # No reset header — use progressive backoff
+                local _wait=$((30 * _attempt))
+            fi
+
+            if [[ "$_attempt" -eq 1 ]]; then
+                log_warn "GitHub API rate limit hit — waiting ${_wait}s before retry (attempt $_attempt/3)..."
+                [[ "$_GH_TOKEN_SET" != "true" ]] && \
+                    log_warn "Tip: export GITHUB_TOKEN=ghp_... to raise the limit from 60 to 5000 requests/hour"
+            else
+                log_debug "_gh_api_get: rate limit retry attempt $_attempt/3 — waiting ${_wait}s"
+            fi
+
+            sleep "$_wait"
+        else
+            # Non-rate-limit error (404, 500, network failure) — no retry
+            break
+        fi
+    done
+
+    rm -f "$tmp_headers"
+
+    if [[ "$http_code" != "200" ]]; then
+        log_debug "_gh_api_get: HTTP $http_code for $url$(_disk_hint)"
+        rm -f "$tmp_body"
+        return 1
+    fi
+
+    # Clear rate-limit state on success (limit may have reset)
+    rm -f "$_rl_file" 2>/dev/null || true
+
+    # Validate JSON before caching (guards against empty/HTML responses on 200)
+    if ! python3 -c "import json,sys; json.load(sys.stdin)" < "$tmp_body" 2>/dev/null; then
+        log_debug "_gh_api_get: invalid JSON response for $url"
+        rm -f "$tmp_body"
+        return 1
+    fi
+
+    # Cache and output (cache write is best-effort — disk may be full).
+    # Atomic write into the same dir: parallel same-repo subshells share this cache,
+    # so a reader must never see a half-written file.
+    local _cache_tmp
+    if _cache_tmp=$(mktemp "${cache_file}.XXXXXX" 2>/dev/null); then
+        cp "$tmp_body" "$_cache_tmp" 2>/dev/null && mv -f "$_cache_tmp" "$cache_file" 2>/dev/null || rm -f "$_cache_tmp" 2>/dev/null
+    fi
+    cat "$tmp_body"
+    rm -f "$tmp_body"
+}
+
+# Verify download against release checksum file
+# Looks for SHA256 checksum files in the same GitHub release and verifies
+# the downloaded file.  Returns 0 on match, 1 on mismatch or missing checksums.
+verify_github_checksum() {
+    local release_json="$1"
+    local file_path="$2"
+    local file_name="$3"
+
+    # Look for a checksum asset in the release. Prefer a per-file "<file>.sha256",
+    # then a shared checksums file; skip signatures (.sig/.asc/.pem/.pub/.cert),
+    # which contain no hash and would be treated as "no entry" → unverified.
+    local checksum_url
+    checksum_url=$(echo "$release_json" | FILE_NAME="$file_name" python3 -c "
+import json, os, sys
+data = json.load(sys.stdin)
+target = os.environ['FILE_NAME'].lower()
+SIG = ('.sig', '.asc', '.pem', '.pub', '.cert', '.crt', '.minisig')
+KEYS = ('checksums', 'sha256sums', 'sha256sum', 'sha256')
+per_file, shared = None, None
+for asset in data.get('assets', []):
+    name = asset.get('name', '').lower()
+    if name.endswith(SIG):
+        continue
+    if name in (target + '.sha256', target + '.sha256sum'):
+        per_file = asset['browser_download_url']
+        break
+    if shared is None and any(k in name for k in KEYS):
+        shared = asset['browser_download_url']
+print(per_file or shared or '')
+" 2>>"$LOG_FILE")
+
+    if [[ -z "$checksum_url" ]]; then
+        log_warn "No checksum file in release for $file_name — skipping verification"
+        return 1
+    fi
+
+    # Cache checksum files — multiple binaries from the same release share one file
+    _gh_api_cache_init
+    local _cksum_cache_key
+    _cksum_cache_key=$(echo "$checksum_url" | sed 's|[/:?&=]|_|g')
+    local _cksum_cache_file="$_GH_API_CACHE_DIR/checksum_${_cksum_cache_key}"
+
+    local checksums=""
+    if [[ -f "$_cksum_cache_file" ]]; then
+        checksums=$(< "$_cksum_cache_file")
+    else
+        # Repopulate _CURL_OPTS (-sSL) — _gh_api_get set it only inside its subshell, so the checksum curl otherwise skips redirect-follow.
+        _setup_curl_opts
+        # -f so an HTTP error page isn't captured as the checksum body.
+        checksums=$(curl -f "${_CURL_OPTS[@]}" "$checksum_url" 2>>"$LOG_FILE")
+        if [[ -n "$checksums" ]]; then
+            # Atomic write: parallel same-release subshells share this cache dir.
+            local _cksum_tmp
+            _cksum_tmp=$(mktemp "${_cksum_cache_file}.XXXXXX") \
+                && printf '%s\n' "$checksums" > "$_cksum_tmp" \
+                && mv -f "$_cksum_tmp" "$_cksum_cache_file"
+        fi
+    fi
+    if [[ -z "$checksums" ]]; then
+        log_warn "Failed to download checksums for $file_name"
+        return 1
+    fi
+
+    local expected_hash
+    expected_hash=$(echo "$checksums" | awk -v f="$file_name" '$2 == f || $2 == ("*" f) {print $1; exit}')
+    # A per-file "<file>.sha256" may hold just the bare hash with no filename.
+    # Accept it only when the whole file is a single lone-hash line, so a shared
+    # checksums file listing other files never falls back to an unrelated hash.
+    if [[ -z "$expected_hash" ]]; then
+        expected_hash=$(echo "$checksums" | awk '
+            /^[[:space:]]*$/ {next}
+            {lines++; if (NF==1 && $1 ~ /^[0-9A-Fa-f]{64}$/) {h=$1; hits++}}
+            END {if (lines==1 && hits==1) print h}')
+    fi
+    if [[ -z "$expected_hash" ]]; then
+        log_warn "No checksum entry for $file_name in checksums file"
+        return 1
+    fi
+
+    local actual_hash
+    actual_hash=$(sha256sum "$file_path" | awk '{print $1}')
+    # sha256sum prints lowercase; some upstream checksum files use uppercase.
+    if [[ "$actual_hash" == "${expected_hash,,}" ]]; then
+        log_success "Checksum verified: $file_name"
+        return 0
+    else
+        log_error "Checksum MISMATCH for $file_name (expected: ${expected_hash:0:16}…, got: ${actual_hash:0:16}…)"
+        # Signal hard failure — caller checks this marker file
+        touch "$(dirname "$file_path")/.checksum_mismatch"
+        return 1
+    fi
+}
+
+# Validate a release archive before extracting it as root. Only regular files
+# and directories are accepted; links and special members are rejected to
+# prevent traversal and link-pivot writes outside the staging directory.
+_validate_release_archive() {
+    local archive="$1"
+    local archive_type="$2"
+
+    python3 - "$archive" "$archive_type" <<'PY'
+import re
+import stat
+import sys
+import tarfile
+import zipfile
+from pathlib import PurePosixPath
+
+archive, archive_type = sys.argv[1:3]
+
+
+def reject(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def validate_name(name):
+    normalized = name.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or ".." in path.parts or re.match(r"^[A-Za-z]:", normalized):
+        reject(f"unsafe archive member path: {name}")
+
+
+try:
+    if archive_type == "tar":
+        with tarfile.open(archive, "r:*") as items:
+            for member in items:
+                validate_name(member.name)
+                if not (member.isfile() or member.isdir()):
+                    reject(f"unsupported archive member type: {member.name}")
+    elif archive_type == "zip":
+        with zipfile.ZipFile(archive) as items:
+            for member in items.infolist():
+                validate_name(member.filename)
+                mode = member.external_attr >> 16
+                file_type = stat.S_IFMT(mode)
+                if stat.S_ISLNK(mode):
+                    reject(f"symlink archive member rejected: {member.filename}")
+                if file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    reject(f"unsupported archive member type: {member.filename}")
+    else:
+        reject(f"unsupported archive type: {archive_type}")
+except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
+    reject(f"invalid {archive_type} archive: {exc}")
+PY
+}
+
+# Internal implementation for downloading GitHub release binaries.
+# Used by both download_github_release() and download_github_release_update().
+# Args: repo binary pattern dest_dir mode [archive_binary]
+#   mode=install: skip if already installed, track version, log success/failure
+#   mode=update:  force re-download, set _RELEASE_TAG, no version tracking (caller does it)
+_download_github_release_impl() {
+    local repo="$1"
+    local binary="$2"
+    local pattern="$3"
+    local dest_dir="${4:-$PIPX_BIN_DIR}"
+    local mode="${5:-install}"  # "install" or "update"
+    local archive_binary="${6:-$binary}"
+
+    # Ensure unzip is available for .zip archives
+    if ! command_exists unzip; then
+        [[ "$mode" == "install" ]] && log_warn "unzip not found — installing..."
+        pkg_install unzip >> "$LOG_FILE" 2>&1 || true
+    fi
+
+    # Adapt arch tokens in the pattern to match the current system architecture
+    if [[ "$SYS_ARCH" != "amd64" ]]; then
+        pattern="${pattern//amd64/$SYS_ARCH}"
+        pattern="${pattern//x86_64/$SYS_ARCH_ALT}"
+        pattern="${pattern//x64/$SYS_ARCH}"
+        # Replace standalone 64bit (used by gophish, evilginx)
+        pattern="${pattern//64bit/${SYS_ARCH}}"
+    fi
+
+    log_debug "_download_github_release_impl[$mode]: repo=$repo binary=$binary pattern=$pattern"
+    log_info "Downloading $binary from $repo releases..."
+    local api_url="https://api.github.com/repos/$repo/releases/latest"
+    local release_json
+    release_json=$(_gh_api_get "$api_url")
+    if [[ -z "$release_json" ]]; then
+        # /releases/latest 404s on prerelease-only repos (nightly builds, e.g.
+        # fuzzland/ityfuzz) — fall back to the newest release of any kind.
+        release_json=$(_gh_api_get "https://api.github.com/repos/$repo/releases" \
+            | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0]) if isinstance(r, list) and r else "")' 2>/dev/null || true)
+    fi
+    if [[ -z "$release_json" ]]; then
+        log_error "Could not fetch release info for $binary (no published release, API rate limit, or network error)$(_disk_hint)"
+        return 1
+    fi
+
+    # Extract actual release tag for version tracking
+    local release_tag=""
+    release_tag=$(echo "$release_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)
+
+    [[ "$mode" == "update" ]] && _RELEASE_TAG="$release_tag"
+
+    # Parse download URL using Python (portable — no grep -P dependency)
+    local download_url
+    download_url=$(echo "$release_json" | python3 -c "
+import json, sys, re
+pattern = sys.argv[1]
+data = json.load(sys.stdin)
+for asset in data.get('assets', []):
+    if re.search(pattern, asset.get('name', '')):
+        print(asset['browser_download_url'])
+        break
+" "$pattern" 2>>"$LOG_FILE")
+
+    if [[ -z "$download_url" ]]; then
+        log_error "Could not find release for $binary (pattern: $pattern)"
+        return 1
+    fi
+
+    log_debug "_download_github_release_impl[$mode]: URL=$download_url"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d); _register_cleanup "$tmp_dir"
+    local asset_name
+    asset_name=$(basename "$download_url")
+    # -f: HTTP errors (expired signed URL, 404/5xx) fail instead of writing the error
+    # body as the "binary". --proto/--tlsv1.2: no downgrade off HTTPS on redirect.
+    # --speed-limit/--speed-time abort a stalled transfer without hard-killing a slow-but-live one.
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 30 --speed-limit 1024 --speed-time 30 \
+            -o "$tmp_dir/$asset_name" "$download_url" >> "$LOG_FILE" 2>&1; then
+        log_error "Download failed: $binary$(_disk_hint)"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # Verify checksum — fail-closed on mismatch, warn-only if no checksums available
+    # --fast skips verification entirely (mutually exclusive with --require-checksums)
+    local _action_label="install"
+    [[ "$mode" == "update" ]] && _action_label="update"
+    if [[ "${FAST_MODE:-false}" != "true" ]] && ! verify_github_checksum "$release_json" "$tmp_dir/$asset_name" "$asset_name"; then
+        if [[ -f "$tmp_dir/.checksum_mismatch" ]]; then
+            log_error "Aborting $_action_label of $binary due to checksum mismatch"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+        if [[ "${REQUIRE_CHECKSUMS:-false}" == "true" ]]; then
+            log_error "Aborting $_action_label of $binary — no checksum file (--require-checksums)"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+        # Unverified .deb runs maintainer scripts as root; --production/--require-checksums enforces.
+        if [[ "$download_url" == *.deb ]]; then
+            log_warn "SECURITY: installing $binary (.deb) WITHOUT checksum verification — maintainer scripts run as root; use --production to require a checksum"
+        fi
+    fi
+
+    local content_root="$tmp_dir"
+    local is_archive=false
+    case "$download_url" in
+        *.tar.gz|*.tgz)
+            is_archive=true
+            content_root="$tmp_dir/extracted"
+            mkdir -p "$content_root"
+            if ! _validate_release_archive "$tmp_dir/$asset_name" tar >>"$LOG_FILE" 2>&1; then
+                log_error "Unsafe or invalid tar archive: $asset_name — aborting"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            # As root, tar would otherwise restore archive owners and group/world-write bits.
+            if ! tar --no-same-owner --no-same-permissions -xzf "$tmp_dir/$asset_name" -C "$content_root" 2>>"$LOG_FILE"; then
+                log_error "Failed to extract tar archive: $asset_name"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            ;;
+        *.zip)
+            is_archive=true
+            content_root="$tmp_dir/extracted"
+            mkdir -p "$content_root"
+            if ! _validate_release_archive "$tmp_dir/$asset_name" zip >>"$LOG_FILE" 2>&1; then
+                log_error "Unsafe or invalid zip archive: $asset_name — aborting"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            if ! unzip -qo "$tmp_dir/$asset_name" -d "$content_root" 2>>"$LOG_FILE"; then
+                log_error "Failed to extract zip archive: $asset_name"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            ;;
+        *.deb)
+            if [[ "$PKG_MANAGER" != "apt" && "$PKG_MANAGER" != "pkg" ]]; then
+                log_error "$binary is a .deb package — not supported on $PKG_MANAGER"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            if ! maybe_sudo dpkg -i "$tmp_dir/$asset_name" >> "$LOG_FILE" 2>&1; then
+                if ! maybe_sudo apt-get install -f -y >> "$LOG_FILE" 2>&1; then
+                    [[ "$mode" == "install" ]] && log_error "Failed to install $binary (.deb) — dpkg and dependency fix both failed"
+                    rm -rf "$tmp_dir"
+                    return 1
+                fi
+            fi
+            rm -rf "$tmp_dir"
+            if [[ "$mode" == "install" ]]; then
+                if command_exists "$binary"; then
+                    log_success "Installed: $binary (.deb)"
+                    track_version "$binary" "binary" "${release_tag:-latest}"
+                else
+                    log_error "Install failed: $binary (.deb) — binary not found after dpkg"
+                    return 1
+                fi
+            fi
+            return 0 ;;
+        *.jar)
+            if ! mkdir -p "$dest_dir" "$PIPX_BIN_DIR" \
+                || ! cp "$tmp_dir/$asset_name" "$dest_dir/$binary.jar"; then
+                log_error "Failed to stage $binary (.jar)"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            if ! cat > "$PIPX_BIN_DIR/$binary" << WRAPPER
+#!/bin/bash
+exec java -jar "$dest_dir/$binary.jar" "\$@"
+WRAPPER
+            then
+                log_error "Failed to create launcher for $binary"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            if ! chmod +x "$PIPX_BIN_DIR/$binary"; then
+                log_error "Failed to make launcher executable for $binary"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            rm -rf "$tmp_dir"
+            if [[ "$mode" == "install" ]]; then
+                log_success "Installed: $binary (.jar)"
+                track_version "$binary" "binary" "${release_tag:-latest}"
+            fi
+            return 0 ;;
+        *)
+            if [[ ! -f "$tmp_dir/$asset_name" || -L "$tmp_dir/$asset_name" ]] \
+                || ! chmod +x "$tmp_dir/$asset_name"; then
+                log_error "Downloaded asset for $binary is not a regular executable file"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
+            ;;
+    esac
+
+    # Archive assets must contain the declared binary.
+    local found
+    found=$(find "$content_root" \( -name "$archive_binary" -o -name "${archive_binary}.sh" \) -type f 2>/dev/null | head -1)
+    if [[ -z "$found" && "$is_archive" == "true" ]]; then
+        log_error "Archive $asset_name does not contain expected binary: $archive_binary"
+        rm -rf "$tmp_dir"
+        return 1
+    elif [[ -z "$found" ]]; then
+        found="$tmp_dir/$asset_name"
+    fi
+    if [[ ! -f "$found" || -L "$found" ]]; then
+        log_error "Refusing non-regular or symlinked binary candidate for $binary"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if [[ "$dest_dir" != "$PIPX_BIN_DIR" ]]; then
+        if ! mkdir -p "$dest_dir" "$PIPX_BIN_DIR" \
+            || ! cp -a "$content_root"/. "$dest_dir/" >>"$LOG_FILE" 2>&1; then
+            log_error "Failed to copy $binary release files to $dest_dir"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+        # cp -a keeps extracted modes (and unzip restores archive modes); strip setuid/setgid.
+        find "$dest_dir" -xdev -type f -perm /6000 -exec chmod a-s {} + 2>>"$LOG_FILE"
+        local dest_bin=""
+        for candidate in \
+            "$dest_dir/bin/$binary" \
+            "$dest_dir/bin/${binary}.sh" \
+            "$dest_dir/bin/$archive_binary" \
+            "$dest_dir/bin/${archive_binary}.sh" \
+            "$dest_dir/$binary" \
+            "$dest_dir/${binary}.sh" \
+            "$dest_dir/$archive_binary" \
+            "$dest_dir/${archive_binary}.sh"; do
+            if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+                dest_bin="$candidate"
+                break
+            fi
+        done
+        if [[ -z "$dest_bin" ]]; then
+            dest_bin=$(find "$dest_dir" \( -name "$archive_binary" -o -name "${archive_binary}.sh" \) -type f 2>/dev/null | head -1)
+        fi
+        if [[ -z "$dest_bin" || -L "$dest_bin" ]] \
+            || ! chmod +x "$dest_bin" \
+            || ! ln -sf "$dest_bin" "$PIPX_BIN_DIR/$binary"; then
+            log_error "Failed to expose expected binary $binary from $dest_dir"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+    else
+        if ! mkdir -p "$dest_dir" || ! install -m 755 "$found" "$dest_dir/$binary" 2>>"$LOG_FILE"; then
+            log_error "Failed to install $binary into $dest_dir"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+    fi
+    rm -rf "$tmp_dir"
+
+    if [[ "$mode" == "install" ]]; then
+        if command_exists "$binary"; then
+            log_success "Installed: $binary"
+            echo "${release_tag:-latest}" > "${dest_dir}/.${binary}.vtag"
+        elif [[ -f "$dest_dir/$binary" ]] || [[ -f "$dest_dir/bin/$binary" ]]; then
+            log_success "Installed: $binary (in $dest_dir)"
+            echo "${release_tag:-latest}" > "${dest_dir}/.${binary}.vtag"
+        else
+            log_error "Install failed: $binary"
+            return 1
+        fi
+    fi
+}
+
+# Download GitHub release binary (install mode — skips if already installed)
+# Usage: download_github_release "owner/repo" "binary_name" "filename_pattern" [dest_dir] [archive_binary]
+download_github_release() {
+    local repo="$1"
+    local binary="$2"
+    local pattern="$3"
+    local dest_dir="${4:-$PIPX_BIN_DIR}"
+    local archive_binary="${5:-$binary}"
+
+    if [[ "${SKIP_BINARY:-false}" == "true" ]]; then
+        log_warn "Skipping binary release: $binary (--skip-binary)"
+        return 0
+    fi
+    if command_exists "$binary"; then
+        log_success "Already installed: $binary"
+        # Skip track_version when called from parallel subshell — the parent
+        # _collect_parallel_results handles version tracking to avoid duplicates.
+        [[ "${_PARALLEL_CHILD:-false}" != "true" ]] && _track_already_present "$binary" "binary"
+        return 0
+    fi
+    _download_github_release_impl "$repo" "$binary" "$pattern" "$dest_dir" "install" "$archive_binary"
+    local _rc=$?
+    # Consume vtag sidecar for version tracking (written by _download_github_release_impl).
+    # Parallel children (_PARALLEL_CHILD=true) skip this — their vtag is consumed and removed
+    # by _collect_parallel_results; the non-parallel path consumes and removes it here.
+    local _vtag_file="${dest_dir}/.${binary}.vtag"
+    if [[ -f "$_vtag_file" ]] && [[ "${_PARALLEL_CHILD:-false}" != "true" ]]; then
+        track_version "$binary" "binary" "$(< "$_vtag_file")"
+        rm -f "$_vtag_file"
+    fi
+    return $_rc
+}
+
+# Download GitHub release binary (update mode — no skip)
+# Used by scripts/update.sh to force re-download when a new version is detected.
+# Returns the release tag via the global _RELEASE_TAG variable.
+_RELEASE_TAG=""
+download_github_release_update() {
+    local repo="$1"
+    local binary="$2"
+    local pattern="$3"
+    local dest_dir="${4:-$PIPX_BIN_DIR}"
+    local archive_binary="${5:-$binary}"
+    _RELEASE_TAG=""
+    _download_github_release_impl "$repo" "$binary" "$pattern" "$dest_dir" "update" "$archive_binary"
+}
+
+docker_pull() {
+    local image="$1"
+    local name="$2"
+
+    if ! command_exists docker; then
+        log_warn "Docker not installed — skipping $name"
+        return 1
+    fi
+
+    _start_spinner "Pulling Docker image: $name..."
+    if docker pull "$image" >> "$LOG_FILE" 2>&1; then
+        _stop_spinner
+        log_success "Docker: $name ready"
+        track_version "$name" "docker" "$image"
+    else
+        _stop_spinner
+        log_error "Docker pull failed: $name"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+        return 1
+    fi
+}
+
+# Version tracking — atomic write via temp file + rename (safe under parallel load)
+track_version() {
+    local tool="$1"
+    local method="$2"
+    local version="$3"
+    local version_file="${VERSION_FILE:-$SCRIPT_DIR/.versions}"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Session manifest: pre-existing tools log as "existing", never "installed" —
+    # --rollback acts only on "installed".
+    if [[ "$version" == "existing" ]]; then
+        track_session "$tool" "$method" "existing" 2>/dev/null || true
+    else
+        track_session "$tool" "$method" "installed" 2>/dev/null || true
+    fi
+
+    # Inner logic shared between locked and unlocked paths
+    _tv_write() {
+        if [[ ! -f "$version_file" ]]; then
+            echo "# tool|method|version|last_updated" > "$version_file"
+            chmod 644 "$version_file" 2>/dev/null || true
+        fi
+        local tmp_file
+        tmp_file=$(mktemp "${version_file}.XXXXXX")
+        grep -v "^${tool}|" "$version_file" > "$tmp_file" 2>/dev/null || true
+        echo "${tool}|${method}|${version}|${timestamp}" >> "$tmp_file"
+        chmod 644 "$tmp_file" 2>/dev/null || true
+        mv -f "$tmp_file" "$version_file"
+    }
+
+    # Use flock when available (parallel safety), fall back to mkdir-based lock
+    if command -v flock &>/dev/null; then
+        (
+            flock -x 200
+            _tv_write
+        ) 200>"${version_file}.lock"
+    else
+        # mkdir is atomic on all POSIX systems — use as spinlock fallback
+        local _lockdir="${version_file}.lockdir" _tries=0
+        # Clean up stale locks older than 30 seconds.
+        # `stat -c %Y` is GNU; `stat -f %m` is BSD/macOS. A failed stat keeps the
+        # lock fresh.
+        if [[ -d "$_lockdir" ]]; then
+            local _lock_mtime _now _lock_age=0
+            _now=$(date +%s)
+            _lock_mtime=$(stat -c %Y "$_lockdir" 2>/dev/null \
+                || stat -f %m "$_lockdir" 2>/dev/null \
+                || echo "$_now")
+            _lock_age=$(( _now - _lock_mtime ))
+            if [[ "$_lock_age" -gt 30 ]]; then
+                rmdir "$_lockdir" 2>/dev/null || rm -rf "$_lockdir" 2>/dev/null || true
+            fi
+        fi
+        while ! mkdir "$_lockdir" 2>/dev/null; do
+            _tries=$((_tries + 1))
+            [[ "$_tries" -ge 50 ]] && break  # give up after ~5s
+            sleep 0.1
+        done
+        _tv_write
+        rmdir "$_lockdir" 2>/dev/null || true
+    fi
+}
+
+build_from_source() {
+    local name="$1"
+    local url="$2"
+    local build_cmd="$3"
+    local dest="$GITHUB_TOOL_DIR/$name"
+
+    if [[ "${SKIP_SOURCE:-false}" == "true" ]]; then
+        log_warn "Skipping build-from-source: $name (--skip-source)"
+        return 0
+    fi
+
+    # Termux: build-from-source tools assume glibc/x86 — skip entirely
+    if [[ "$PKG_MANAGER" == "pkg" ]]; then
+        log_warn "Skipping build-from-source on Termux: $name"
+        return 0
+    fi
+
+    # Provenance before we touch it — a tree we did not create stays put on uninstall.
+    local is_existing=false
+    [[ -d "$dest" ]] && is_existing=true
+    local _ver; _ver=$(_tree_provenance "$name" "$dest")
+
+    _start_spinner "Building $name..."
+    if ! git_clone_or_pull "$url" "$dest" >> "$LOG_FILE" 2>&1; then
+        _stop_spinner
+        log_error "Clone failed: $name"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+        return 1
+    fi
+    # Build in a subshell (preserves caller's CWD) via _as_builder (build as user, not root); build_cmd is a trusted *_BUILD_CMDS string passed verbatim to `bash -c` — do NOT quote-escape it, that corrupts its own quotes (e.g. yafu/pemcrack `sed '...'` patches).
+    if (cd "$dest" && _as_builder "$build_cmd") >> "$LOG_FILE" 2>&1; then
+        _stop_spinner
+        log_success "Built: $name"
+        if [[ "$is_existing" == "true" ]]; then
+            _track_already_present "$name" "source"
+        else
+            track_version "$name" "source" "$_ver"
+        fi
+    else
+        _stop_spinner
+        log_error "Build failed: $name"
+        log_error "  Check the log for details: $LOG_FILE"
+        log_error "  Use --skip-source to skip all build-from-source tools"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+        return 1
+    fi
+}
+
+# Build every tool in <PREFIX>_BUILD_NAMES from the single-source-of-truth maps
+# <PREFIX>_BUILD_URLS (name->git url) and <PREFIX>_BUILD_CMDS (name->build command).
+# Used by install_module_* so the same url+command also drives scripts/update.sh
+# rebuilds (no divergence). Iterates BUILD_NAMES to preserve a deterministic order.
+build_module_from_source() {
+    local prefix="$1"
+    local names_var="${prefix}_BUILD_NAMES"
+    declare -p "$names_var" &>/dev/null || return 0
+    declare -n _bms_names="$names_var"
+    declare -n _bms_urls="${prefix}_BUILD_URLS"
+    declare -n _bms_cmds="${prefix}_BUILD_CMDS"
+    local _bms_n
+    for _bms_n in "${_bms_names[@]}"; do
+        build_from_source "$_bms_n" "${_bms_urls[$_bms_n]:-}" "${_bms_cmds[$_bms_n]:-}" || true
+    done
+}
+
+# Binary release registry (single source of truth)
+# Format: "repo|binary|pattern|dest_dir|archive_binary" (last two optional)
+# Used by modules for install and scripts/update.sh for updates.
+# These arrays use uppercased module names, not short module prefixes.
+# Hayabusa and MemProcFS call their 64-bit release assets x64 on Intel and
+# aarch64 on ARM. armv7 has no upstream release and is filtered below.
+_BINARY_RELEASE_ARCH_X64="x64"
+[[ "${SYS_ARCH:-amd64}" == "arm64" ]] && _BINARY_RELEASE_ARCH_X64="aarch64"
+
+BINARY_RELEASES_MISC=(
+    "DominicBreuker/pspy|pspy|pspy64$"
+    "trufflesecurity/trufflehog|trufflehog|linux_amd64\\.tar\\.gz"
+    "gitleaks/gitleaks|gitleaks|linux_x64\\.tar\\.gz"
+)
+# C2 + phishing binary releases — installed only when INCLUDE_C2=true (see modules/misc.sh).
+BINARY_RELEASES_MISC_C2=(
+    "gophish/gophish|gophish|linux-64bit"
+    "BishopFox/sliver|sliver-server|sliver-server_linux-amd64$"
+    "BishopFox/sliver|sliver-client|sliver-client_linux-amd64$"
+    "kgretzky/evilginx2|evilginx|linux-64bit\\.zip"
+)
+BINARY_RELEASES_NETWORKING=(
+    "nicocha30/ligolo-ng|ligolo-proxy|_proxy_.*_linux_amd64\\.tar\\.gz$||proxy"
+    "nicocha30/ligolo-ng|ligolo-agent|_agent_.*_linux_amd64\\.tar\\.gz$||agent"
+    "fatedier/frp|frpc|linux_amd64\\.tar\\.gz"
+    "fatedier/frp|frps|linux_amd64\\.tar\\.gz"
+    "ginuerzh/gost|gost|linux_amd64\\.tar\\.gz$"
+    "erebe/wstunnel|wstunnel|linux_amd64\\.tar\\.gz$"
+)
+BINARY_RELEASES_RECON=(
+    "Findomain/Findomain|findomain|findomain-linux\\.zip$"
+    "sundowndev/phoneinfoga|phoneinfoga|Linux_x86_64\\.tar\\.gz"
+)
+BINARY_RELEASES_WEB=(
+    "frohoff/ysoserial|ysoserial|ysoserial-all.jar|${GITHUB_TOOL_DIR}/cybersec-jars"
+    "assetnote/kiterunner|kr|linux_amd64"
+)
+BINARY_RELEASES_REVERSING=(
+    "0vercl0k/rp|rp-lin|rp-lin"
+    "java-decompiler/jd-gui|jd-gui|jd-gui.*\\.jar|${GITHUB_TOOL_DIR}/cybersec-jars"
+    "rizinorg/cutter|cutter|Linux-x86_64\\.AppImage$"
+    "horsicq/DIE-engine|detect-it-easy|Detect_It_Easy-.*-x86_64\\.AppImage$"
+)
+BINARY_RELEASES_FORENSICS=(
+    "WithSecureLabs/chainsaw|chainsaw|x86_64.*linux"
+    "ufrisk/MemProcFS|memprocfs|linux_${_BINARY_RELEASE_ARCH_X64}-.*\\.tar\\.gz$|${GITHUB_TOOL_DIR}/MemProcFS|memprocfs"
+    "WerWolv/ImHex|imhex|imhex-.*-x86_64\\.AppImage$"
+)
+BINARY_RELEASES_ENTERPRISE=(
+    "ropnop/kerbrute|kerbrute|linux_amd64"
+)
+BINARY_RELEASES_BLUETEAM=(
+    "Velocidex/velociraptor|velociraptor|linux-amd64$"
+    "threathunters-io/laurel|laurel|x86_64-glibc"
+    "mandiant/flare-floss|floss|linux\\.zip"
+    "mandiant/capa|capa|linux\\.zip"
+    "Neo23x0/Loki-RS|loki|loki-linux-x86_64.*\\.tar\\.gz"
+    "Yamato-Security/hayabusa|hayabusa|lin-${_BINARY_RELEASE_ARCH_X64}-gnu\\.zip$|${GITHUB_TOOL_DIR}/hayabusa|hayabusa-*-lin-${_BINARY_RELEASE_ARCH_X64}-gnu"
+    "osquery/osquery|osqueryi|linux_x86_64\\.tar\\.gz$"
+)
+BINARY_RELEASES_CONTAINERS=(
+    "anchore/grype|grype|linux_amd64\\.tar\\.gz"
+    "anchore/syft|syft|linux_amd64\\.tar\\.gz"
+    "Shopify/kubeaudit|kubeaudit|linux_amd64\\.tar\\.gz"
+    "kubescape/kubescape|kubescape|linux_amd64\\.tar\\.gz"
+    "cdk-team/CDK|cdk|cdk_linux_amd64"
+    "aquasecurity/trivy|trivy|Linux-64bit\\.tar\\.gz$"
+    "wagoodman/dive|dive|linux_amd64\\.tar\\.gz$"
+    "goodwithtech/dockle|dockle|Linux-64bit\\.tar\\.gz$"
+    "hadolint/hadolint|hadolint|hadolint-linux-x86_64$"
+    "controlplaneio/kubesec|kubesec|linux_amd64\\.tar\\.gz$"
+    "aquasecurity/kube-bench|kube-bench|linux_amd64\\.tar\\.gz$"
+    "tenable/terrascan|terrascan|Linux_x86_64\\.tar\\.gz$"
+)
+BINARY_RELEASES_MOBILE=(
+    "skylot/jadx|jadx|jadx.*\\.zip|${GITHUB_TOOL_DIR}/jadx"
+    "pxb1988/dex2jar|d2j-dex2jar|dex-tools.*\\.zip|${GITHUB_TOOL_DIR}/dex2jar"
+)
+BINARY_RELEASES_STEGO=(
+    "RickdeJager/stegseek|stegseek|\\.deb"
+)
+BINARY_RELEASES_WIRELESS=(
+    "Ragnt/AngryOxide|angryoxide|linux-x86_64\\.tar\\.gz$"
+)
+BINARY_RELEASES_BLOCKCHAIN=(
+    "crytic/medusa|crytic-medusa|medusa-linux-x64\\.tar\\.gz$||medusa"
+    "Jon-Becker/heimdall-rs|heimdall|heimdall-linux-amd64$"
+    "fuzzland/ityfuzz|ityfuzz|ityfuzz_nightly_linux_amd64\\.tar\\.gz$"
+)
+
+# Docker image registry (single source of truth)
+# Format: "image|label"
+# Used by modules for install and scripts for update/remove/verify.
+ALL_DOCKER_IMAGES=(
+    "beefproject/beef|BeEF"
+    "bcsecurity/empire|Empire"
+    "opensecurity/mobile-security-framework-mobsf|MobSF"
+    "spiderfoot/spiderfoot|SpiderFoot"
+    "specterops/bloodhound|BloodHound CE"
+    "strangebee/thehive:latest|TheHive"
+    "thehiveproject/cortex:latest|Cortex"
+    "trailofbits/echidna|Echidna"
+    "vxcontrol/pentagi:latest|PentAGI"
+    "zeek/zeek:latest|Zeek"
+    "wagga40/zircolite:latest|Zircolite"
+    "checkmarx/kics:latest|KICS"
+    "sagemath/sagemath:latest|SageMath"
+)
+
+# install_npm_batch — install global npm packages (label + package names).
+# Node/npm is bootstrapped on demand via ensure_node (lib/shared.sh). Skipped
+# under --skip-source and on any host without a working Node toolchain.
+# Installs are unpinned by design (same trust model as go/pipx/cargo/gem); npm
+# verifies each tarball against the registry integrity hash, and lockfile pinning
+# does not apply to global CLI installs.
+install_npm_batch() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local label="$1"; shift
+    local -a pkgs=("$@")
+    local total=${#pkgs[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_SOURCE:-false}" == "true" ]]; then
+        log_warn "Skipping ${label} (--skip-source)"
+        _report_method_total "npm" 0
+        return 0
+    fi
+    if ! ensure_node; then
+        # Count as failures (consistent with go/cargo) so a missing toolchain is
+        # surfaced in the summary rather than silently dropped.
+        log_error "Node.js/npm not available — cannot install ${label}"
+        _report_method_total "npm" "$total"
+        TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + total))
+        return 1
+    fi
+
+    log_info "Installing ${label} ($total npm tools)..."
+    _report_method_total "npm" "$total"
+    local current=0
+    for pkg in "${pkgs[@]}"; do
+        current=$((current + 1))
+        show_progress "$current" "$total" "$pkg"
+        _report_tool_start "npm" "$pkg"
+        # Record a package the host already had as "existing" so remove.sh leaves it.
+        if npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
+            _track_already_present "$pkg" "npm"
+            _report_tool_done "npm" "$pkg" "skip"
+            continue
+        fi
+        if npm install -g "$pkg" >> "$LOG_FILE" 2>&1; then
+            log_success "npm: $pkg"
+            track_version "$pkg" "npm" "latest"
+            _report_tool_done "npm" "$pkg" "ok"
+        else
+            log_error "Failed npm: $pkg"
+            TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+            _report_tool_done "npm" "$pkg" "fail"
+        fi
+    done
+}
+
+# remove_npm_packages — uninstall global npm packages, skipping absent ones.
+# The global package list is authoritative because a package's executable name
+# does not always match the package name (see _NPM_BIN_NAMES). Increments
+# REMOVAL_FAILURES for each failed uninstall, mirroring the other remove paths.
+remove_npm_packages() {
+    local -a pkgs=("$@")
+    [[ ${#pkgs[@]} -eq 0 ]] && return 0
+    if ! command_exists npm; then
+        log_warn "npm not found — skipping npm package removal"
+        return 0
+    fi
+
+    local removed=0 skipped=0 pkg
+    for pkg in "${pkgs[@]}"; do
+        if npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
+            if npm uninstall -g "$pkg" >> "$LOG_FILE" 2>&1; then
+                removed=$((removed + 1))
+            else
+                log_warn "Failed to remove npm package: $pkg"
+                REMOVAL_FAILURES=$((${REMOVAL_FAILURES:-0} + 1))
+            fi
+        else
+            log_debug "Skipping npm package $pkg (not installed)"
+            skipped=$((skipped + 1))
+        fi
+    done
+    log_info "npm packages: $removed removed, $skipped already removed"
+    return 0
+}
+
+# install_binary_releases — install all binary releases from a registry array.
+# Usage: install_binary_releases "${BINARY_RELEASES_MISC[@]}"
+# Supports parallel downloads when PARALLEL_JOBS > 1 (~3-4x faster, network I/O bound).
+# Skipped on Termux/Android — most GitHub release assets are Linux/glibc and won't run.
+install_binary_releases() {
+    [[ "${_SKIP_BATCH_REINSTALL:-false}" == "true" ]] && return 0
+    local -a entries=("$@")
+    local total=${#entries[@]}
+    [[ "$total" -eq 0 ]] && return 0
+
+    if [[ "${SKIP_BINARY:-false}" == "true" ]]; then
+        log_warn "Skipping binary releases (--skip-binary)"
+        _report_method_total "Binary" 0
+        return 0
+    fi
+
+    # Termux: GitHub release binaries are almost always Linux/glibc — skip entirely
+    if [[ "$PKG_MANAGER" == "pkg" ]]; then
+        log_warn "Skipping $total binary release(s) on Termux (Linux/glibc binaries)"
+        _report_method_total "Binary" 0
+        return 0
+    fi
+
+    # Non-dpkg distros: drop .deb-only entries (e.g. stegseek) before downloading
+    # rather than failing on dpkg afterwards.
+    # An entry that can also match a tarball must not put ".deb" in its pattern.
+    if [[ "$PKG_MANAGER" != "apt" && "$PKG_MANAGER" != "pkg" ]]; then
+        local -a _deb_filtered=()
+        for _entry in "${entries[@]}"; do
+            IFS='|' read -r _repo _binary _pattern _dest _archive_binary <<< "$_entry"
+            if [[ "$_pattern" == *".deb"* ]]; then
+                log_warn "Skipping $_binary — upstream ships only a .deb, unusable on $PKG_MANAGER"
+            else
+                _deb_filtered+=("$_entry")
+            fi
+        done
+        if [[ ${#_deb_filtered[@]} -gt 0 ]]; then
+            entries=("${_deb_filtered[@]}")
+        else
+            entries=()
+        fi
+        total=${#entries[@]}
+        [[ "$total" -eq 0 ]] && return 0
+    fi
+
+    # ARM: filter out x86-only binary releases that have no ARM builds
+    if [[ "$IS_ARM" == "true" ]]; then
+        local -a _arm_filtered=()
+        local -a _arm_skip_bins=(pspy rp-lin chainsaw velociraptor laurel)
+        if [[ "$SYS_ARCH" == "armv7" ]]; then
+            _arm_skip_bins+=(hayabusa memprocfs)
+        fi
+        for _entry in "${entries[@]}"; do
+            IFS='|' read -r _repo _binary _pattern _dest _archive_binary <<< "$_entry"
+            local _skip=false
+            for _sb in "${_arm_skip_bins[@]}"; do
+                if [[ "$_binary" == "$_sb" ]]; then
+                    _skip=true
+                    break
+                fi
+            done
+            if [[ "$_skip" == "true" ]]; then
+                log_warn "Skipping x86-only binary on ARM: $_binary"
+            else
+                _arm_filtered+=("$_entry")
+            fi
+        done
+        if [[ ${#_arm_filtered[@]} -gt 0 ]]; then
+            entries=("${_arm_filtered[@]}")
+        else
+            entries=()
+        fi
+        total=${#entries[@]}
+        [[ "$total" -eq 0 ]] && return 0
+    fi
+
+    log_debug "install_binary_releases: starting with $total items, PARALLEL_JOBS=$PARALLEL_JOBS"
+    local _batch_start; _batch_start=$(date +%s)
+    _report_method_total "Binary" "$total"
+
+    # Build _CURL_OPTS (token netrc) in the parent BEFORE forking so children
+    # inherit it — the checksum curl in download_github_release runs in subshells.
+    _setup_curl_opts
+    # Initialize shared API cache before forking — all subshells inherit the same dir
+    _gh_api_cache_init
+
+    if [[ "$PARALLEL_JOBS" -gt 1 ]]; then
+        # Parallel mode
+        local _results_dir; _results_dir=$(mktemp -d); _register_cleanup "$_results_dir"
+
+        for _entry in "${entries[@]}"; do
+            IFS='|' read -r _repo _binary _pattern _dest _archive_binary <<< "$_entry"
+            _dest="${_dest:-$PIPX_BIN_DIR}"
+
+            # Skip-check in main process (avoid spawning a job for already-installed tools)
+            if command_exists "$_binary"; then
+                log_success "Already installed: $_binary"
+                printf 'skip\nexisting\n' > "$_results_dir/$_binary"
+                _report_tool_done "Binary" "$_binary" "skip"
+                continue
+            fi
+
+            _wait_for_job_slot
+
+            (
+                trap '_release_job_slot' EXIT
+                local _PARALLEL_CHILD=true
+                _report_tool_start "Binary" "$_binary"
+                if download_github_release "$_repo" "$_binary" "$_pattern" "$_dest" "${_archive_binary:-$_binary}" >> "$LOG_FILE" 2>&1; then
+                    # Read version from vtag sidecar (written by _download_github_release_impl)
+                    local _stored_ver=""
+                    local _vtag_file="${_dest}/.${_binary}.vtag"
+                    [[ -f "$_vtag_file" ]] && { _stored_ver=$(< "$_vtag_file"); rm -f "$_vtag_file"; }
+                    printf 'ok\n%s\n' "${_stored_ver:-latest}" > "$_results_dir/$_binary"
+                    _report_tool_done "Binary" "$_binary" "ok"
+                else
+                    log_error "Failed binary: $_binary ($_repo)"
+                    printf 'fail\n\n' > "$_results_dir/$_binary"
+                    _report_tool_done "Binary" "$_binary" "fail"
+                fi
+            ) &
+        done
+        wait
+
+        _collect_parallel_results "$_results_dir" "binary"
+        # shellcheck disable=SC2154  # _par_failed/_par_skipped set by _collect_parallel_results
+        local failed=$_par_failed skipped=$_par_skipped
+        [[ "$failed" -gt 0 ]] && TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed))
+        log_success "Binary releases: $((total - failed - skipped))/$total new, ${skipped} existing, ${failed} failed"
+    else
+        # Sequential mode
+        local failed=0
+        for _entry in "${entries[@]}"; do
+            IFS='|' read -r _repo _binary _pattern _dest _archive_binary <<< "$_entry"
+            _report_tool_start "Binary" "$_binary"
+            if ! download_github_release "$_repo" "$_binary" "$_pattern" "${_dest:-$PIPX_BIN_DIR}" "${_archive_binary:-$_binary}"; then
+                failed=$((failed + 1))
+                _report_tool_done "Binary" "$_binary" "fail"
+            else
+                _report_tool_done "Binary" "$_binary" "ok"
+            fi
+        done
+        [[ "$failed" -gt 0 ]] && TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + failed))
+    fi
+
+    local _batch_elapsed=$(( $(date +%s) - _batch_start ))
+    log_debug "install_binary_releases: completed in ${_batch_elapsed}s"
+}
+
+install_searchsploit_symlink() {
+    if [[ -f "$GITHUB_TOOL_DIR/exploitdb/searchsploit" ]]; then
+        ln -sf "$GITHUB_TOOL_DIR/exploitdb/searchsploit" "$PIPX_BIN_DIR/searchsploit" 2>/dev/null
+    fi
+}
+
+# Metasploit
+# Install order: apt (Kali/Parrot repos) → snap → apt.metasploit.com repo (GPG-verified)
+install_metasploit() {
+    if command_exists msfconsole; then
+        log_success "Metasploit already installed"
+        _track_already_present "metasploit" "system"
+        return 0
+    fi
+
+    log_info "Installing Metasploit Framework..."
+
+    # 1) Prefer system package (available on Debian/Kali/Parrot with their repos)
+    if [[ "$PKG_MANAGER" == "apt" ]]; then
+        _start_spinner "Installing Metasploit via apt..."
+        if pkg_install metasploit-framework >> "$LOG_FILE" 2>&1; then
+            _stop_spinner
+            log_success "Metasploit installed via apt"
+            track_version "metasploit" "$PKG_MANAGER" "system"
+            return 0
+        fi
+        _stop_spinner
+        log_warn "metasploit-framework not in apt repos — trying snap"
+    fi
+
+    # 2) Snap — primary method for standard Ubuntu/Debian (not available in Docker)
+    if [[ "${SKIP_SOURCE:-false}" != "true" ]] && [[ "$IS_DOCKER" != "true" ]]; then
+        if ensure_snap; then
+            _start_spinner "Installing Metasploit via snap..."
+            if snap_install metasploit-framework >> "$LOG_FILE" 2>&1; then
+                _stop_spinner
+                log_success "Metasploit installed via snap"
+                track_version "metasploit" "snap" "latest"
+                return 0
+            fi
+            _stop_spinner
+            log_warn "Metasploit snap install failed — trying apt.metasploit.com repo"
+        else
+            log_warn "snap not available — trying apt.metasploit.com repo"
+        fi
+    fi
+
+    # 3) apt.metasploit.com with a verified keyring. No curl-pipe fallback.
+    if [[ "$PKG_MANAGER" == "apt" ]]; then
+        log_info "Trying apt.metasploit.com repo setup (GPG-verified)..."
+        local _keyring="/usr/share/keyrings/metasploit-framework.gpg"
+        local _tmp_key
+        _tmp_key=$(mktemp); _register_cleanup "$_tmp_key"
+        if curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 30 --max-time 120 "https://apt.metasploit.com/metasploit-framework.gpg.key" -o "$_tmp_key" 2>>"$LOG_FILE"; then
+            if [[ ! -s "$_tmp_key" ]]; then
+                log_error "Metasploit GPG key download produced empty file"
+                rm -f "$_tmp_key"
+                return 1
+            fi
+            # Verify GPG key fingerprint before trusting
+            # Try --show-keys (GnuPG >= 2.2.8), fall back to show-only import (>= 2.1.14)
+            local _fp="" _keys=""
+            local _gpg_tmp; _gpg_tmp=$(mktemp -d); _register_cleanup "$_gpg_tmp"
+            _keys=$(gpg --homedir "$_gpg_tmp" --with-colons --show-keys "$_tmp_key" 2>/dev/null) \
+                || _keys=$(gpg --homedir "$_gpg_tmp" --with-colons --import-options show-only --import "$_tmp_key" 2>/dev/null) \
+                || true
+            rm -rf "$_gpg_tmp"
+            # signed-by= trusts every key in the keyring, so the file must hold only the pinned key.
+            if [[ "$(grep -c '^pub:' <<< "$_keys")" == "1" ]]; then
+                _fp=$(awk -F: '/^fpr:/{print $10; exit}' <<< "$_keys")
+            fi
+            if [[ -z "$_fp" ]]; then
+                log_error "Could not extract a single Metasploit GPG key fingerprint — skipping repo setup"
+                rm -f "$_tmp_key"
+                return 1
+            fi
+            if [[ "$_fp" != "CEC43851245B2886296060A827FF0E3B4BAE526D" ]]; then
+                log_error "Metasploit GPG key fingerprint mismatch (got: $_fp) — refusing to trust"
+                rm -f "$_tmp_key"
+                return 1
+            fi
+            gpg --dearmor < "$_tmp_key" 2>/dev/null > "$_keyring"
+        fi
+        rm -f "$_tmp_key"
+        if [[ -f "$_keyring" ]]; then
+            # "xenial" is Rapid7's universal release name — it works on all Debian/Ubuntu distros
+            echo "deb [signed-by=$_keyring] https://apt.metasploit.com/ xenial main" \
+                > /etc/apt/sources.list.d/metasploit-framework.list
+            pkg_update >> "$LOG_FILE" 2>&1
+            _start_spinner "Installing Metasploit via apt.metasploit.com..."
+            if pkg_install metasploit-framework >> "$LOG_FILE" 2>&1; then
+                _stop_spinner
+                log_success "Metasploit installed via apt.metasploit.com"
+                track_version "metasploit" "$PKG_MANAGER" "latest"
+                return 0
+            fi
+            _stop_spinner
+        fi
+    fi
+
+    if [[ "$PKG_MANAGER" != "apt" ]]; then
+        log_error "Metasploit automatic install requires apt (Debian/Ubuntu/Kali/Parrot)."
+        log_info "  On $PKG_MANAGER, install manually from https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
+        log_info "  or build from source: https://github.com/rapid7/metasploit-framework/wiki/Setting-Up-a-Metasploit-Development-Environment"
+    else
+        log_error "All Metasploit installation methods failed"
+    fi
+    TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+    return 1
+}
+
+
+# OWASP ZAP
+install_zap() {
+    if command_exists zaproxy; then
+        log_success "OWASP ZAP already installed"
+        _track_already_present "zaproxy" "snap"
+        return 0
+    fi
+    if [[ "$IS_DOCKER" == "true" ]]; then
+        log_warn "OWASP ZAP requires snap (unavailable in Docker) — skipping"
+        return 0
+    fi
+    if snap_available; then
+        _start_spinner "Installing OWASP ZAP via snap..."
+        if snap_install zaproxy --classic >> "$LOG_FILE" 2>&1; then
+            _stop_spinner
+            log_success "OWASP ZAP installed"
+            track_version "zaproxy" "snap" "latest"
+        else
+            _stop_spinner
+            log_error "OWASP ZAP snap install failed"
+            TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+            return 1
+        fi
+    else
+        log_warn "snap not available — install OWASP ZAP manually"
+    fi
+}
+
+# Uninstall helpers for non-batch install methods
+# Shared by install.sh --rollback and scripts/remove.sh. Idempotent; return 1 only
+# for a name the helper does not know, so callers can fall through.
+
+# remove_source_build — build_from_source builds in place under $GITHUB_TOOL_DIR.
+remove_source_build() {
+    local name="$1"
+    [[ -n "$name" ]] || return 1
+    [[ -d "$GITHUB_TOOL_DIR/$name" ]] && rm -rf "${GITHUB_TOOL_DIR:?}/$name"
+    rm -f "$PIPX_BIN_DIR/$name" "$PIPX_BIN_DIR/${name,,}" 2>/dev/null || true
+    # Report the post-condition: callers drop the .versions row on success, and a
+    # tree that survived must not be recorded as removed.
+    [[ ! -e "$GITHUB_TOOL_DIR/$name" ]]
+}
+
+# remove_snap_tool — metasploit falls back to pkg_remove: apt.metasploit.com ships
+# it as a normal package when snap is absent.
+remove_snap_tool() {
+    local snap_name
+    case "$1" in
+        metasploit|metasploit-framework) snap_name="metasploit-framework" ;;
+        zaproxy)                         snap_name="zaproxy" ;;
+        *) return 1 ;;
+    esac
+    if snap_available && snap list "$snap_name" &>/dev/null; then
+        snap remove "$snap_name" >> "$LOG_FILE" 2>&1 || true
+        snap list "$snap_name" &>/dev/null && return 1
+    elif [[ "$snap_name" == "metasploit-framework" ]] && pkg_is_installed "$snap_name"; then
+        pkg_remove "$snap_name" >> "$LOG_FILE" 2>&1 || true
+        pkg_is_installed "$snap_name" && return 1
+    fi
+    return 0
+}
+
+# remove_special_tool — installers that write outside $GITHUB_TOOL_DIR.
+# Returns 0 when the tool is gone, 1 for a name it does not know, and 2 when it
+# tried and something survived — callers must not record 2 as removed.
+remove_special_tool() {
+    local _bin _dir _vname
+    case "$1" in
+        foundry)
+            # Installs under the invoking user's home ($HOME is /root under sudo).
+            # The [[ -L ]] guard leaves a real go-installed chisel alone.
+            for _bin in foundryup forge cast anvil chisel; do
+                [[ -L "$PIPX_BIN_DIR/$_bin" ]] && rm -f "$PIPX_BIN_DIR/$_bin" 2>/dev/null
+            done
+            _dir="$(_builder_home)/.foundry"
+            [[ -d "$_dir" ]] && rm -rf "$_dir"
+            ;;
+        steampipe)
+            rm -f "$PIPX_BIN_DIR/steampipe" 2>/dev/null || true
+            _dir="$(_builder_home)/.steampipe"
+            [[ -d "$_dir" ]] && rm -rf "$_dir"
+            ;;
+        patator)
+            rm -f "$PIPX_BIN_DIR/patator" 2>/dev/null || true
+            _dir="$GITHUB_TOOL_DIR/patator"
+            [[ -d "$_dir" ]] && rm -rf "${GITHUB_TOOL_DIR:?}/patator"
+            ;;
+        ctf-*-venv)
+            # ctf-<name>-venv → the run_script venv at <venvs dir>/<name>. An
+            # empty <name> would resolve to the venvs root itself, so refuse it
+            # rather than rm -rf every venv the user has.
+            _vname="${1#ctf-}"; _vname="${_vname%-venv}"
+            [[ -z "$_vname" ]] && return 1
+            _dir="${CYBERSEC_MCP_VENVS_DIR:-$(_builder_home)/.ctf-venvs}/$_vname"
+            [[ -d "$_dir" ]] && rm -rf "${_dir:?}"
+            ;;
+        *) return 1 ;;
+    esac
+    [[ -n "${_dir:-}" && -e "$_dir" ]] && return 2
+    return 0
+}
+
+# remove_docker_tool — map a tracked label back to its image via ALL_DOCKER_IMAGES.
+remove_docker_tool() {
+    local label="$1" entry img lbl
+    command_exists docker || return 0
+    for entry in "${ALL_DOCKER_IMAGES[@]}"; do
+        IFS='|' read -r img lbl <<< "$entry"
+        if [[ "$lbl" == "$label" || "${img%%:*}" == "$label" ]]; then
+            docker rmi "$img" >> "$LOG_FILE" 2>&1 || true
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Provenance filter
+# track_version records pre-existing tools with version "existing"; the uninstall
+# paths read that back so they never remove what the user had first.
+
+declare -gA _PREEXISTING_TOOLS=()
+_PREEXISTING_LOADED=false
+
+# _version_known — .versions has a row for this tool, i.e. a previous run of THIS
+# installer created it.
+_version_known() {
+    local version_file="${VERSION_FILE:-$SCRIPT_DIR/.versions}"
+    [[ -f "$version_file" ]] || return 1
+    awk -F'|' -v t="$1" '$1==t{f=1} END{exit !f}' "$version_file" 2>/dev/null
+}
+
+# _is_preexisting — the tool is already recorded as pre-existing. The label has to
+# be sticky: on a second run everything is installed, so re-deriving it from the
+# system state alone would flip the user's own tools to removable.
+_is_preexisting() {
+    local version_file="${VERSION_FILE:-$SCRIPT_DIR/.versions}"
+    [[ -f "$version_file" ]] || return 1
+    awk -F'|' -v t="$1" '$1==t && $3=="existing"{f=1} END{exit !f}' "$version_file" 2>/dev/null
+}
+
+# _track_already_present — record a tool found already on the system. It counts as
+# "existing" (protected from uninstall) only when we did not install it ourselves;
+# otherwise it stays ours, so a second run cannot relabel it untouchable.
+_track_already_present() {
+    local tool="$1" method="$2"
+    if ! _version_known "$tool" || _is_preexisting "$tool"; then
+        track_version "$tool" "$method" "existing"
+    else
+        # Present from an earlier toolkit run, but not installed by this session.
+        track_session "$tool" "$method" "existing" 2>/dev/null || true
+    fi
+}
+
+# _tree_provenance — "existing" when the directory predates this installer, else
+# "HEAD". Must run BEFORE track_version writes the tool's row.
+_tree_provenance() {
+    local name="$1" dir="$2"
+    if [[ -d "$dir" ]] && { ! _version_known "$name" || _is_preexisting "$name"; }; then
+        echo "existing"
+    else
+        echo "HEAD"
+    fi
+}
+
+_load_preexisting() {
+    [[ "$_PREEXISTING_LOADED" == "true" ]] && return 0
+    _PREEXISTING_LOADED=true
+    local version_file="${VERSION_FILE:-$SCRIPT_DIR/.versions}"
+    [[ -f "$version_file" ]] || return 0
+    local _t _m _v
+    while IFS='|' read -r _t _m _v _; do
+        [[ -z "$_t" || "$_t" == \#* ]] && continue
+        [[ "$_v" == "existing" ]] && _PREEXISTING_TOOLS["$_t"]=1
+    done < "$version_file"
+    log_debug "_load_preexisting: ${#_PREEXISTING_TOOLS[@]} pre-existing tool(s) in $version_file"
+}
+
+# filter_preexisting — drop entries recorded as pre-existing. Package names must go
+# through fixup_package_names first: .versions stores the distro-specific name.
+# Usage: filter_preexisting <array_nameref> [label]
+filter_preexisting() {
+    local -n __pf_arr=$1
+    local label="${2:-tools}"
+    _load_preexisting
+    [[ ${#_PREEXISTING_TOOLS[@]} -eq 0 ]] && return 0
+    local -a kept=() skipped=()
+    local item
+    for item in "${__pf_arr[@]}"; do
+        if [[ -n "${_PREEXISTING_TOOLS[$item]:-}" ]]; then
+            skipped+=("$item")
+        else
+            kept+=("$item")
+        fi
+    done
+    if [[ ${#skipped[@]} -gt 0 ]]; then
+        log_info "Preserving ${#skipped[@]} pre-existing ${label}: ${skipped[*]}"
+    fi
+    if [[ ${#kept[@]} -gt 0 ]]; then
+        __pf_arr=("${kept[@]}")
+    else
+        __pf_arr=()
+    fi
+}

@@ -3,13 +3,14 @@ Message Bus Adapter - Reactive message bus integration
 """
 import asyncio
 import json
-import uuid
 import time
-from typing import Dict, List, Optional, Any, Callable, Awaitable, Set
+import uuid
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
+from typing import Any
 
 
 class MessagePriority(Enum):
@@ -24,13 +25,13 @@ class Message:
     message_id: str
     topic: str
     payload: Any
-    headers: Dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
     priority: MessagePriority = MessagePriority.NORMAL
     timestamp: float = field(default_factory=time.time)
-    correlation_id: Optional[str] = None
-    reply_to: Optional[str] = None
+    correlation_id: str | None = None
+    reply_to: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "message_id": self.message_id,
             "topic": self.topic,
@@ -43,7 +44,7 @@ class Message:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Message':
+    def from_dict(cls, data: dict[str, Any]) -> 'Message':
         return cls(
             message_id=data["message_id"],
             topic=data["topic"],
@@ -61,7 +62,7 @@ class Subscription:
     subscription_id: str
     topic: str
     handler: Callable
-    filter_expr: Optional[str] = None
+    filter_expr: str | None = None
     priority: MessagePriority = MessagePriority.NORMAL
     active: bool = True
 
@@ -94,8 +95,8 @@ class MessageBus(ABC):
 
 class InMemoryMessageBus(MessageBus):
     def __init__(self):
-        self.subscriptions: Dict[str, List[Subscription]] = defaultdict(list)
-        self.pending_requests: Dict[str, asyncio.Future] = {}
+        self.subscriptions: dict[str, list[Subscription]] = defaultdict(list)
+        self.pending_requests: dict[str, asyncio.Future] = {}
         self._running = False
         self._lock = asyncio.Lock()
 
@@ -161,7 +162,7 @@ class InMemoryMessageBus(MessageBus):
     async def request(self, topic: str, payload: Any, timeout: float = 30.0) -> Any:
         correlation_id = str(uuid.uuid4())
         reply_topic = f"reply.{correlation_id}"
-        
+
         future = asyncio.get_event_loop().create_future()
         self.pending_requests[correlation_id] = future
 
@@ -182,7 +183,7 @@ class KafkaAdapter(MessageBus):
         self.group_id = group_id
         self._consumer = None
         self._producer = None
-        self._handlers: Dict[str, Callable] = {}
+        self._handlers: dict[str, Callable] = {}
         self._running = False
 
     async def start(self):
@@ -193,7 +194,7 @@ class KafkaAdapter(MessageBus):
                 value_serializer=lambda v: json.dumps(v).encode(),
             )
             await self._producer.start()
-            
+
             self._consumer = AIOKafkaConsumer(
                 *self._handlers.keys(),
                 bootstrap_servers=self.bootstrap_servers,
@@ -201,7 +202,7 @@ class KafkaAdapter(MessageBus):
                 value_deserializer=lambda v: json.loads(v.decode()),
             )
             await self._consumer.start()
-            
+
             self._running = True
             asyncio.create_task(self._consume_loop())
         except ImportError:
@@ -252,7 +253,7 @@ class RedisAdapter(MessageBus):
         self.redis_url = redis_url
         self._redis = None
         self._pubsub = None
-        self._handlers: Dict[str, Callable] = {}
+        self._handlers: dict[str, Callable] = {}
         self._running = False
 
     async def start(self):
@@ -313,9 +314,8 @@ class MessageBusFactory:
     def create(bus_type: str, **kwargs) -> MessageBus:
         if bus_type == "memory":
             return InMemoryMessageBus()
-        elif bus_type == "kafka":
+        if bus_type == "kafka":
             return KafkaAdapter(kwargs.get("bootstrap_servers", "localhost:9092"), kwargs.get("group_id", "default"))
-        elif bus_type == "redis":
+        if bus_type == "redis":
             return RedisAdapter(kwargs.get("redis_url", "redis://localhost:6379"))
-        else:
-            raise ValueError(f"Unknown bus type: {bus_type}")
+        raise ValueError(f"Unknown bus type: {bus_type}")

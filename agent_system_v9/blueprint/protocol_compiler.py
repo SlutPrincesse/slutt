@@ -3,12 +3,10 @@ Protocol Compiler - Compiles protocol definitions to code
 """
 import json
 import re
-from typing import Dict, List, Optional, Any, Set, Union
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import hashlib
+from typing import Any
 
 
 class ProtocolType(Enum):
@@ -42,11 +40,11 @@ class ProtocolField:
     required: bool = True
     default: Any = None
     description: str = ""
-    constraints: Dict[str, Any] = field(default_factory=dict)
-    enum_values: List[Any] = field(default_factory=list)
-    nested_fields: List['ProtocolField'] = field(default_factory=list)
+    constraints: dict[str, Any] = field(default_factory=dict)
+    enum_values: list[Any] = field(default_factory=list)
+    nested_fields: list['ProtocolField'] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "field_type": self.field_type.value,
@@ -59,7 +57,7 @@ class ProtocolField:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ProtocolField':
+    def from_dict(cls, data: dict[str, Any]) -> 'ProtocolField':
         return cls(
             name=data["name"],
             field_type=FieldType(data["field_type"]),
@@ -78,13 +76,13 @@ class ProtocolMethod:
     protocol_type: ProtocolType
     path: str
     http_method: str = "POST"
-    request_fields: List[ProtocolField] = field(default_factory=list)
-    response_fields: List[ProtocolField] = field(default_factory=list)
-    error_fields: List[ProtocolField] = field(default_factory=list)
+    request_fields: list[ProtocolField] = field(default_factory=list)
+    response_fields: list[ProtocolField] = field(default_factory=list)
+    error_fields: list[ProtocolField] = field(default_factory=list)
     description: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "protocol_type": self.protocol_type.value,
@@ -98,7 +96,7 @@ class ProtocolMethod:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ProtocolMethod':
+    def from_dict(cls, data: dict[str, Any]) -> 'ProtocolMethod':
         return cls(
             name=data["name"],
             protocol_type=ProtocolType(data["protocol_type"]),
@@ -118,11 +116,11 @@ class ProtocolDefinition:
     version: str
     protocol_type: ProtocolType
     base_url: str = ""
-    methods: List[ProtocolMethod] = field(default_factory=list)
-    types: Dict[str, List[ProtocolField]] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    methods: list[ProtocolMethod] = field(default_factory=list)
+    types: dict[str, list[ProtocolField]] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "version": self.version,
@@ -134,7 +132,7 @@ class ProtocolDefinition:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ProtocolDefinition':
+    def from_dict(cls, data: dict[str, Any]) -> 'ProtocolDefinition':
         return cls(
             name=data["name"],
             version=data["version"],
@@ -148,7 +146,7 @@ class ProtocolDefinition:
 
 class ProtocolCompiler:
     def __init__(self):
-        self.templates: Dict[str, str] = {}
+        self.templates: dict[str, str] = {}
         self._load_default_templates()
 
     def _load_default_templates(self):
@@ -229,7 +227,7 @@ export class {{class_name}}Client {
     def compile(self, protocol: ProtocolDefinition, target: str, **kwargs) -> str:
         if target not in self.templates:
             raise ValueError(f"Unknown target: {target}")
-        
+
         template = self.templates[target]
         return self._render(template, protocol=protocol, **kwargs)
 
@@ -240,9 +238,9 @@ export class {{class_name}}Client {
                 return str(eval(expr, {}, context))
             except Exception:
                 return match.group(0)
-        
+
         result = re.sub(r'\{\{(.+?)\}\}', replace_var, template)
-        
+
         def replace_for(match):
             var = match.group(1).strip()
             body = match.group(2)
@@ -253,11 +251,11 @@ export class {{class_name}}Client {
                 context[var_name] = item
                 output.append(self._render(body, **context))
             return ''.join(output)
-        
+
         result = re.sub(r'\{% for (.+?) %\}(.+?)\{% endfor %\}', replace_for, result, flags=re.DOTALL)
         return result
 
-    def compile_all(self, protocol: ProtocolDefinition, targets: List[str], output_dir: str) -> Dict[str, str]:
+    def compile_all(self, protocol: ProtocolDefinition, targets: list[str], output_dir: str) -> dict[str, str]:
         results = {}
         for target in targets:
             code = self.compile(protocol, target)
@@ -279,13 +277,13 @@ export class {{class_name}}Client {
     def add_template(self, name: str, template: str):
         self.templates[name] = template
 
-    def parse_openapi(self, spec: Dict[str, Any]) -> ProtocolDefinition:
+    def parse_openapi(self, spec: dict[str, Any]) -> ProtocolDefinition:
         methods = []
         for path, path_item in spec.get("paths", {}).items():
             for http_method, operation in path_item.items():
                 if http_method not in ("get", "post", "put", "delete", "patch", "head", "options"):
                     continue
-                
+
                 request_fields = []
                 if "requestBody" in operation:
                     content = operation["requestBody"].get("content", {})
@@ -318,7 +316,7 @@ export class {{class_name}}Client {
             methods=methods,
         )
 
-    def _parse_schema(self, schema: Dict[str, Any], prefix: str = "") -> List[ProtocolField]:
+    def _parse_schema(self, schema: dict[str, Any], prefix: str = "") -> list[ProtocolField]:
         fields = []
         if schema.get("type") == "object":
             for prop_name, prop_schema in schema.get("properties", {}).items():
@@ -347,16 +345,16 @@ export class {{class_name}}Client {
 
 class ProtocolRegistry:
     def __init__(self):
-        self.protocols: Dict[str, ProtocolDefinition] = {}
+        self.protocols: dict[str, ProtocolDefinition] = {}
 
     def register(self, protocol: ProtocolDefinition):
         key = f"{protocol.name}:{protocol.version}"
         self.protocols[key] = protocol
 
-    def get(self, name: str, version: str) -> Optional[ProtocolDefinition]:
+    def get(self, name: str, version: str) -> ProtocolDefinition | None:
         return self.protocols.get(f"{name}:{version}")
 
-    def list(self) -> List[ProtocolDefinition]:
+    def list(self) -> list[ProtocolDefinition]:
         return list(self.protocols.values())
 
     def remove(self, name: str, version: str) -> bool:

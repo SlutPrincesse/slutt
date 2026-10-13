@@ -1,14 +1,14 @@
 """
 Core module - Central system components
 """
-from .registry import SystemRegistry, ComponentMetadata, ComponentState, registry
-from .events import EventBus, Event, EventPriority, event_bus
-from .config import SystemConfig, SectionConfig, config
-from .plugins import PluginManager, PluginMetadata, PluginState, PluginContext, plugin_manager
+from .config import SectionConfig, SystemConfig, config
+from .events import Event, EventBus, EventPriority, event_bus
+from .plugins import PluginContext, PluginManager, PluginMetadata, PluginState, plugin_manager
+from .registry import ComponentMetadata, ComponentState, SystemRegistry, registry
 
 __all__ = [
     "SystemRegistry",
-    "ComponentMetadata", 
+    "ComponentMetadata",
     "ComponentState",
     "registry",
     "EventBus",

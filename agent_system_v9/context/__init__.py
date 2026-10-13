@@ -5,10 +5,10 @@ Sliding-Window Cache Invalidation Engine, Context Window Boundary Monitor,
 Cross-Task Context Isolation Layer
 """
 from .attention_allocator import AttentionAllocator, AttentionHead
-from .context_summarizer import HierarchicalSummarizer, SummaryTier
+from .boundary_monitor import BoundaryAlert, BoundaryMonitor
 from .cache_invalidator import CacheInvalidator, InvalidationRule
-from .boundary_monitor import BoundaryMonitor, BoundaryAlert
 from .context_isolation import ContextIsolationLayer, IsolationBoundary
+from .context_summarizer import HierarchicalSummarizer, SummaryTier
 
 __all__ = [
     "AttentionAllocator",

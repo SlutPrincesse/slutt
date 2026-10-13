@@ -4,11 +4,11 @@ Automated Vulnerability Cron Auditor, Stealth Proxy Execution & Identity Randomi
 Zero-Latency Intent Resolution Pipeline, Dual-Hemisphere Failover State Machine,
 Autonomous Lock-In Handshake
 """
-from .vuln_auditor import VulnerabilityAuditor, VulnerabilityReport
-from .proxy_executor import StealthProxyExecutor, ProxyConfig
-from .intent_resolver import IntentResolver, IntentMatch
-from .failover import FailoverStateMachine, FailoverState
+from .failover import FailoverState, FailoverStateMachine
+from .intent_resolver import IntentMatch, IntentResolver
 from .lockin import AutonomousLockIn, LockInConfig
+from .proxy_executor import ProxyConfig, StealthProxyExecutor
+from .vuln_auditor import VulnerabilityAuditor, VulnerabilityReport
 
 __all__ = [
     "VulnerabilityAuditor",

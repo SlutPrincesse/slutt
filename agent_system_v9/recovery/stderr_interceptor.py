@@ -1,14 +1,13 @@
 """
 Automated Stderr Interceptor & Patcher - Captures error streams, diagnoses bugs, auto-patches source, re-executes
 """
-import threading
 import re
 import subprocess
 import tempfile
-import os
+import threading
 import time
-from typing import Dict, List, Optional, Any, Callable, Tuple
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -42,12 +41,12 @@ class StderrInterceptor:
         self.patch_timeout = patch_timeout
         self.max_attempts = max_attempts
         self._lock = threading.RLock()
-        self._error_patterns: Dict[ErrorCategory, List[re.Pattern]] = {}
-        self._patch_strategies: Dict[ErrorCategory, Callable] = {}
-        self._intercepted_errors: List[Dict] = []
+        self._error_patterns: dict[ErrorCategory, list[re.Pattern]] = {}
+        self._patch_strategies: dict[ErrorCategory, Callable] = {}
+        self._intercepted_errors: list[dict] = []
         self._register_patterns()
         self._register_strategies()
-    
+
     def _register_patterns(self):
         self._error_patterns = {
             ErrorCategory.SYNTAX: [
@@ -85,7 +84,7 @@ class StderrInterceptor:
                 re.compile(r'TimeoutError: (.+)'),
             ],
         }
-    
+
     def _register_strategies(self):
         self._patch_strategies = {
             ErrorCategory.SYNTAX: self._patch_syntax,
@@ -97,10 +96,10 @@ class StderrInterceptor:
             ErrorCategory.KEY: self._patch_key,
             ErrorCategory.VALUE: self._patch_value,
         }
-    
-    def intercept(self, stderr: str, file_path: str = "") -> List[Dict]:
+
+    def intercept(self, stderr: str, file_path: str = "") -> list[dict]:
         errors = []
-        
+
         for category, patterns in self._error_patterns.items():
             for pattern in patterns:
                 matches = pattern.findall(stderr)
@@ -112,31 +111,31 @@ class StderrInterceptor:
                         "timestamp": time.time(),
                         "raw_stderr": stderr[:500]
                     })
-        
+
         with self._lock:
             self._intercepted_errors.extend(errors)
             if len(self._intercepted_errors) > 1000:
                 self._intercepted_errors = self._intercepted_errors[-1000:]
-        
+
         return errors
-    
-    def diagnose_and_patch(self, error: Dict, source_code: str, file_path: str) -> PatchResult:
+
+    def diagnose_and_patch(self, error: dict, source_code: str, file_path: str) -> PatchResult:
         category = error.get("category", ErrorCategory.UNKNOWN)
-        
+
         if category not in self._patch_strategies:
             return PatchResult(False, error.get("message", ""), "No strategy", file_path)
-        
+
         strategy = self._patch_strategies[category]
-        
+
         for attempt in range(self.max_attempts):
             try:
                 patched_code, patch_desc = strategy(source_code, error)
-                
+
                 # Write patched file
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                     f.write(patched_code)
                     temp_path = f.name
-                
+
                 # Test execution
                 result = subprocess.run(
                     ["python", temp_path],
@@ -144,14 +143,14 @@ class StderrInterceptor:
                     text=True,
                     timeout=self.patch_timeout
                 )
-                
-                os.unlink(temp_path)
-                
+
+                Path(temp_path).unlink()
+
                 if result.returncode == 0:
                     # Success - apply to original file
-                    with open(file_path, 'w') as f:
+                    with Path(file_path).open('w') as f:
                         f.write(patched_code)
-                    
+
                     return PatchResult(
                         success=True,
                         original_error=error.get("message", ""),
@@ -160,35 +159,34 @@ class StderrInterceptor:
                         reexecution_result=result.stdout,
                         attempts=attempt + 1
                     )
-                else:
-                    # Try again with new error
-                    new_errors = self.intercept(result.stderr, file_path)
-                    if new_errors:
-                        error = new_errors[0]
-                    source_code = patched_code
-                    
+                # Try again with new error
+                new_errors = self.intercept(result.stderr, file_path)
+                if new_errors:
+                    error = new_errors[0]
+                source_code = patched_code
+
             except subprocess.TimeoutExpired:
                 return PatchResult(False, error.get("message", ""), "Patch timeout", file_path, attempts=attempt + 1)
             except Exception as e:
                 return PatchResult(False, error.get("message", ""), f"Patch failed: {e}", file_path, attempts=attempt + 1)
-        
+
         return PatchResult(False, error.get("message", ""), "Max attempts reached", file_path, attempts=self.max_attempts)
-    
-    def _patch_syntax(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_syntax(self, code: str, error: dict) -> tuple[str, str]:
         # Fix common syntax issues
         lines = code.split('\n')
         patched = []
-        
+
         for line in lines:
             # Fix missing colons
             if re.match(r'^\s*(if|for|while|def|class|try|except|finally|with|else|elif)\s+.+[^:]$', line):
                 line = line.rstrip() + ':'
             # Fix indentation
             patched.append(line)
-        
+
         return '\n'.join(patched), "Fixed syntax issues (colons, indentation)"
-    
-    def _patch_import(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_import(self, code: str, error: dict) -> tuple[str, str]:
         msg = error.get("message", "")
         match = re.search(r"No module named '(\w+)'", msg)
         if match:
@@ -197,16 +195,16 @@ class StderrInterceptor:
             import_line = f"try:\n    import {missing}\nexcept ImportError:\n    {missing} = None\n"
             return import_line + code, f"Added fallback for missing import: {missing}"
         return code, "No import fix applied"
-    
-    def _patch_runtime(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_runtime(self, code: str, error: dict) -> tuple[str, str]:
         # Wrap in try/except
         return f"try:\n{self._indent(code)}except Exception as e:\n    print(f'Caught: {{e}}')\n", "Wrapped in try/except"
-    
-    def _patch_type(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_type(self, code: str, error: dict) -> tuple[str, str]:
         # Add type checks
         return code, "Type checking added"
-    
-    def _patch_attribute(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_attribute(self, code: str, error: dict) -> tuple[str, str]:
         msg = error.get("message", "")
         match = re.search(r"'(\w+)' object has no attribute '(\w+)'", msg)
         if match:
@@ -217,11 +215,11 @@ class StderrInterceptor:
             code = re.sub(pattern, replacement, code)
             return code, f"Added hasattr check for {attr}"
         return code, "No attribute fix"
-    
-    def _patch_index(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_index(self, code: str, error: dict) -> tuple[str, str]:
         return code, "Index error handling added"
-    
-    def _patch_key(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_key(self, code: str, error: dict) -> tuple[str, str]:
         msg = error.get("message", "")
         match = re.search(r"KeyError: '(\w+)'", msg)
         if match:
@@ -229,19 +227,20 @@ class StderrInterceptor:
             code = code.replace(f"[{key}]", f".get('{key}')")
             return code, f"Changed [{key}] to .get('{key}')"
         return code, "No key fix"
-    
-    def _patch_value(self, code: str, error: Dict) -> Tuple[str, str]:
+
+    def _patch_value(self, code: str, error: dict) -> tuple[str, str]:
         return code, "Value error handling added"
-    
+
     def _indent(self, code: str, spaces: int = 4) -> str:
         return '\n'.join(' ' * spaces + line for line in code.split('\n'))
-    
-    def get_recent_errors(self, limit: int = 50) -> List[Dict]:
+
+    def get_recent_errors(self, limit: int = 50) -> list[dict]:
         with self._lock:
             return self._intercepted_errors[-limit:]
 
 
-_stderr_interceptor: Optional[StderrInterceptor] = None
+_stderr_interceptor: StderrInterceptor | None = None
+
 
 def get_stderr_interceptor() -> StderrInterceptor:
     global _stderr_interceptor

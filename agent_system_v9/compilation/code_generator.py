@@ -3,12 +3,11 @@ Universal Code Generator - Multi-target code generation
 """
 import ast
 import hashlib
-from typing import Dict, List, Optional, Any, Set, Union
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-from abc import ABC, abstractmethod
+from typing import Any
 
 
 class TargetLanguage(Enum):
@@ -31,17 +30,17 @@ class CodeTemplate:
     name: str
     language: TargetLanguage
     template: str
-    parameters: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    parameters: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class GenerationContext:
     target: TargetLanguage
     output_dir: str
-    variables: Dict[str, Any] = field(default_factory=dict)
-    imports: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    variables: dict[str, Any] = field(default_factory=dict)
+    imports: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class CodeGenerator(ABC):
@@ -71,19 +70,19 @@ class JavaScriptCodeGenerator(CodeGenerator):
     def _convert_ast(self, node: Any) -> str:
         if isinstance(node, ast.Module):
             return '\n'.join(self._convert_ast(n) for n in node.body)
-        elif isinstance(node, ast.FunctionDef):
+        if isinstance(node, ast.FunctionDef):
             args = ', '.join(arg.arg for arg in node.args.args)
             body = '\n    '.join(self._convert_ast(n) for n in node.body)
             return f"function {node.name}({args}) {{\n    {body}\n}}"
-        elif isinstance(node, ast.Return):
+        if isinstance(node, ast.Return):
             return f"return {self._convert_ast(node.value)};"
-        elif isinstance(node, ast.Call):
+        if isinstance(node, ast.Call):
             func = self._convert_ast(node.func)
             args = ', '.join(self._convert_ast(arg) for arg in node.args)
             return f"{func}({args})"
-        elif isinstance(node, ast.Name):
+        if isinstance(node, ast.Name):
             return node.id
-        elif isinstance(node, ast.Constant):
+        if isinstance(node, ast.Constant):
             return repr(node.value)
         return ""
 
@@ -103,22 +102,22 @@ class RustCodeGenerator(CodeGenerator):
     def _convert_ast(self, node: Any) -> str:
         if isinstance(node, ast.Module):
             return '\n'.join(self._convert_ast(n) for n in node.body)
-        elif isinstance(node, ast.FunctionDef):
+        if isinstance(node, ast.FunctionDef):
             args = ', '.join(f"{arg.arg}: i32" for arg in node.args.args)
             body = '\n    '.join(self._convert_ast(n) for n in node.body)
             return f"fn {node.name}({args}) -> i32 {{\n    {body}\n}}"
-        elif isinstance(node, ast.Return):
+        if isinstance(node, ast.Return):
             return f"return {self._convert_ast(node.value)};"
-        elif isinstance(node, ast.Call):
+        if isinstance(node, ast.Call):
             func = self._convert_ast(node.func)
             args = ', '.join(self._convert_ast(arg) for arg in node.args)
             return f"{func}({args})"
-        elif isinstance(node, ast.Name):
+        if isinstance(node, ast.Name):
             return node.id
-        elif isinstance(node, ast.Constant):
+        if isinstance(node, ast.Constant):
             if isinstance(node.value, int):
                 return str(node.value)
-            elif isinstance(node.value, str):
+            if isinstance(node.value, str):
                 return f'"{node.value}"'
             return str(node.value)
         return ""
@@ -129,13 +128,13 @@ class RustCodeGenerator(CodeGenerator):
 
 class UniversalCodeGenerator:
     def __init__(self):
-        self.generators: Dict[TargetLanguage, CodeGenerator] = {
+        self.generators: dict[TargetLanguage, CodeGenerator] = {
             TargetLanguage.PYTHON: PythonCodeGenerator(),
             TargetLanguage.JAVASCRIPT: JavaScriptCodeGenerator(),
             TargetLanguage.TYPESCRIPT: TypeScriptCodeGenerator(),
             TargetLanguage.RUST: RustCodeGenerator(),
         }
-        self.templates: Dict[str, CodeTemplate] = {}
+        self.templates: dict[str, CodeTemplate] = {}
         self._register_default_templates()
 
     def _register_default_templates(self):
@@ -160,7 +159,7 @@ class UniversalCodeGenerator:
     ) -> str:
         if target not in self.generators:
             raise ValueError(f"No generator for target: {target}")
-        
+
         context = context or GenerationContext(target=target, output_dir=".")
         generator = self.generators[target]
         return generator.generate(ast_node, context)
@@ -178,13 +177,13 @@ class UniversalCodeGenerator:
     def generate_from_template(
         self,
         template_name: str,
-        variables: Dict[str, Any],
+        variables: dict[str, Any],
         target: TargetLanguage = None,
     ) -> str:
         template = self.templates.get(template_name)
         if not template:
             raise ValueError(f"Template not found: {template_name}")
-        
+
         target = target or template.language
         result = template.template
         for key, value in variables.items():
@@ -206,13 +205,13 @@ class ASTToCodeConverter:
 class IncrementalCodeGenerator:
     def __init__(self, generator: UniversalCodeGenerator):
         self.generator = generator
-        self.cache: Dict[str, str] = {}
+        self.cache: dict[str, str] = {}
 
-    def generate_if_changed(self, source: str, target: TargetLanguage, cache_key: str) -> Optional[str]:
+    def generate_if_changed(self, source: str, target: TargetLanguage, cache_key: str) -> str | None:
         hash_val = hashlib.md5(source.encode()).hexdigest()
         if self.cache.get(cache_key) == hash_val:
             return None
-        
+
         tree = ast.parse(source)
         code = self.generator.generate_code(tree, target)
         self.cache[cache_key] = hash_val

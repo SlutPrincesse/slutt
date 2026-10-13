@@ -1,0 +1,124 @@
+#!/bin/bash
+# shellcheck disable=SC2034  # Arrays are consumed by scripts that source this module
+# Module: Enterprise
+# Active Directory, Kerberos, LDAP, Azure AD, Windows network pentesting,
+# credential harvesting, lateral movement
+
+ENTERPRISE_PACKAGES=()
+
+ENTERPRISE_PIPX=(
+    impacket certipy-ad coercer bloodhound mitm6
+    lsassy sprayhound ldapdomaindump pypykatz
+    adidnsdump dploot bloodyad hekatomb
+    certsync masky pywhisker autobloody
+    krbjack roadtx pywerview pysnaffler powerview aclpwn
+    ldeep smbclientng ldapsearchad manspider
+)
+
+ENTERPRISE_GO=(
+    "github.com/Macmod/godap@latest"
+    "github.com/RedTeamPentesting/pretender@latest"
+    "github.com/ropnop/go-windapsearch/cmd/windapsearch@latest"
+    "github.com/lkarlslund/ldapnomnom@latest"
+)
+
+ENTERPRISE_GEMS=(evil-winrm)
+
+ENTERPRISE_GIT=(
+    "Responder=https://github.com/lgandx/Responder.git"
+    "enum4linux-ng=https://github.com/cddmp/enum4linux-ng.git"
+    "linWinPwn=https://github.com/lefayjey/linWinPwn.git"
+    "PCredz=https://github.com/lgandx/PCredz.git"
+    "krbrelayx=https://github.com/dirkjanm/krbrelayx.git"
+    "spraykatz=https://github.com/aas-n/spraykatz.git"
+    "dfscoerce=https://github.com/Wh04m1001/dfscoerce.git"
+    "petitpotam=https://github.com/topotam/PetitPotam.git"
+    "shadowcoerce=https://github.com/ShutdownRepo/shadowcoerce.git"
+    "noPac=https://github.com/Ridter/noPac.git"
+    "zerologon=https://github.com/SecuraBV/CVE-2020-1472.git"
+    "ntlm_theft=https://github.com/Greenwolf/ntlm_theft.git"
+    "ntlmv1-multi=https://github.com/evilmog/ntlmv1-multi.git"
+    "PassTheCert=https://github.com/AlmondOffSec/PassTheCert.git"
+    "pkinittools=https://github.com/dirkjanm/PKINITtools.git"
+    "privexchange=https://github.com/dirkjanm/PrivExchange.git"
+    "GPOddity=https://github.com/synacktiv/GPOddity.git"
+    "gmsadumper=https://github.com/micahvandeusen/gMSADumper.git"
+    "ExtractBitlockerKeys=https://github.com/p0dalirius/ExtractBitlockerKeys.git"
+    "PXEThief=https://github.com/blurbdust/PXEThief.git"
+    "sccmsecrets=https://github.com/synacktiv/SCCMSecrets.git"
+    "sccmwtf=https://github.com/xpn/sccmwtf.git"
+    "cmloot=https://github.com/shelltrail/cmloot.git"
+    "pywsus=https://github.com/GoSecure/pywsus.git"
+    "RemoteMonologue=https://github.com/3lp4tr0n/RemoteMonologue.git"
+    "roastinthemiddle=https://github.com/Tw1sm/RITM.git"
+    "lnkup=https://github.com/Plazmaz/lnkUp.git"
+    "ruler=https://github.com/sensepost/ruler.git"
+    "bqm=https://github.com/Acceis/bqm.git"
+    "cypheroth=https://github.com/seajaysec/cypheroth.git"
+    "abuseACL=https://github.com/AetherBlack/abuseACL.git"
+    "asrepcatcher=https://github.com/Yaxxine7/ASRepCatcher.git"
+    "conpass=https://github.com/login-securite/conpass.git"
+    "freeipscanner=https://github.com/scrt/freeipscanner.git"
+    "goldencopy=https://github.com/Dramelac/GoldenCopy.git"
+    "keytabextract=https://github.com/sosdave/KeyTabExtract.git"
+    "ldaprelayscan=https://github.com/zyn3rgy/LdapRelayScan.git"
+    "LDAPWordlistHarvester=https://github.com/p0dalirius/pyLDAPWordlistHarvester.git"
+    "targetedKerberoast=https://github.com/ShutdownRepo/targetedKerberoast.git"
+)
+
+ENTERPRISE_GO_BINS=(godap pretender windapsearch ldapnomnom)
+ENTERPRISE_GIT_NAMES=(Responder enum4linux-ng linWinPwn PCredz krbrelayx spraykatz dfscoerce petitpotam shadowcoerce noPac zerologon ntlm_theft ntlmv1-multi PassTheCert pkinittools privexchange GPOddity gmsadumper ExtractBitlockerKeys PXEThief sccmsecrets sccmwtf cmloot pywsus RemoteMonologue roastinthemiddle lnkup ruler bqm cypheroth abuseACL asrepcatcher conpass freeipscanner goldencopy keytabextract ldaprelayscan LDAPWordlistHarvester targetedKerberoast)
+
+ENTERPRISE_BUILD_NAMES=(azurehound gosecretsdump GoExec GoMapEnum rusthound rusthound-ce)
+# -g: verify/update/remove source modules from inside a function.
+declare -gA ENTERPRISE_BUILD_URLS=(
+    [azurehound]="https://github.com/BloodHoundAD/AzureHound.git"
+    [gosecretsdump]="https://github.com/c-sto/gosecretsdump.git"
+    [GoExec]="https://github.com/FalconOpsLLC/goexec.git"
+    [GoMapEnum]="https://github.com/nodauf/GoMapEnum.git"
+    [rusthound]="https://github.com/NH-RED-TEAM/RustHound.git"
+    [rusthound-ce]="https://github.com/g0h4n/RustHound-CE.git"
+)
+declare -gA ENTERPRISE_BUILD_CMDS=(
+    [azurehound]="go build"
+    [gosecretsdump]="go build"
+    [GoExec]="go build -o GoExec ."
+    [GoMapEnum]="go build -o GoMapEnum ./src"
+    [rusthound]="cargo build --release"
+    [rusthound-ce]="cargo build --release"
+)
+
+# Direct module selection installs the full offensive Active Directory tool set.
+install_module_enterprise() {
+    [[ ${#ENTERPRISE_PACKAGES[@]} -gt 0 ]] && install_apt_batch "Enterprise - Packages" "${ENTERPRISE_PACKAGES[@]}"
+    install_pipx_batch "Enterprise - Python" "${ENTERPRISE_PIPX[@]}"
+
+    # The installed binary is named nxc, which is what .versions records.
+    if [[ "${SKIP_PIPX:-false}" != "true" ]]; then
+        if pipx list --short 2>/dev/null | grep -qi "^netexec "; then
+            _track_already_present "nxc" "pipx"
+        else
+            log_info "Installing NetExec from GitHub..."
+            if pipx install "git+https://github.com/Pennyw0rth/NetExec" >> "$LOG_FILE" 2>&1; then
+                log_success "NetExec installed"
+                track_version "nxc" "pipx" "git"
+            else
+                log_error "Failed pipx: NetExec"
+                TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+            fi
+        fi
+    fi
+    install_go_batch "Enterprise - Go" "${ENTERPRISE_GO[@]}"
+    install_gem_batch "Enterprise - Ruby" "${ENTERPRISE_GEMS[@]}"
+    install_git_batch "Enterprise - Git" "${ENTERPRISE_GIT[@]}"
+
+    log_info "Building enterprise tools from source..."
+    build_module_from_source ENTERPRISE
+
+    install_binary_releases "${BINARY_RELEASES_ENTERPRISE[@]}"
+
+    # Docker: BloodHound (optional)
+    if [[ "${ENABLE_DOCKER:-false}" == "true" ]]; then
+        docker_pull "specterops/bloodhound" "BloodHound CE" || true
+    fi
+}

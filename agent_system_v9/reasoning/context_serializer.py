@@ -1,10 +1,10 @@
 import json
 import uuid
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class SerializationFormat(Enum):
@@ -19,8 +19,8 @@ class SerializedContext:
     id: str
     session_id: str
     format: SerializationFormat
-    data: Dict[str, Any]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     size_bytes: int = 0
     checksum: str = ""
@@ -46,42 +46,42 @@ class ContextSerializer:
             SerializationFormat.YAML: self._deserialize_yaml,
         }
 
-    def _serialize_json(self, data: Dict[str, Any]) -> bytes:
+    def _serialize_json(self, data: dict[str, Any]) -> bytes:
         return json.dumps(data, default=str).encode()
 
-    def _deserialize_json(self, data: bytes) -> Dict[str, Any]:
+    def _deserialize_json(self, data: bytes) -> dict[str, Any]:
         return json.loads(data.decode())
 
-    def _serialize_msgpack(self, data: Dict[str, Any]) -> bytes:
+    def _serialize_msgpack(self, data: dict[str, Any]) -> bytes:
         try:
             import msgpack
             return msgpack.packb(data, use_bin_type=True)
         except ImportError:
             return self._serialize_json(data)
 
-    def _deserialize_msgpack(self, data: bytes) -> Dict[str, Any]:
+    def _deserialize_msgpack(self, data: bytes) -> dict[str, Any]:
         try:
             import msgpack
             return msgpack.unpackb(data, raw=False)
         except ImportError:
             return self._deserialize_json(data)
 
-    def _serialize_pickle(self, data: Dict[str, Any]) -> bytes:
+    def _serialize_pickle(self, data: dict[str, Any]) -> bytes:
         import pickle
         return pickle.dumps(data)
 
-    def _deserialize_pickle(self, data: bytes) -> Dict[str, Any]:
+    def _deserialize_pickle(self, data: bytes) -> dict[str, Any]:
         import pickle
         return pickle.loads(data)
 
-    def _serialize_yaml(self, data: Dict[str, Any]) -> bytes:
+    def _serialize_yaml(self, data: dict[str, Any]) -> bytes:
         try:
             import yaml
             return yaml.dump(data).encode()
         except ImportError:
             return self._serialize_json(data)
 
-    def _deserialize_yaml(self, data: bytes) -> Dict[str, Any]:
+    def _deserialize_yaml(self, data: bytes) -> dict[str, Any]:
         try:
             import yaml
             return yaml.safe_load(data.decode())
@@ -91,17 +91,17 @@ class ContextSerializer:
     def serialize(
         self,
         session_id: str,
-        context_data: Dict[str, Any],
+        context_data: dict[str, Any],
         format: SerializationFormat = None,
-        metadata: Dict[str, Any] = None,
+        metadata: dict[str, Any] = None,
     ) -> SerializedContext:
         fmt = format or self.default_format
         serializer = self._serializers[fmt]
         data_bytes = serializer(context_data)
-        
+
         import hashlib
         checksum = hashlib.sha256(data_bytes).hexdigest()[:16]
-        
+
         return SerializedContext(
             id="",
             session_id=session_id,
@@ -112,7 +112,7 @@ class ContextSerializer:
             checksum=checksum,
         )
 
-    def deserialize(self, serialized: SerializedContext) -> Dict[str, Any]:
+    def deserialize(self, serialized: SerializedContext) -> dict[str, Any]:
         deserializer = self._deserializers[serialized.format]
         return deserializer(json.dumps(serialized.data).encode())
 
@@ -120,7 +120,7 @@ class ContextSerializer:
         serializer = self._serializers[serialized.format]
         return serializer(serialized.data)
 
-    def from_bytes(self, data: bytes, format: SerializationFormat = None) -> Dict[str, Any]:
+    def from_bytes(self, data: bytes, format: SerializationFormat = None) -> dict[str, Any]:
         fmt = format or self.default_format
         deserializer = self._deserializers[fmt]
         return deserializer(data)

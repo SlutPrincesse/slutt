@@ -1,10 +1,8 @@
-import asyncio
 import hashlib
-from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from collections import OrderedDict
+from typing import Any
 
 
 class HeadType(Enum):
@@ -21,9 +19,9 @@ class AttentionHead:
     id: str
     head_type: HeadType
     weight: float = 1.0
-    focus_tokens: List[int] = field(default_factory=list)
+    focus_tokens: list[int] = field(default_factory=list)
     context_window: int = 4096
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     active: bool = True
 
     def __post_init__(self):
@@ -35,14 +33,14 @@ class AttentionAllocator:
     def __init__(self, max_heads: int = 8, total_context: int = 128000):
         self.max_heads = max_heads
         self.total_context = total_context
-        self.heads: Dict[str, AttentionHead] = {}
-        self._head_order: List[str] = []
+        self.heads: dict[str, AttentionHead] = {}
+        self._head_order: list[str] = []
         self._allocated_tokens = 0
 
     def allocate(self, head_type: HeadType, weight: float = 1.0, context_window: int = None) -> AttentionHead:
         if len(self.heads) >= self.max_heads:
             self._evict_lowest_priority()
-        
+
         window = context_window or min(4096, self.total_context // self.max_heads)
         head = AttentionHead(
             id="",
@@ -50,7 +48,7 @@ class AttentionAllocator:
             weight=weight,
             context_window=window,
         )
-        
+
         self.heads[head.id] = head
         self._head_order.append(head.id)
         self._allocated_tokens += window
@@ -64,17 +62,17 @@ class AttentionAllocator:
         self._head_order.remove(lowest)
         self._allocated_tokens -= head.context_window
 
-    def get_head(self, head_id: str) -> Optional[AttentionHead]:
+    def get_head(self, head_id: str) -> AttentionHead | None:
         return self.heads.get(head_id)
 
-    def get_heads_by_type(self, head_type: HeadType) -> List[AttentionHead]:
+    def get_heads_by_type(self, head_type: HeadType) -> list[AttentionHead]:
         return [h for h in self.heads.values() if h.head_type == head_type]
 
     def update_weight(self, head_id: str, weight: float):
         if head_id in self.heads:
             self.heads[head_id].weight = weight
 
-    def update_focus(self, head_id: str, tokens: List[int]):
+    def update_focus(self, head_id: str, tokens: list[int]):
         if head_id in self.heads:
             self.heads[head_id].focus_tokens = tokens
 
@@ -86,7 +84,7 @@ class AttentionAllocator:
             return True
         return False
 
-    def get_allocation_summary(self) -> Dict[str, Any]:
+    def get_allocation_summary(self) -> dict[str, Any]:
         return {
             "total_heads": len(self.heads),
             "max_heads": self.max_heads,
@@ -102,7 +100,7 @@ class AttentionAllocator:
         total_weight = sum(h.weight for h in self.heads.values())
         if total_weight == 0:
             return
-        
+
         for head in self.heads.values():
             new_window = int((head.weight / total_weight) * self.total_context)
             head.context_window = max(512, min(new_window, 8192))

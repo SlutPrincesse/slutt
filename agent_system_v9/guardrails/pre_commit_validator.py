@@ -3,11 +3,11 @@ Pre-Commit Validator - Validates code before commit
 """
 import ast
 import re
-import subprocess
-from typing import Dict, List, Optional, Any, Set, Callable, Tuple
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class ValidationSeverity(Enum):
@@ -27,7 +27,7 @@ class ValidationResult:
     suggestion: str = ""
     auto_fixable: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "rule_id": self.rule_id,
             "severity": self.severity.value,
@@ -42,7 +42,7 @@ class ValidationResult:
 
 class PreCommitValidator:
     def __init__(self):
-        self.rules: Dict[str, Callable] = {}
+        self.rules: dict[str, Callable] = {}
         self._register_default_rules()
 
     def _register_default_rules(self):
@@ -60,10 +60,10 @@ class PreCommitValidator:
     def register_rule(self, rule_id: str, checker: Callable):
         self.rules[rule_id] = checker
 
-    def validate_file(self, file_path: str) -> List[ValidationResult]:
+    def validate_file(self, file_path: str) -> list[ValidationResult]:
         results = []
         path = Path(file_path)
-        
+
         if not path.exists():
             return [ValidationResult(
                 rule_id="file_not_found",
@@ -71,15 +71,15 @@ class PreCommitValidator:
                 message=f"File not found: {file_path}",
                 file_path=file_path,
             )]
-        
+
         if path.suffix == '.py':
             content = path.read_text(encoding='utf-8', errors='ignore')
             for rule_id, checker in self.rules.items():
                 results.extend(checker(file_path, content))
-        
+
         return results
 
-    def validate_directory(self, dir_path: str, pattern: str = "*.py") -> Dict[str, List[ValidationResult]]:
+    def validate_directory(self, dir_path: str, pattern: str = "*.py") -> dict[str, list[ValidationResult]]:
         results = {}
         for file_path in Path(dir_path).rglob(pattern):
             file_results = self.validate_file(str(file_path))
@@ -87,7 +87,7 @@ class PreCommitValidator:
                 results[str(file_path)] = file_results
         return results
 
-    def _check_no_todo(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_no_todo(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
@@ -103,7 +103,7 @@ class PreCommitValidator:
                 ))
         return results
 
-    def _check_no_pass(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_no_pass(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         try:
             tree = ast.parse(content)
@@ -122,7 +122,7 @@ class PreCommitValidator:
             pass
         return results
 
-    def _check_no_not_implemented(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_no_not_implemented(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
@@ -137,7 +137,7 @@ class PreCommitValidator:
                 ))
         return results
 
-    def _check_no_debug_print(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_no_debug_print(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         try:
             tree = ast.parse(content)
@@ -157,7 +157,7 @@ class PreCommitValidator:
             pass
         return results
 
-    def _check_no_hardcoded_secrets(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_no_hardcoded_secrets(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         patterns = [
             (r'api[_-]?key\s*=\s*["\'][^"\']+["\']', "API Key"),
@@ -179,7 +179,7 @@ class PreCommitValidator:
                     ))
         return results
 
-    def _check_function_docstring(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_function_docstring(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         try:
             tree = ast.parse(content)
@@ -198,7 +198,7 @@ class PreCommitValidator:
             pass
         return results
 
-    def _check_type_hints(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_type_hints(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         try:
             tree = ast.parse(content)
@@ -217,7 +217,7 @@ class PreCommitValidator:
             pass
         return results
 
-    def _check_line_length(self, file_path: str, content: str, max_length: int = 120) -> List[ValidationResult]:
+    def _check_line_length(self, file_path: str, content: str, max_length: int = 120) -> list[ValidationResult]:
         results = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
@@ -233,7 +233,7 @@ class PreCommitValidator:
                 ))
         return results
 
-    def _check_trailing_whitespace(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_trailing_whitespace(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         lines = content.split('\n')
         for i, line in enumerate(lines):
@@ -249,13 +249,13 @@ class PreCommitValidator:
                 ))
         return results
 
-    def _check_unused_import(self, file_path: str, content: str) -> List[ValidationResult]:
+    def _check_unused_import(self, file_path: str, content: str) -> list[ValidationResult]:
         results = []
         try:
             tree = ast.parse(content)
             imports = {}
             used_names = set()
-            
+
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -267,7 +267,7 @@ class PreCommitValidator:
                         imports[name] = (node.lineno, node.col_offset)
                 elif isinstance(node, ast.Name):
                     used_names.add(node.id)
-            
+
             for name, (lineno, col) in imports.items():
                 if name not in used_names and not name.startswith('_'):
                     results.append(ValidationResult(
@@ -288,11 +288,11 @@ class CommitHookRunner:
     def __init__(self, validator: PreCommitValidator):
         self.validator = validator
 
-    def run(self, files: List[str]) -> Tuple[bool, List[ValidationResult]]:
+    def run(self, files: list[str]) -> tuple[bool, list[ValidationResult]]:
         all_results = []
         for file_path in files:
             results = self.validator.validate_file(file_path)
             all_results.extend(results)
-        
+
         errors = [r for r in all_results if r.severity == ValidationSeverity.ERROR]
         return len(errors) == 0, all_results

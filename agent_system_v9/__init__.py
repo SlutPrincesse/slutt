@@ -2,7 +2,7 @@
 AGENT_SYSTEM_V9 (NEURO-CRANIAL OVERLORD) - Main Package
 Master Technical Architecture Specification & Consolidated Implementation Roadmap
 """
-from typing import Dict, Any
+from typing import Any
 
 # Core
 from .core import (
@@ -172,7 +172,7 @@ from .compilation import (
     JITCompiler, HotReloader, CompilationPipeline, IncrementalCompiler,
     CompilationUnit, CompilationResult, CompilationTarget, CompilationStatus,
     BaseCompiler, BytecodeCompiler, ASTCompiler, MemoryCache,
-    HotSwapLoader, PluginManager, IsolatedLoader, LazyLoader, LazyModuleProxy,
+    HotSwapLoader, CompilationPluginManager, IsolatedLoader, LazyLoader, LazyModuleProxy,
     ModuleInfo, ReloadEvent, LoadStatus, temporary_module,
     TypeMarshaller, Marshaller, JSONMarshaller, BinaryMarshaller,
     TypeInfo, TypeKind, SchemaValidator, CrossLanguageTypeMapper
@@ -216,7 +216,7 @@ from .edge import (
 # Feature Engineering (Section 25+)
 from .featuretools_engine import (
     PrimitiveLibrary, Primitive, PrimitiveType, DataType,
-    Entity, Relationship, EntitySet, Feature, FeatureVector,
+    Entity as FeatureEntity, Relationship, EntitySet, Feature, FeatureVector,
     DeepFeatureSynthesis, FeatureToolsEngine,
     ExecutionLogFeatureExtractor,
     DaskFeatureEngine,
@@ -237,7 +237,7 @@ from .workspace import (
     TreeSitterManager, TreeSitterConfig, TREE_SITTER_AVAILABLE,
     FunctionMutator, MutationTester, EvolutionaryMutator,
     Mutation, MutationResult, MutationType,
-    WorkspaceSynchronizer, WorkspaceReplicator, SyncScheduler, ConflictResolver,
+    WorkspaceSynchronizer, WorkspaceReplicator, SyncScheduler, WorkspaceConflictResolver,
     SyncConfig, SyncMode, ConflictStrategy, FileInfo, SyncResult,
 )
 
@@ -272,10 +272,22 @@ from .evolution import (
     StrategyConfig, StrategyResult, StrategySelector, AdaptiveStrategySelector, PortfolioOptimizer, StrategyType,
 )
 
-# Integrations (Ablation & CoreCoder Plugins)
+# Integrations: Ablation, CoreCoder, RedAmon, Cybersec-Toolkit
 from .integrations import (
     register_ablation_tools, AblationToolSynthesizer, ABLATION_COMMANDS,
-    register_corecoder_tools, CoreCoderToolSynthesizer, CORECODER_COMMANDS
+    register_corecoder_tools, CoreCoderToolSynthesizer, CORECODER_COMMANDS,
+    # RedAmon
+    RedamonOrchestrator, AgentTask, AgentContext, AgentPhase, TaskStatus,
+    OrchestratorIntegration, get_orchestrator_integration, agent_session,
+    KnowledgeBase, Document, KBSearchResult, EmbeddingProvider, VectorStore,
+    InMemoryVectorStore, KnowledgeBaseIntegration, get_knowledge_base_integration,
+    DockerBroker, DockerBrokerConfig, DockerBrokerIntegration, get_docker_broker_integration,
+    ReconModule, ReconPipeline, ReconTarget, ReconResult, ReconModuleType,
+    SubdomainEnumModule, PortScanModule, HTTPProbeModule, NucleiScanModule,
+    KatanaCrawlModule, GraphQLScannerModule, ReconIntegration, get_recon_integration,
+    # Cybersec-Toolkit
+    ToolManager, ToolConfig, ModuleRunner,
+    CybersecToolkitIntegration, get_cybersec_toolkit_integration,
 )
 
 __version__ = "9.0.0"
@@ -375,7 +387,7 @@ __all__ = [
     "JITCompiler", "HotReloader", "CompilationPipeline", "IncrementalCompiler",
     "CompilationUnit", "CompilationResult", "CompilationTarget", "CompilationStatus",
     "BaseCompiler", "BytecodeCompiler", "ASTCompiler", "MemoryCache",
-    "HotSwapLoader", "PluginManager", "IsolatedLoader", "LazyLoader", "LazyModuleProxy",
+    "HotSwapLoader", "CompilationPluginManager", "IsolatedLoader", "LazyLoader", "LazyModuleProxy",
     "ModuleInfo", "ReloadEvent", "LoadStatus", "temporary_module",
     "TypeMarshaller", "Marshaller", "JSONMarshaller", "BinaryMarshaller",
     "TypeInfo", "TypeKind", "SchemaValidator", "CrossLanguageTypeMapper",
@@ -401,7 +413,7 @@ __all__ = [
     "PowerThrottler", "DeltaSyncer",
     # Feature Engineering
     "PrimitiveLibrary", "Primitive", "PrimitiveType", "DataType",
-    "Entity", "Relationship", "EntitySet", "Feature", "FeatureVector",
+    "FeatureEntity", "Relationship", "EntitySet", "Feature", "FeatureVector",
     "DeepFeatureSynthesis", "FeatureToolsEngine",
     "ExecutionLogFeatureExtractor",
     "DaskFeatureEngine",
@@ -416,7 +428,7 @@ __all__ = [
     "TreeSitterManager", "TreeSitterConfig", "TREE_SITTER_AVAILABLE",
     "FunctionMutator", "MutationTester", "EvolutionaryMutator",
     "Mutation", "MutationResult", "MutationType",
-    "WorkspaceSynchronizer", "WorkspaceReplicator", "SyncScheduler", "ConflictResolver",
+    "WorkspaceSynchronizer", "WorkspaceReplicator", "SyncScheduler", "WorkspaceConflictResolver",
     "SyncConfig", "SyncMode", "ConflictStrategy", "FileInfo", "SyncResult",
     # Guardrails
     "PreCommitValidator", "CommentStripper", "TypingGuard", "NoOpDetector",
@@ -440,24 +452,40 @@ __all__ = [
     # Integrations
     "register_ablation_tools", "AblationToolSynthesizer", "ABLATION_COMMANDS",
     "register_corecoder_tools", "CoreCoderToolSynthesizer", "CORECODER_COMMANDS",
+    # RedAmon Orchestrator
+    "RedamonOrchestrator", "AgentTask", "AgentContext", "AgentPhase", "TaskStatus",
+    "OrchestratorIntegration", "get_orchestrator_integration", "agent_session",
+    # RedAmon Knowledge Base
+    "KnowledgeBase", "Document", "KBSearchResult", "EmbeddingProvider", "VectorStore",
+    "InMemoryVectorStore", "KnowledgeBaseIntegration", "get_knowledge_base_integration",
+    # RedAmon Docker Broker
+    "DockerBroker", "DockerBrokerConfig", "DockerBrokerIntegration", "get_docker_broker_integration",
+    # RedAmon Recon
+    "ReconModule", "ReconPipeline", "ReconTarget", "ReconResult", "ReconModuleType",
+    "SubdomainEnumModule", "PortScanModule", "HTTPProbeModule", "NucleiScanModule",
+    "KatanaCrawlModule", "GraphQLScannerModule", "ReconIntegration", "get_recon_integration",
+    # Cybersec-Toolkit
+    "ToolManager", "ToolConfig", "ModuleRunner",
+    "CybersecToolkitIntegration", "get_cybersec_toolkit_integration",
 ]
 
-def initialize_system() -> Dict[str, Any]:
+
+def initialize_system() -> dict[str, Any]:
     """Initialize all core system components"""
     results = {}
-    
+
     # Initialize core
     results["core"] = {
         "registry": registry,
         "events": event_bus,
         "config": config
     }
-    
+
     # Initialize providers (Phase 1)
     results["providers"] = {
         "registry": ProviderRegistry.get_instance(),
     }
-    
+
     # Kernel services (classes available for instantiation)
     results["kernel"] = {
         "ProcessSupervisor": ProcessSupervisor,
@@ -468,7 +496,7 @@ def initialize_system() -> Dict[str, Any]:
         "ResourceThrottle": ResourceThrottle,
         "CgroupController": CgroupController,
     }
-    
+
     # Prompt services (classes available for instantiation)
     results["prompt"] = {
         "PromptFileSystem": PromptFileSystem,
@@ -477,7 +505,7 @@ def initialize_system() -> Dict[str, Any]:
         "TokenDensityCompressor": TokenDensityCompressor,
         "DynamicTokenBudgetAllocator": DynamicTokenBudgetAllocator,
     }
-    
+
     # Audit services (classes available for instantiation)
     results["audit"] = {
         "NDJSONTelemetryLogger": NDJSONTelemetryLogger,
@@ -486,7 +514,7 @@ def initialize_system() -> Dict[str, Any]:
         "AuditTrailReplayEngine": AuditTrailReplayEngine,
         "PIIKeyRedactor": PIIKeyRedactor,
     }
-    
+
     # Neurocranial services (classes available for instantiation)
     results["neurocranial"] = {
         "CorpusCallosum": CorpusCallosum,
@@ -497,7 +525,7 @@ def initialize_system() -> Dict[str, Any]:
         "CLISchemaGenerator": CLISchemaGenerator,
         "GlobalBinaryManager": GlobalBinaryManager,
     }
-    
+
     return results
 
 

@@ -2,16 +2,16 @@
 Integrity Verifier - File and system integrity verification
 """
 import hashlib
-import os
+import hmac
 import json
-import time
+import os
 import threading
-from typing import Dict, List, Optional, Any, Set, Callable
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import hmac
+from typing import Any
 
 
 class IntegrityStatus(Enum):
@@ -38,10 +38,10 @@ class FileIntegrityRecord:
     size: int
     mtime: float
     mode: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    verified_at: Optional[float] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    verified_at: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "path": self.path,
             "algorithm": self.algorithm.value,
@@ -54,7 +54,7 @@ class FileIntegrityRecord:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FileIntegrityRecord':
+    def from_dict(cls, data: dict[str, Any]) -> 'FileIntegrityRecord':
         return cls(
             path=data["path"],
             algorithm=HashAlgorithm(data["algorithm"]),
@@ -71,12 +71,12 @@ class FileIntegrityRecord:
 class VerificationResult:
     path: str
     status: IntegrityStatus
-    expected: Optional[FileIntegrityRecord] = None
-    actual: Optional[FileIntegrityRecord] = None
-    error: Optional[str] = None
+    expected: FileIntegrityRecord | None = None
+    actual: FileIntegrityRecord | None = None
+    error: str | None = None
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "path": self.path,
             "status": self.status.value,
@@ -91,7 +91,7 @@ class VerificationResult:
 class IntegrityReport:
     scan_id: str
     root_path: str
-    results: List[VerificationResult]
+    results: list[VerificationResult]
     scan_duration: float
     total_files: int
     verified: int
@@ -101,7 +101,7 @@ class IntegrityReport:
     errors: int
     timestamp: float = field(default_factory=time.time)
 
-    def summary(self) -> Dict[str, int]:
+    def summary(self) -> dict[str, int]:
         return {
             "total": self.total_files,
             "verified": self.verified,
@@ -119,7 +119,7 @@ class Hasher:
     def hash_file(self, path: str) -> str:
         hasher = self._get_hasher()
         try:
-            with open(path, 'rb') as f:
+            with Path(path).open('rb') as f:
                 for chunk in iter(lambda: f.read(8192), b''):
                     hasher.update(chunk)
         except Exception:
@@ -134,11 +134,11 @@ class Hasher:
     def _get_hasher(self):
         if self.algorithm == HashAlgorithm.SHA256:
             return hashlib.sha256()
-        elif self.algorithm == HashAlgorithm.SHA512:
+        if self.algorithm == HashAlgorithm.SHA512:
             return hashlib.sha512()
-        elif self.algorithm == HashAlgorithm.BLAKE2B:
+        if self.algorithm == HashAlgorithm.BLAKE2B:
             return hashlib.blake2b()
-        elif self.algorithm == HashAlgorithm.SHA3_256:
+        if self.algorithm == HashAlgorithm.SHA3_256:
             return hashlib.sha3_256()
         return hashlib.sha256()
 
@@ -146,15 +146,15 @@ class Hasher:
 class IntegrityStore:
     def __init__(self, store_path: str):
         self.store_path = store_path
-        self.records: Dict[str, FileIntegrityRecord] = {}
+        self.records: dict[str, FileIntegrityRecord] = {}
         self._lock = threading.RLock()
         self._load()
 
     def _load(self):
-        if not os.path.exists(self.store_path):
+        if not Path(self.store_path).exists():
             return
         try:
-            with open(self.store_path, 'r') as f:
+            with Path(self.store_path).open() as f:
                 data = json.load(f)
                 for record_data in data.get("records", []):
                     record = FileIntegrityRecord.from_dict(record_data)
@@ -169,14 +169,14 @@ class IntegrityStore:
                 "algorithm": list(self.records.values())[0].algorithm.value if self.records else HashAlgorithm.SHA256.value,
                 "records": [r.to_dict() for r in self.records.values()],
             }
-            with open(self.store_path, 'w') as f:
+            with Path(self.store_path).open('w') as f:
                 json.dump(data, f, indent=2)
 
     def add(self, record: FileIntegrityRecord):
         with self._lock:
             self.records[record.path] = record
 
-    def get(self, path: str) -> Optional[FileIntegrityRecord]:
+    def get(self, path: str) -> FileIntegrityRecord | None:
         with self._lock:
             return self.records.get(path)
 
@@ -187,7 +187,7 @@ class IntegrityStore:
                 return True
         return False
 
-    def get_all(self) -> Dict[str, FileIntegrityRecord]:
+    def get_all(self) -> dict[str, FileIntegrityRecord]:
         with self._lock:
             return dict(self.records)
 
@@ -202,7 +202,7 @@ class IntegrityVerifier:
         store: IntegrityStore,
         algorithm: HashAlgorithm = HashAlgorithm.SHA256,
         follow_symlinks: bool = False,
-        exclude_patterns: List[str] = None,
+        exclude_patterns: list[str] = None,
     ):
         self.store = store
         self.hasher = Hasher(algorithm)
@@ -213,7 +213,7 @@ class IntegrityVerifier:
             "node_modules", ".venv", "venv", "env",
         ]
         self._lock = threading.RLock()
-        self.callbacks: List[Callable[[VerificationResult], None]] = []
+        self.callbacks: list[Callable[[VerificationResult], None]] = []
 
     def add_callback(self, callback: Callable[[VerificationResult], None]):
         self.callbacks.append(callback)
@@ -292,10 +292,10 @@ class IntegrityVerifier:
     def verify_directory(self, root_path: str) -> IntegrityReport:
         import time
         start_time = time.time()
-        
+
         root = Path(root_path).resolve()
         all_files = []
-        
+
         for file_path in root.rglob('*'):
             if file_path.is_file() and not self._should_exclude(str(file_path)):
                 all_files.append(str(file_path))
@@ -310,7 +310,7 @@ class IntegrityVerifier:
         for file_path in all_files:
             result = self.verify_file(file_path)
             results.append(result)
-            
+
             if result.status == IntegrityStatus.VERIFIED:
                 verified += 1
             elif result.status == IntegrityStatus.MODIFIED:
@@ -349,13 +349,13 @@ class IntegrityVerifier:
             new_files=new_files,
             errors=errors,
         )
-        
+
         return report
 
     def initialize_baseline(self, root_path: str) -> IntegrityReport:
         root = Path(root_path).resolve()
         count = 0
-        
+
         for file_path in root.rglob('*'):
             if file_path.is_file() and not self._should_exclude(str(file_path)):
                 record = self._get_file_record(str(file_path))
@@ -364,7 +364,7 @@ class IntegrityVerifier:
                     count += 1
 
         self.store.save()
-        
+
         return IntegrityReport(
             scan_id=hashlib.md5(f"baseline:{root_path}:{time.time()}".encode()).hexdigest()[:12],
             root_path=str(root),
@@ -380,11 +380,9 @@ class IntegrityVerifier:
 
     def update_baseline(self, root_path: str, force: bool = False) -> IntegrityReport:
         report = self.verify_directory(root_path)
-        
+
         for result in report.results:
-            if result.status in (IntegrityStatus.VERIFIED, IntegrityStatus.NEW) and result.actual:
-                self.store.add(result.actual)
-            elif result.status == IntegrityStatus.MODIFIED and force and result.actual:
+            if result.status in (IntegrityStatus.VERIFIED, IntegrityStatus.NEW) and result.actual or result.status == IntegrityStatus.MODIFIED and force and result.actual:
                 self.store.add(result.actual)
             elif result.status == IntegrityStatus.MISSING:
                 self.store.remove(result.path)

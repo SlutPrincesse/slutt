@@ -4,11 +4,11 @@ Hook Engine - Extensible hook system for reactive pipelines
 import asyncio
 import time
 import uuid
-from typing import Dict, List, Optional, Any, Callable, Awaitable, Set
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
+from typing import Any
 
 
 class HookPhase(Enum):
@@ -33,11 +33,11 @@ class Hook:
     phase: HookPhase
     handler: Callable
     priority: HookPriority = HookPriority.NORMAL
-    condition: Optional[Callable] = None
+    condition: Callable | None = None
     async_handler: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def matches(self, context: Dict[str, Any]) -> bool:
+    def matches(self, context: dict[str, Any]) -> bool:
         if self.condition:
             try:
                 return self.condition(context)
@@ -53,10 +53,10 @@ class HookContext:
     phase: HookPhase
     input_data: Any
     output_data: Any = None
-    error: Optional[Exception] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: Exception | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
+    end_time: float | None = None
 
     @property
     def duration(self) -> float:
@@ -67,8 +67,8 @@ class HookContext:
 
 class HookEngine:
     def __init__(self):
-        self.hooks: Dict[str, List[Hook]] = defaultdict(list)
-        self.global_hooks: List[Hook] = []
+        self.hooks: dict[str, list[Hook]] = defaultdict(list)
+        self.global_hooks: list[Hook] = []
         self._lock = asyncio.Lock()
 
     def register(
@@ -77,8 +77,8 @@ class HookEngine:
         phase: HookPhase,
         handler: Callable,
         priority: HookPriority = HookPriority.NORMAL,
-        condition: Optional[Callable] = None,
-        metadata: Dict[str, Any] = None,
+        condition: Callable | None = None,
+        metadata: dict[str, Any] = None,
     ) -> str:
         hook_id = str(uuid.uuid4())
         hook = Hook(
@@ -100,8 +100,8 @@ class HookEngine:
         name: str,
         handler: Callable,
         priority: HookPriority = HookPriority.NORMAL,
-        condition: Optional[Callable] = None,
-        metadata: Dict[str, Any] = None,
+        condition: Callable | None = None,
+        metadata: dict[str, Any] = None,
     ) -> str:
         hook_id = str(uuid.uuid4())
         hook = Hook(
@@ -136,7 +136,7 @@ class HookEngine:
         context: HookContext,
     ) -> HookContext:
         hooks = self.hooks.get(phase.value, [])
-        
+
         for hook in hooks:
             if hook.matches(context.__dict__):
                 try:
@@ -149,45 +149,45 @@ class HookEngine:
                     if phase != HookPhase.ERROR:
                         await self.execute_phase(HookPhase.ERROR, context)
                     break
-        
+
         return context
 
     async def execute_all(
         self,
         input_data: Any,
-        phases: List[HookPhase] = None,
+        phases: list[HookPhase] = None,
     ) -> Any:
         if phases is None:
             phases = [HookPhase.PRE, HookPhase.POST]
-        
+
         context = HookContext(
             hook_id="",
             hook_name="",
             phase=HookPhase.PRE,
             input_data=input_data,
         )
-        
+
         for phase in phases:
             context.phase = phase
             context = await self.execute_phase(phase, context)
             if context.error and phase != HookPhase.ERROR:
                 break
-        
+
         return context.output_data or context.input_data
 
-    def get_hooks(self, phase: HookPhase) -> List[Hook]:
+    def get_hooks(self, phase: HookPhase) -> list[Hook]:
         return self.hooks.get(phase.value, [])
 
-    def list_all_hooks(self) -> Dict[str, List[Hook]]:
+    def list_all_hooks(self) -> dict[str, list[Hook]]:
         return {phase: hooks for phase, hooks in self.hooks.items()}
 
 
 class PipelineHookEngine(HookEngine):
     def __init__(self):
         super().__init__()
-        self.pipelines: Dict[str, List[str]] = {}
+        self.pipelines: dict[str, list[str]] = {}
 
-    def define_pipeline(self, name: str, hook_names: List[str]):
+    def define_pipeline(self, name: str, hook_names: list[str]):
         self.pipelines[name] = hook_names
 
     async def execute_pipeline(self, name: str, input_data: Any) -> Any:
@@ -198,7 +198,7 @@ class PipelineHookEngine(HookEngine):
             phase=HookPhase.PRE,
             input_data=input_data,
         )
-        
+
         for hook_name in hook_names:
             context.hook_name = hook_name
             for phase in [HookPhase.PRE, HookPhase.POST]:
@@ -215,14 +215,14 @@ class PipelineHookEngine(HookEngine):
                             context.error = e
                             await self.execute_phase(HookPhase.ERROR, context)
                             break
-        
+
         return context.output_data or context.input_data
 
 
 class ConditionalHookEngine(HookEngine):
     def __init__(self):
         super().__init__()
-        self.conditions: Dict[str, Callable] = {}
+        self.conditions: dict[str, Callable] = {}
 
     def register_condition(self, name: str, condition: Callable):
         self.conditions[name] = condition
@@ -234,12 +234,12 @@ class ConditionalHookEngine(HookEngine):
         handler: Callable,
         condition_name: str,
         priority: HookPriority = HookPriority.NORMAL,
-        metadata: Dict[str, Any] = None,
+        metadata: dict[str, Any] = None,
     ) -> str:
         condition = self.conditions.get(condition_name)
         if not condition:
             raise ValueError(f"Condition not found: {condition_name}")
-        
+
         return self.register(name, phase, handler, priority, condition, metadata)
 
 
@@ -247,7 +247,7 @@ class AsyncHookEngine(HookEngine):
     def __init__(self, max_concurrent: int = 10):
         super().__init__()
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.results: Dict[str, Any] = {}
+        self.results: dict[str, Any] = {}
 
     async def execute_phase(
         self,
@@ -255,7 +255,7 @@ class AsyncHookEngine(HookEngine):
         context: HookContext,
     ) -> HookContext:
         hooks = self.hooks.get(phase.value, [])
-        
+
         async def run_hook(hook: Hook):
             async with self.semaphore:
                 if hook.matches(context.__dict__):
@@ -266,16 +266,16 @@ class AsyncHookEngine(HookEngine):
                             hook.handler(context)
                     except Exception as e:
                         context.error = e
-        
+
         await asyncio.gather(*[run_hook(hook) for hook in hooks])
         return context
 
 
 class HookMetrics:
     def __init__(self):
-        self.counters: Dict[str, int] = defaultdict(int)
-        self.durations: Dict[str, List[float]] = defaultdict(list)
-        self.errors: Dict[str, int] = defaultdict(int)
+        self.counters: dict[str, int] = defaultdict(int)
+        self.durations: dict[str, list[float]] = defaultdict(list)
+        self.errors: dict[str, int] = defaultdict(int)
         self._lock = asyncio.Lock()
 
     async def record(self, hook_name: str, duration: float, error: bool = False):
@@ -285,7 +285,7 @@ class HookMetrics:
             if error:
                 self.errors[hook_name] += 1
 
-    def get_stats(self, hook_name: str) -> Dict[str, Any]:
+    def get_stats(self, hook_name: str) -> dict[str, Any]:
         durations = self.durations.get(hook_name, [])
         return {
             "count": self.counters.get(hook_name, 0),

@@ -3,14 +3,12 @@ Deep Auditor - Comprehensive security audit engine
 """
 import asyncio
 import hashlib
-import json
-import random
 import time
-from typing import Dict, List, Optional, Any, Callable, Set, Tuple
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class AuditType(Enum):
@@ -41,13 +39,13 @@ class AuditFinding:
     line_number: int = 0
     column: int = 0
     rule_id: str = ""
-    evidence: Dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
     remediation: str = ""
-    references: List[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
     false_positive: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "finding_id": self.finding_id,
             "audit_type": self.audit_type.value,
@@ -71,17 +69,17 @@ class AuditResult:
     audit_id: str
     audit_type: AuditType
     target: str
-    findings: List[AuditFinding] = field(default_factory=list)
+    findings: list[AuditFinding] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
     duration: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def complete(self):
         self.completed_at = time.time()
         self.duration = self.completed_at - self.started_at
 
-    def get_summary(self) -> Dict[str, int]:
+    def get_summary(self) -> dict[str, int]:
         summary = {s.value: 0 for s in Severity}
         for finding in self.findings:
             summary[finding.severity.value] += 1
@@ -90,8 +88,8 @@ class AuditResult:
 
 class DeepAuditor:
     def __init__(self):
-        self.rules: Dict[str, Callable] = {}
-        self.audit_history: List[AuditResult] = []
+        self.rules: dict[str, Callable] = {}
+        self.audit_history: list[AuditResult] = []
         self._register_default_rules()
 
     def _register_default_rules(self):
@@ -107,17 +105,17 @@ class DeepAuditor:
     def register_rule(self, rule_id: str, checker: Callable):
         self.rules[rule_id] = checker
 
-    async def audit(self, target: str, audit_types: List[AuditType] = None) -> AuditResult:
+    async def audit(self, target: str, audit_types: list[AuditType] = None) -> AuditResult:
         audit_types = audit_types or list(AuditType)
-        
+
         result = AuditResult(
             audit_id=hashlib.md5(f"{target}:{time.time()}".encode()).hexdigest()[:12],
             audit_type=audit_types[0] if audit_types else AuditType.STATIC_ANALYSIS,
             target=target,
         )
-        
+
         target_path = Path(target)
-        
+
         for audit_type in audit_types:
             if audit_type == AuditType.STATIC_ANALYSIS:
                 await self._static_analysis(target_path, result)
@@ -129,7 +127,7 @@ class DeepAuditor:
                 await self._secrets_detection(target_path, result)
             elif audit_type == AuditType.LICENSE_COMPLIANCE:
                 await self._license_compliance(target_path, result)
-        
+
         result.complete()
         self.audit_history.append(result)
         return result
@@ -145,7 +143,7 @@ class DeepAuditor:
         try:
             content = file_path.read_text(encoding='utf-8', errors='ignore')
             lines = content.split('\n')
-            
+
             for rule_id, checker in self.rules.items():
                 findings = checker(file_path, content, lines)
                 for finding in findings:
@@ -161,7 +159,7 @@ class DeepAuditor:
                 file_path=str(file_path),
             ))
 
-    def _check_hardcoded_secrets(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_hardcoded_secrets(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             (r'api[_-]?key\s*=\s*["\'][^"\']+["\']', "API Key"),
@@ -171,7 +169,7 @@ class DeepAuditor:
             (r'aws[_-]?access[_-]?key\s*=\s*["\'][^"\']+["\']', "AWS Access Key"),
             (r'private[_-]?key\s*=\s*["\'][^"\']+["\']', "Private Key"),
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern, desc in patterns:
@@ -190,14 +188,14 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_sql_injection(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_sql_injection(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             r'\.execute\s*\(\s*["\'].*%.*["\']',
             r'\.execute\s*\(\s*f["\']',
             r'cursor\.execute\s*\(\s*["\'].*\+.*["\']',
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern in patterns:
@@ -216,7 +214,7 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_xss(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_xss(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             r'render_template_string\s*\(',
@@ -224,7 +222,7 @@ class DeepAuditor:
             r'innerHTML\s*=',
             r'dangerouslySetInnerHTML',
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern in patterns:
@@ -243,14 +241,14 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_path_traversal(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_path_traversal(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             r'open\s*\(\s*["\'].*\.\./',
             r'path\.join\s*\(.*request\.',
             r'send_file\s*\(.*request\.',
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern in patterns:
@@ -269,7 +267,7 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_weak_crypto(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_weak_crypto(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             (r'hashlib\.md5\s*\(', "MD5"),
@@ -279,7 +277,7 @@ class DeepAuditor:
             (r'RSA\.generate\s*\(\s*512', "Weak RSA Key"),
             (r'RSA\.generate\s*\(\s*1024', "Weak RSA Key"),
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern, desc in patterns:
@@ -298,7 +296,7 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_insecure_deserialization(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_insecure_deserialization(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             r'pickle\.loads?\s*\(',
@@ -306,7 +304,7 @@ class DeepAuditor:
             r'marshal\.loads?\s*\(',
             r'shelve\.open\s*\(',
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern in patterns:
@@ -325,14 +323,14 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_debug_enabled(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_debug_enabled(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             r'DEBUG\s*=\s*True',
             r'app\.debug\s*=\s*True',
             r'FLASK_DEBUG\s*=\s*1',
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern in patterns:
@@ -351,7 +349,7 @@ class DeepAuditor:
                     ))
         return findings
 
-    def _check_default_credentials(self, file_path: Path, content: str, lines: List[str]) -> List[AuditFinding]:
+    def _check_default_credentials(self, file_path: Path, content: str, lines: list[str]) -> list[AuditFinding]:
         findings = []
         patterns = [
             (r'admin\s*:\s*admin', "admin:admin"),
@@ -359,7 +357,7 @@ class DeepAuditor:
             (r'password\s*=\s*["\']password["\']', "password"),
             (r'username\s*=\s*["\']admin["\'].*password\s*=\s*["\']admin["\']', "admin/admin"),
         ]
-        
+
         import re
         for i, line in enumerate(lines):
             for pattern, desc in patterns:
@@ -390,10 +388,10 @@ class DeepAuditor:
     async def _license_compliance(self, target: Path, result: AuditResult):
         pass
 
-    def get_history(self, limit: int = 100) -> List[AuditResult]:
+    def get_history(self, limit: int = 100) -> list[AuditResult]:
         return self.audit_history[-limit:]
 
-    def get_findings_by_severity(self, severity: Severity) -> List[AuditFinding]:
+    def get_findings_by_severity(self, severity: Severity) -> list[AuditFinding]:
         findings = []
         for result in self.audit_history:
             findings.extend([f for f in result.findings if f.severity == severity])
@@ -403,11 +401,11 @@ class DeepAuditor:
 class AuditScheduler:
     def __init__(self, auditor: DeepAuditor):
         self.auditor = auditor
-        self.schedules: Dict[str, Dict] = {}
+        self.schedules: dict[str, dict] = {}
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
-    def add_schedule(self, name: str, target: str, audit_types: List[AuditType], interval_hours: float):
+    def add_schedule(self, name: str, target: str, audit_types: list[AuditType], interval_hours: float):
         self.schedules[name] = {
             "target": target,
             "audit_types": audit_types,

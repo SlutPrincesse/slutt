@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
 from enum import Enum
+from typing import Any
 
 
 class ProviderType(Enum):
@@ -23,21 +24,21 @@ class ModelInfo:
     supports_audio: bool = False
     input_cost_per_1k: float = 0.0
     output_cost_per_1k: float = 0.0
-    capabilities: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    capabilities: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class LLMResponse:
     content: str
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str = "stop"
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
     model: str = ""
     provider: ProviderType = ProviderType.CUSTOM
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def cost(self) -> float:
@@ -48,8 +49,8 @@ class LLMResponse:
 @dataclass
 class LLMChunk:
     delta: str = ""
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    finish_reason: Optional[str] = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    finish_reason: str | None = None
     is_final: bool = False
 
 
@@ -57,13 +58,13 @@ class LLMProvider(ABC):
     def __init__(self, model: str, **kwargs):
         self.model = model
         self.config = kwargs
-        self._model_info: Optional[ModelInfo] = None
+        self._model_info: ModelInfo | None = None
 
     @abstractmethod
     async def chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         **kwargs
     ) -> LLMResponse:
         pass
@@ -71,8 +72,8 @@ class LLMProvider(ABC):
     @abstractmethod
     async def stream_chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         **kwargs
     ) -> AsyncIterator[LLMChunk]:
         pass
@@ -109,7 +110,7 @@ class ProviderError(Exception):
 
 
 class RateLimitError(ProviderError):
-    def __init__(self, message: str, provider: ProviderType, retry_after: Optional[int] = None):
+    def __init__(self, message: str, provider: ProviderType, retry_after: int | None = None):
         super().__init__(message, provider, "RATE_LIMIT")
         self.retry_after = retry_after
 

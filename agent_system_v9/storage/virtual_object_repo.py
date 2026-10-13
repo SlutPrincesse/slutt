@@ -1,16 +1,16 @@
 """
 Virtual Object Repository - Object storage with versioning
 """
+import asyncio
 import hashlib
 import json
+import pickle
 import time
-import asyncio
-from typing import Dict, List, Optional, Any, Set, Union
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import pickle
+from typing import Any
 
 
 class ObjectType(Enum):
@@ -38,15 +38,15 @@ class ObjectMetadata:
     object_id: ObjectId
     size: int
     created_at: float = field(default_factory=time.time)
-    tags: List[str] = field(default_factory=list)
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
     content_type: str = "application/octet-stream"
 
 
 @dataclass
 class VersionedObject:
     object_id: ObjectId
-    versions: List['ObjectVersion'] = field(default_factory=list)
+    versions: list['ObjectVersion'] = field(default_factory=list)
     current_version: int = 0
 
     def add_version(self, version: 'ObjectVersion'):
@@ -60,7 +60,7 @@ class ObjectVersion:
     object_id: ObjectId
     data: bytes
     metadata: ObjectMetadata
-    parent_version: Optional[int] = None
+    parent_version: int | None = None
     message: str = ""
     author: str = ""
     timestamp: float = field(default_factory=time.time)
@@ -72,8 +72,8 @@ class ObjectStore:
         self.root_path.mkdir(parents=True, exist_ok=True)
         self.objects_dir = self.root_path / "objects"
         self.objects_dir.mkdir(exist_ok=True)
-        self.index: Dict[str, ObjectId] = {}
-        self.versioned: Dict[str, VersionedObject] = {}
+        self.index: dict[str, ObjectId] = {}
+        self.versioned: dict[str, VersionedObject] = {}
         self._lock = asyncio.Lock()
 
     def _compute_hash(self, data: bytes, obj_type: ObjectType = ObjectType.BLOB) -> ObjectId:
@@ -82,18 +82,18 @@ class ObjectStore:
 
     async def put(self, data: bytes, obj_type: ObjectType = ObjectType.BLOB, metadata: ObjectMetadata = None) -> ObjectId:
         obj_id = self._compute_hash(data, obj_type)
-        
+
         async with self._lock:
             obj_dir = self.objects_dir / obj_id.hash[:2]
             obj_dir.mkdir(exist_ok=True)
             obj_file = obj_dir / obj_id.hash[2:]
-            
+
             if not obj_file.exists():
                 obj_file.write_bytes(data)
-            
+
             if metadata is None:
                 metadata = ObjectMetadata(object_id=obj_id, size=len(data))
-            
+
             meta_file = obj_dir / f"{obj_id.hash[2:]}.meta"
             meta_file.write_text(json.dumps({
                 "object_id": str(obj_id),
@@ -103,18 +103,18 @@ class ObjectStore:
                 "attributes": metadata.attributes,
                 "content_type": metadata.content_type,
             }))
-            
+
             self.index[str(obj_id)] = obj_id
             return obj_id
 
-    async def get(self, obj_id: ObjectId) -> Optional[bytes]:
+    async def get(self, obj_id: ObjectId) -> bytes | None:
         obj_dir = self.objects_dir / obj_id.hash[:2]
         obj_file = obj_dir / obj_id.hash[2:]
         if obj_file.exists():
             return obj_file.read_bytes()
         return None
 
-    async def get_metadata(self, obj_id: ObjectId) -> Optional[ObjectMetadata]:
+    async def get_metadata(self, obj_id: ObjectId) -> ObjectMetadata | None:
         obj_dir = self.objects_dir / obj_id.hash[:2]
         meta_file = obj_dir / f"{obj_id.hash[2:]}.meta"
         if meta_file.exists():
@@ -138,7 +138,7 @@ class ObjectStore:
         obj_dir = self.objects_dir / obj_id.hash[:2]
         obj_file = obj_dir / obj_id.hash[2:]
         meta_file = obj_dir / f"{obj_id.hash[2:]}.meta"
-        
+
         deleted = False
         if obj_file.exists():
             obj_file.unlink()
@@ -146,13 +146,13 @@ class ObjectStore:
         if meta_file.exists():
             meta_file.unlink()
             deleted = True
-        
+
         if str(obj_id) in self.index:
             del self.index[str(obj_id)]
-        
+
         return deleted
 
-    async def list_objects(self, prefix: str = "") -> List[ObjectId]:
+    async def list_objects(self, prefix: str = "") -> list[ObjectId]:
         results = []
         for obj_dir in self.objects_dir.iterdir():
             if obj_dir.is_dir():
@@ -181,12 +181,12 @@ class VersionedObjectStore(ObjectStore):
         async with self._lock:
             if key not in self.versioned:
                 self.versioned[key] = VersionedObject(object_id=ObjectId(""))
-            
+
             versioned_obj = self.versioned[key]
             new_version_num = len(versioned_obj.versions)
-            
+
             obj_id = await self.put(data)
-            
+
             metadata = ObjectMetadata(object_id=obj_id, size=len(data))
             version = ObjectVersion(
                 version=new_version_num,
@@ -197,37 +197,37 @@ class VersionedObjectStore(ObjectStore):
                 message=message,
                 author=author,
             )
-            
+
             versioned_obj.add_version(version)
             await self._save_versioned(key, versioned_obj)
-            
+
             return version
 
-    async def get_version(self, key: str, version: int = -1) -> Optional[ObjectVersion]:
+    async def get_version(self, key: str, version: int = -1) -> ObjectVersion | None:
         if key not in self.versioned:
             await self._load_versioned(key)
-        
+
         if key not in self.versioned:
             return None
-        
+
         versioned_obj = self.versioned[key]
         if version == -1:
             version = versioned_obj.current_version
-        
+
         if 0 <= version < len(versioned_obj.versions):
             return versioned_obj.versions[version]
         return None
 
-    async def get_latest(self, key: str) -> Optional[ObjectVersion]:
+    async def get_latest(self, key: str) -> ObjectVersion | None:
         return await self.get_version(key, -1)
 
-    async def get_history(self, key: str) -> List[ObjectVersion]:
+    async def get_history(self, key: str) -> list[ObjectVersion]:
         if key not in self.versioned:
             await self._load_versioned(key)
-        
+
         if key not in self.versioned:
             return []
-        
+
         return list(self.versioned[key].versions)
 
     async def _save_versioned(self, key: str, versioned_obj: VersionedObject):
@@ -289,19 +289,19 @@ class VersionedObjectStore(ObjectStore):
 class VirtualObjectRepository:
     def __init__(self, root_path: str):
         self.store = VersionedObjectStore(root_path)
-        self.collections: Dict[str, Set[str]] = defaultdict(set)
+        self.collections: dict[str, set[str]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
     async def put_object(self, collection: str, key: str, data: bytes, **kwargs) -> ObjectId:
         full_key = f"{collection}/{key}"
         obj_id = await self.store.put(data, **kwargs)
-        
+
         async with self._lock:
             self.collections[collection].add(key)
-        
+
         return obj_id
 
-    async def get_object(self, collection: str, key: str) -> Optional[bytes]:
+    async def get_object(self, collection: str, key: str) -> bytes | None:
         full_key = f"{collection}/{key}"
         version = await self.store.get_latest(full_key)
         if version:
@@ -317,21 +317,21 @@ class VirtualObjectRepository:
         author: str = "",
     ) -> ObjectVersion:
         full_key = f"{collection}/{key}"
-        
+
         async with self._lock:
             self.collections[collection].add(key)
-        
+
         return await self.store.put_versioned(full_key, data, message, author)
 
-    async def get_versioned_object(self, collection: str, key: str, version: int = -1) -> Optional[ObjectVersion]:
+    async def get_versioned_object(self, collection: str, key: str, version: int = -1) -> ObjectVersion | None:
         full_key = f"{collection}/{key}"
         return await self.store.get_version(full_key, version)
 
-    async def get_object_history(self, collection: str, key: str) -> List[ObjectVersion]:
+    async def get_object_history(self, collection: str, key: str) -> list[ObjectVersion]:
         full_key = f"{collection}/{key}"
         return await self.store.get_history(full_key)
 
-    async def list_collection(self, collection: str) -> List[str]:
+    async def list_collection(self, collection: str) -> list[str]:
         return list(self.collections.get(collection, set()))
 
     async def delete_object(self, collection: str, key: str) -> bool:
@@ -369,7 +369,7 @@ class ContentAddressableStore:
     async def store(self, data: bytes, collection: str = "blobs") -> ObjectId:
         return await self.repo.put_object(collection, "", data)
 
-    async def retrieve(self, obj_id: ObjectId) -> Optional[bytes]:
+    async def retrieve(self, obj_id: ObjectId) -> bytes | None:
         return await self.repo.store.get(obj_id)
 
     async def store_json(self, obj: Any, collection: str = "json") -> ObjectId:

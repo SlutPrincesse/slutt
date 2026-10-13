@@ -3,13 +3,12 @@ Canary Guard - Canary deployment and progressive rollout
 """
 import asyncio
 import hashlib
-import time
 import random
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-import statistics
+from typing import Any
 
 
 class CanaryPhase(Enum):
@@ -47,7 +46,7 @@ class CanaryConfig:
 class ServiceVersion:
     version: str
     image: str
-    config: Dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     replicas: int = 1
     healthy: bool = True
 
@@ -57,7 +56,7 @@ class CanaryMetrics:
     version: str
     requests: int = 0
     errors: int = 0
-    latencies: List[float] = field(default_factory=list)
+    latencies: list[float] = field(default_factory=list)
     error_rate: float = 0.0
     p50_latency: float = 0.0
     p95_latency: float = 0.0
@@ -86,32 +85,32 @@ class CanaryDeployment:
     config: CanaryConfig
     phase: CanaryPhase = CanaryPhase.INITIAL
     traffic_split: float = 0.0
-    current_metrics: Optional[CanaryMetrics] = None
-    canary_metrics: Optional[CanaryMetrics] = None
+    current_metrics: CanaryMetrics | None = None
+    canary_metrics: CanaryMetrics | None = None
     started_at: float = field(default_factory=time.time)
     phase_started_at: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class TrafficRouter:
     def __init__(self):
-        self.routes: Dict[str, Dict[str, float]] = {}
+        self.routes: dict[str, dict[str, float]] = {}
 
-    def set_split(self, service: str, versions: Dict[str, float]):
+    def set_split(self, service: str, versions: dict[str, float]):
         total = sum(versions.values())
         if total > 0:
             self.routes[service] = {k: v / total for k, v in versions.items()}
         else:
             self.routes[service] = {}
 
-    def get_split(self, service: str) -> Dict[str, float]:
+    def get_split(self, service: str) -> dict[str, float]:
         return self.routes.get(service, {})
 
     def route_request(self, service: str) -> str:
         split = self.get_split(service)
         if not split:
             return "current"
-        
+
         rand = random.random()
         cumulative = 0.0
         for version, weight in split.items():
@@ -123,7 +122,7 @@ class TrafficRouter:
 
 class MetricsCollector:
     def __init__(self):
-        self.metrics: Dict[str, CanaryMetrics] = {}
+        self.metrics: dict[str, CanaryMetrics] = {}
 
     def record(self, deployment_id: str, version: str, latency: float, error: bool = False):
         key = f"{deployment_id}:{version}"
@@ -131,10 +130,10 @@ class MetricsCollector:
             self.metrics[key] = CanaryMetrics(version=version)
         self.metrics[key].add_request(latency, error)
 
-    def get_metrics(self, deployment_id: str, version: str) -> Optional[CanaryMetrics]:
+    def get_metrics(self, deployment_id: str, version: str) -> CanaryMetrics | None:
         return self.metrics.get(f"{deployment_id}:{version}")
 
-    def get_all_metrics(self, deployment_id: str) -> Dict[str, CanaryMetrics]:
+    def get_all_metrics(self, deployment_id: str) -> dict[str, CanaryMetrics]:
         return {k: v for k, v in self.metrics.items() if k.startswith(f"{deployment_id}:")}
 
 
@@ -142,10 +141,10 @@ class CanaryGuard:
     def __init__(self, router: TrafficRouter = None, collector: MetricsCollector = None):
         self.router = router or TrafficRouter()
         self.collector = collector or MetricsCollector()
-        self.deployments: Dict[str, CanaryDeployment] = {}
+        self.deployments: dict[str, CanaryDeployment] = {}
         self._running = False
-        self._monitor_task: Optional[asyncio.Task] = None
-        self._callbacks: List[Callable] = []
+        self._monitor_task: asyncio.Task | None = None
+        self._callbacks: list[Callable] = []
 
     def on_phase_change(self, callback: Callable):
         self._callbacks.append(callback)
@@ -164,24 +163,24 @@ class CanaryGuard:
             canary_version=canary_version,
             config=config or CanaryConfig(),
         )
-        
+
         deployment.phase = CanaryPhase.CANARY
         deployment.traffic_split = deployment.config.initial_traffic_percent / 100.0
-        
+
         self.router.set_split(service_name, {
             current_version.version: 1.0 - deployment.traffic_split,
             canary_version.version: deployment.traffic_split,
         })
-        
+
         deployment.current_metrics = CanaryMetrics(version=current_version.version)
         deployment.canary_metrics = CanaryMetrics(version=canary_version.version)
-        
+
         self.deployments[deployment.deployment_id] = deployment
         await self._notify_phase_change(deployment)
-        
+
         if self.config.auto_promote:
             await self.start_monitoring()
-        
+
         return deployment
 
     async def start_monitoring(self):
@@ -206,12 +205,12 @@ class CanaryGuard:
     async def _check_deployment(self, deployment: CanaryDeployment):
         current_metrics = self.collector.get_metrics(deployment.deployment_id, deployment.current_version.version)
         canary_metrics = self.collector.get_metrics(deployment.deployment_id, deployment.canary_version.version)
-        
+
         if current_metrics:
             deployment.current_metrics = current_metrics
         if canary_metrics:
             deployment.canary_metrics = canary_metrics
-        
+
         if deployment.phase == CanaryPhase.CANARY:
             await self._check_canary_phase(deployment)
         elif deployment.phase == CanaryPhase.PROGRESSIVE:
@@ -221,15 +220,15 @@ class CanaryGuard:
         canary = deployment.canary_metrics
         if not canary or canary.requests < deployment.config.min_samples:
             return
-        
+
         if canary.error_rate > deployment.config.error_rate_threshold:
             await self._rollback(deployment, f"Error rate {canary.error_rate:.2%} exceeds threshold")
             return
-        
+
         if canary.p99_latency > deployment.config.latency_p99_threshold:
             await self._rollback(deployment, f"P99 latency {canary.p99_latency:.0f}ms exceeds threshold")
             return
-        
+
         if canary.error_rate <= deployment.config.error_rate_threshold * 0.5:
             await self._promote_to_progressive(deployment)
 
@@ -237,15 +236,15 @@ class CanaryGuard:
         canary = deployment.canary_metrics
         if not canary:
             return
-        
+
         if deployment.traffic_split >= deployment.config.max_traffic_percent / 100.0:
             await self._complete(deployment)
             return
-        
+
         if canary.error_rate > deployment.config.error_rate_threshold:
             await self._rollback(deployment, f"Error rate increased to {canary.error_rate:.2%}")
             return
-        
+
         if time.time() - deployment.phase_started_at >= deployment.config.step_duration:
             await self._increase_traffic(deployment)
 
@@ -260,35 +259,35 @@ class CanaryGuard:
             deployment.traffic_split + deployment.config.step_increment / 100.0,
             deployment.config.max_traffic_percent / 100.0,
         )
-        
+
         deployment.traffic_split = new_split
-        
+
         self.router.set_split(deployment.service_name, {
             deployment.current_version.version: 1.0 - new_split,
             deployment.canary_version.version: new_split,
         })
-        
+
         deployment.phase_started_at = time.time()
 
     async def _complete(self, deployment: CanaryDeployment):
         deployment.phase = CanaryPhase.COMPLETE
         deployment.traffic_split = 1.0
-        
+
         self.router.set_split(deployment.service_name, {
             deployment.canary_version.version: 1.0,
         })
-        
+
         deployment.current_version = deployment.canary_version
         await self._notify_phase_change(deployment)
 
     async def _rollback(self, deployment: CanaryDeployment, reason: str):
         deployment.phase = CanaryPhase.ROLLBACK
         deployment.traffic_split = 0.0
-        
+
         self.router.set_split(deployment.service_name, {
             deployment.current_version.version: 1.0,
         })
-        
+
         deployment.metadata["rollback_reason"] = reason
         await self._notify_phase_change(deployment)
 
@@ -305,14 +304,14 @@ class CanaryGuard:
     def record_request(self, deployment_id: str, version: str, latency: float, error: bool = False):
         self.collector.record(deployment_id, version, latency, error)
 
-    def get_deployment(self, deployment_id: str) -> Optional[CanaryDeployment]:
+    def get_deployment(self, deployment_id: str) -> CanaryDeployment | None:
         return self.deployments.get(deployment_id)
 
-    def get_status(self, deployment_id: str) -> Dict[str, Any]:
+    def get_status(self, deployment_id: str) -> dict[str, Any]:
         deployment = self.deployments.get(deployment_id)
         if not deployment:
             return {}
-        
+
         return {
             "deployment_id": deployment.deployment_id,
             "service_name": deployment.service_name,
@@ -339,47 +338,47 @@ class ProgressiveRollout:
     async def rollout(
         self,
         service_name: str,
-        versions: List[ServiceVersion],
+        versions: list[ServiceVersion],
         config: CanaryConfig,
-    ) -> List[CanaryDeployment]:
+    ) -> list[CanaryDeployment]:
         deployments = []
         current = versions[0]
-        
+
         for canary in versions[1:]:
             deployment = await self.guard.start_canary(service_name, current, canary, config)
             deployments.append(deployment)
-            
+
             while deployment.phase not in (CanaryPhase.COMPLETE, CanaryPhase.ROLLBACK):
                 await asyncio.sleep(5)
-            
+
             if deployment.phase == CanaryPhase.ROLLBACK:
                 break
-            
+
             current = canary
-        
+
         return deployments
 
 
 class FeatureFlagCanary:
     def __init__(self, guard: CanaryGuard):
         self.guard = guard
-        self.flags: Dict[str, Dict[str, Any]] = {}
+        self.flags: dict[str, dict[str, Any]] = {}
 
-    def set_flag(self, flag_name: str, enabled_for: Dict[str, float]):
+    def set_flag(self, flag_name: str, enabled_for: dict[str, float]):
         self.flags[flag_name] = enabled_for
 
-    def is_enabled(self, flag_name: str, context: Dict[str, Any]) -> bool:
+    def is_enabled(self, flag_name: str, context: dict[str, Any]) -> bool:
         flag = self.flags.get(flag_name)
         if not flag:
             return False
-        
+
         user_id = context.get("user_id", "")
         hash_val = int(hashlib.md5(f"{flag_name}:{user_id}".encode()).hexdigest(), 16)
         percentile = (hash_val % 100) / 100.0
-        
+
         for version, weight in flag.items():
             if percentile < weight:
                 return True
             percentile -= weight
-        
+
         return False

@@ -3,11 +3,10 @@ Degradation Manager - Graceful degradation and fallback handling
 """
 import asyncio
 import time
-from typing import Dict, List, Optional, Any, Callable, Awaitable, Set
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
+from typing import Any
 
 
 class DegradationLevel(Enum):
@@ -31,18 +30,18 @@ class FallbackStrategy(Enum):
 class ServiceEndpoint:
     name: str
     handler: Callable
-    fallbacks: List['FallbackConfig'] = field(default_factory=list)
+    fallbacks: list['FallbackConfig'] = field(default_factory=list)
     priority: int = 0
     enabled: bool = True
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class FallbackConfig:
     strategy: FallbackStrategy
-    handler: Optional[Callable] = None
-    config: Dict[str, Any] = field(default_factory=dict)
-    condition: Optional[Callable] = None
+    handler: Callable | None = None
+    config: dict[str, Any] = field(default_factory=dict)
+    condition: Callable | None = None
     priority: int = 0
 
 
@@ -51,8 +50,8 @@ class DegradationRule:
     name: str
     condition: Callable
     level: DegradationLevel
-    affected_services: List[str]
-    actions: List[Callable] = field(default_factory=list)
+    affected_services: list[str]
+    actions: list[Callable] = field(default_factory=list)
     cooldown: float = 60.0
     last_triggered: float = 0
 
@@ -62,19 +61,19 @@ class DegradationEvent:
     rule_name: str
     level: DegradationLevel
     timestamp: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     resolved: bool = False
-    resolved_at: Optional[float] = None
+    resolved_at: float | None = None
 
 
 class CacheFallback:
     def __init__(self, ttl: float = 300, max_size: int = 1000):
         self.ttl = ttl
         self.max_size = max_size
-        self.cache: Dict[str, tuple] = {}
+        self.cache: dict[str, tuple] = {}
         self._lock = asyncio.Lock()
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         async with self._lock:
             if key in self.cache:
                 value, timestamp = self.cache[key]
@@ -160,14 +159,14 @@ class CircuitBreakerFallback:
 
 class DegradationManager:
     def __init__(self):
-        self.services: Dict[str, ServiceEndpoint] = {}
-        self.rules: Dict[str, DegradationRule] = {}
-        self.events: List[DegradationEvent] = []
+        self.services: dict[str, ServiceEndpoint] = {}
+        self.rules: dict[str, DegradationRule] = {}
+        self.events: list[DegradationEvent] = []
         self.current_level = DegradationLevel.NONE
         self.cache_fallback = CacheFallback()
-        self.circuit_breakers: Dict[str, CircuitBreakerFallback] = {}
+        self.circuit_breakers: dict[str, CircuitBreakerFallback] = {}
         self._running = False
-        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     def register_service(self, endpoint: ServiceEndpoint):
@@ -193,16 +192,16 @@ class DegradationManager:
         service = self.services.get(service_name)
         if not service or not service.enabled:
             raise ValueError(f"Service not found or disabled: {service_name}")
-        
+
         try:
             if asyncio.iscoroutinefunction(service.handler):
                 result = await service.handler(*args, **kwargs)
             else:
                 result = service.handler(*args, **kwargs)
-            
+
             await self._record_success(service_name)
             return result
-        except Exception as e:
+        except Exception:
             await self._record_failure(service_name)
             return await self._execute_fallback(service, *args, **kwargs)
 
@@ -210,7 +209,7 @@ class DegradationManager:
         for fallback in service.fallbacks:
             if fallback.condition and not fallback.condition():
                 continue
-            
+
             try:
                 if fallback.strategy == FallbackStrategy.CACHE:
                     cache_key = f"{service.name}:{hash(str(args))}"
@@ -230,7 +229,7 @@ class DegradationManager:
                     if not cb:
                         cb = CircuitBreakerFallback()
                         self.circuit_breakers[service.name] = cb
-                    
+
                     if await cb.can_execute():
                         if asyncio.iscoroutinefunction(fallback.handler):
                             result = await fallback.handler(*args, **kwargs)
@@ -244,7 +243,7 @@ class DegradationManager:
                     return fallback.handler(*args, **kwargs)
             except Exception:
                 continue
-        
+
         raise RuntimeError(f"All fallbacks failed for service: {service.name}")
 
     async def _record_success(self, service_name: str):
@@ -261,7 +260,7 @@ class DegradationManager:
         for rule in self.rules.values():
             if time.time() - rule.last_triggered < rule.cooldown:
                 continue
-            
+
             try:
                 if rule.condition():
                     await self._trigger_degradation(rule)
@@ -270,17 +269,17 @@ class DegradationManager:
 
     async def _trigger_degradation(self, rule: DegradationRule):
         rule.last_triggered = time.time()
-        
+
         if rule.level.value > self.current_level.value:
             self.current_level = rule.level
-        
+
         event = DegradationEvent(
             rule_name=rule.name,
             level=rule.level,
             metadata={"affected_services": rule.affected_services},
         )
         self.events.append(event)
-        
+
         for action in rule.actions:
             try:
                 if asyncio.iscoroutinefunction(action):
@@ -293,14 +292,14 @@ class DegradationManager:
     def get_current_level(self) -> DegradationLevel:
         return self.current_level
 
-    def get_active_degradations(self) -> List[DegradationEvent]:
+    def get_active_degradations(self) -> list[DegradationEvent]:
         return [e for e in self.events if not e.resolved]
 
-    def get_service_status(self, name: str) -> Dict[str, Any]:
+    def get_service_status(self, name: str) -> dict[str, Any]:
         service = self.services.get(name)
         if not service:
             return {"status": "not_found"}
-        
+
         cb = self.circuit_breakers.get(name)
         return {
             "name": name,
@@ -313,7 +312,7 @@ class DegradationManager:
 class FeatureFlagDegradation:
     def __init__(self, manager: DegradationManager):
         self.manager = manager
-        self.flags: Dict[str, bool] = {}
+        self.flags: dict[str, bool] = {}
 
     def set_flag(self, name: str, enabled: bool):
         self.flags[name] = enabled
@@ -337,7 +336,7 @@ class FeatureFlagDegradation:
 class GracefulShutdown:
     def __init__(self, manager: DegradationManager):
         self.manager = manager
-        self.shutdown_callbacks: List[Callable] = []
+        self.shutdown_callbacks: list[Callable] = []
         self.force_shutdown = False
 
     def register_shutdown_callback(self, callback: Callable):
@@ -346,7 +345,7 @@ class GracefulShutdown:
     async def shutdown(self, timeout: float = 30.0):
         for service_name in self.manager.services:
             self.manager.services[service_name].enabled = False
-        
+
         for callback in self.shutdown_callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -355,5 +354,5 @@ class GracefulShutdown:
                     callback()
             except Exception:
                 pass
-        
+
         self.force_shutdown = True

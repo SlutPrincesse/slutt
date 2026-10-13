@@ -4,8 +4,8 @@ Runtime Exception Hook Interceptor, Meta-Prompt Tool Synthesizer,
 Dynamic Tool Registry Auto-Loader
 """
 from .exception_hook import ExceptionHookInterceptor, HookedException
-from .tool_synthesizer import ToolSynthesizer, SynthesizedTool
 from .tool_registry import DynamicToolRegistry, ToolEntry
+from .tool_synthesizer import SynthesizedTool, ToolSynthesizer
 
 __all__ = [
     "ExceptionHookInterceptor",

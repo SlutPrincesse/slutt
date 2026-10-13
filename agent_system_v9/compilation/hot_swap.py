@@ -1,19 +1,19 @@
 """
 Hot Swap Loader - Dynamic module loading and hot reloading
 """
-import sys
-import importlib
-import importlib.util
 import asyncio
-import time
 import hashlib
+import importlib.util
+import sys
 import threading
-from typing import Dict, List, Optional, Any, Callable, Set, Type
+import time
+from collections import defaultdict
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-from contextlib import contextmanager
+from typing import Any
 
 
 class LoadStatus(Enum):
@@ -34,13 +34,13 @@ class ModuleInfo:
     version: int = 0
     last_modified: float = 0
     checksum: str = ""
-    dependencies: List[str] = field(default_factory=list)
-    dependents: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    loaded_at: Optional[float] = None
-    error: Optional[str] = None
+    dependencies: list[str] = field(default_factory=list)
+    dependents: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    loaded_at: float | None = None
+    error: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "file_path": self.file_path,
@@ -63,19 +63,19 @@ class ReloadEvent:
     new_version: int
     timestamp: float = field(default_factory=time.time)
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class HotSwapLoader:
     def __init__(self, watch_interval: float = 1.0):
-        self.modules: Dict[str, ModuleInfo] = {}
+        self.modules: dict[str, ModuleInfo] = {}
         self.watch_interval = watch_interval
-        self.callbacks: List[Callable] = []
+        self.callbacks: list[Callable] = []
         self._running = False
-        self._watch_task: Optional[asyncio.Task] = None
+        self._watch_task: asyncio.Task | None = None
         self._lock = threading.RLock()
-        self._module_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.reload_history: List[ReloadEvent] = []
+        self._module_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.reload_history: list[ReloadEvent] = []
 
     def load_module(self, name: str, file_path: str = None) -> ModuleInfo:
         with self._lock:
@@ -123,7 +123,7 @@ class HotSwapLoader:
         except Exception as e:
             info.status = LoadStatus.FAILED
             info.error = str(e)
-        
+
         return info
 
     def _compute_checksum(self, file_path: str) -> str:
@@ -153,11 +153,11 @@ class HotSwapLoader:
         with self._lock:
             if name not in self.modules:
                 return False
-            
+
             info = self.modules[name]
             if info.module and name in sys.modules:
                 del sys.modules[name]
-            
+
             info.status = LoadStatus.UNLOADED
             info.module = None
             info.spec = None
@@ -167,48 +167,48 @@ class HotSwapLoader:
         with self._lock:
             if name not in self.modules:
                 return ReloadEvent(name, 0, 0, success=False, error="Module not loaded")
-            
+
             info = self.modules[name]
             old_version = info.version
-            
+
             info.status = LoadStatus.RELOADING
             try:
                 if info.module and name in sys.modules:
                     del sys.modules[name]
-                
+
                 import os
                 stat = os.stat(info.file_path)
                 new_checksum = self._compute_checksum(info.file_path)
-                
+
                 if new_checksum == info.checksum:
                     info.status = LoadStatus.LOADED
                     return ReloadEvent(name, old_version, info.version, success=True)
-                
+
                 spec = importlib.util.spec_from_file_location(info.name, info.file_path)
                 module = importlib.util.module_from_spec(spec)
                 info.spec = spec
                 info.module = module
-                
+
                 sys.modules[name] = module
                 spec.loader.exec_module(module)
-                
+
                 info.status = LoadStatus.LOADED
                 info.version += 1
                 info.checksum = new_checksum
                 info.last_modified = stat.st_mtime
                 info.loaded_at = time.time()
                 info.error = None
-                
+
                 event = ReloadEvent(name, old_version, info.version, success=True)
             except Exception as e:
                 info.status = LoadStatus.FAILED
                 info.error = str(e)
                 event = ReloadEvent(name, old_version, info.version, success=False, error=str(e))
-            
+
             self.reload_history.append(event)
             if len(self.reload_history) > 1000:
                 self.reload_history = self.reload_history[-1000:]
-            
+
             for callback in self.callbacks:
                 try:
                     if asyncio.iscoroutinefunction(callback):
@@ -217,10 +217,10 @@ class HotSwapLoader:
                         callback(event)
                 except Exception:
                     pass
-            
+
             return event
 
-    def get_module(self, name: str) -> Optional[ModuleInfo]:
+    def get_module(self, name: str) -> ModuleInfo | None:
         with self._lock:
             return self.modules.get(name)
 
@@ -261,41 +261,40 @@ class HotSwapLoader:
         for name, info in list(self.modules.items()):
             if info.status != LoadStatus.LOADED:
                 continue
-            
+
             try:
-                import os
-                mtime = os.path.getmtime(info.file_path)
+                mtime = Path(info.file_path).stat().st_mtime
                 if mtime > info.last_modified:
                     self.reload_module(name)
             except Exception:
                 pass
 
-    def get_dependency_graph(self) -> Dict[str, List[str]]:
+    def get_dependency_graph(self) -> dict[str, list[str]]:
         with self._lock:
             return {name: info.dependencies for name, info in self.modules.items()}
 
-    def get_reload_history(self) -> List[ReloadEvent]:
+    def get_reload_history(self) -> list[ReloadEvent]:
         return list(self.reload_history)
 
 
 class PluginManager:
     def __init__(self, loader: HotSwapLoader):
         self.loader = loader
-        self.plugins: Dict[str, Dict[str, Any]] = {}
-        self.plugin_interfaces: Dict[str, Type] = {}
+        self.plugins: dict[str, dict[str, Any]] = {}
+        self.plugin_interfaces: dict[str, type] = {}
 
-    def register_interface(self, name: str, interface: Type):
+    def register_interface(self, name: str, interface: type):
         self.plugin_interfaces[name] = interface
 
     def load_plugin(self, name: str, file_path: str, interface: str = None) -> bool:
         info = self.loader.load_module(name, file_path)
         if info.status != LoadStatus.LOADED:
             return False
-        
+
         if interface and interface in self.plugin_interfaces:
             if not isinstance(info.module, self.plugin_interfaces[interface]):
                 return False
-        
+
         self.plugins[name] = {
             "module": info.module,
             "interface": interface,
@@ -316,16 +315,16 @@ class PluginManager:
             self.plugins[name]["info"] = info
         return event
 
-    def get_plugin(self, name: str) -> Optional[Any]:
+    def get_plugin(self, name: str) -> Any | None:
         return self.plugins.get(name, {}).get("module")
 
-    def list_plugins(self) -> List[str]:
+    def list_plugins(self) -> list[str]:
         return list(self.plugins.keys())
 
 
 class IsolatedLoader:
     def __init__(self):
-        self.loaders: Dict[str, HotSwapLoader] = {}
+        self.loaders: dict[str, HotSwapLoader] = {}
         self._lock = threading.RLock()
 
     def create_loader(self, name: str) -> HotSwapLoader:
@@ -334,7 +333,7 @@ class IsolatedLoader:
             self.loaders[name] = loader
             return loader
 
-    def get_loader(self, name: str) -> Optional[HotSwapLoader]:
+    def get_loader(self, name: str) -> HotSwapLoader | None:
         with self._lock:
             return self.loaders.get(name)
 
@@ -349,7 +348,7 @@ class IsolatedLoader:
 class LazyLoader:
     def __init__(self, loader: HotSwapLoader):
         self.loader = loader
-        self.proxies: Dict[str, Any] = {}
+        self.proxies: dict[str, Any] = {}
 
     def get_module(self, name: str, file_path: str = None) -> Any:
         if name not in self.proxies:
@@ -389,7 +388,7 @@ def temporary_module(name: str, source: str):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(source)
         temp_path = f.name
-    
+
     try:
         loader = HotSwapLoader()
         info = loader.load_module(name, temp_path)
@@ -397,7 +396,6 @@ def temporary_module(name: str, source: str):
     finally:
         loader.unload_module(name)
         try:
-            import os
-            os.unlink(temp_path)
+            Path(temp_path).unlink()
         except Exception:
             pass

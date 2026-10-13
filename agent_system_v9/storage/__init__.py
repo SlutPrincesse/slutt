@@ -1,42 +1,48 @@
 """
 Resource Agnostic Storage & Artifact Management (Section 19)
 """
-from .virtual_object_repo import (
-    VirtualObjectRepository,
-    ObjectStore,
-    VersionedObjectStore,
-    ObjectSerializer,
-    ContentAddressableStore,
-    ObjectId,
-    ObjectType,
-    ObjectMetadata,
-    VersionedObject,
-    ObjectVersion,
-)
-from .delta_sync import (
-    DeltaGenerator,
-    DeltaApplier,
-    SyncEngine,
-    ConflictResolver,
-    AssetLifecycler,
-    BuildLedger,
-    Delta,
-    DeltaType,
-    DeltaOperation,
-    SyncState,
-    DeltaEncoder,
+from .content_addressable import (
+    Blob,
+    BlobStore,
+    CASConfig,
+    Chunk,
+    Chunker,
+    ChunkingStrategy,
+    DeltaSync,  # Export as both names
 )
 from .content_addressable import (
     ContentAddressableStore as CASContentAddressableStore,
-    BlobStore,
+)
+from .content_addressable import (
     DeltaSync as CASDeltaSync,
-    DeltaSync,  # Export as both names
+)
+from .content_addressable import (
     GarbageCollector as CASGarbageCollector,
-    Blob,
-    Chunk,
-    ChunkingStrategy,
-    CASConfig,
-    Chunker,
+)
+from .delta_sync import (
+    AssetLifecycler,
+    BuildLedger,
+    ConflictResolver,
+    Delta,
+    DeltaApplier,
+    DeltaEncoder,
+    DeltaGenerator,
+    DeltaOperation,
+    DeltaType,
+    SyncEngine,
+    SyncState,
+)
+from .virtual_object_repo import (
+    ContentAddressableStore,
+    ObjectId,
+    ObjectMetadata,
+    ObjectSerializer,
+    ObjectStore,
+    ObjectType,
+    ObjectVersion,
+    VersionedObject,
+    VersionedObjectStore,
+    VirtualObjectRepository,
 )
 
 __all__ = [
@@ -72,5 +78,5 @@ __all__ = [
     "Chunk",
     "ChunkingStrategy",
     "CASConfig",
-    "Chunker",
+    "Chunker", "CASContentAddressableStore",
 ]

@@ -1,0 +1,214 @@
+"""
+RedAmon - IP Filtering Helpers
+===============================
+Classify and filter IPs before OSINT enrichment to avoid wasting API
+credits on non-routable, reserved, or CDN addresses.
+"""
+from __future__ import annotations
+
+import ipaddress
+import logging
+import socket
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
+CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+
+# Cloud metadata hostnames that resolve OFF-host (so an IP check alone misses
+# them). Mirrors the agent-side llm_url_guard blocklist.
+_METADATA_HOSTNAMES = frozenset({
+    "metadata.google.internal",
+    "metadata.goog",
+})
+
+
+def is_non_routable_ip(ip_str: str) -> bool:
+    """Return True if *ip_str* should NOT be sent to external OSINT APIs.
+
+    Covers RFC 1918 private, loopback, link-local, CGNAT (100.64.0.0/10),
+    and IETF reserved ranges.
+    """
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    # IPv4-mapped IPv6 (::ffff:169.254.169.254) is judged on the embedded v4.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+        or addr in CGNAT_NETWORK
+    )
+
+
+def is_never_scannable_ip(ip_str: str) -> bool:
+    """Return True for an address a DISCOVERED hostname must never drag in.
+
+    Deliberately narrower than :func:`is_non_routable_ip`. That one answers
+    "may this go to an external OSINT API", and refuses RFC-1918 as well - which
+    is correct there and wrong here, because RedAmon scans internal estates on
+    purpose (Single Domain advertises "public or internal (incl. AD)"). Dropping
+    every private address would silently break those engagements.
+
+    What is left is the set that is wrong for a SCANNER no matter whose estate
+    it is:
+
+    - loopback: the name points at the recon container itself, so scanning it
+      means scanning ourselves. `localhost.<domain> -> 127.0.0.1` is a real and
+      common record; vulnweb.com publishes one.
+    - link-local: includes 169.254.169.254, i.e. cloud metadata.
+    - unspecified / multicast: not a host.
+
+    Private and CGNAT addresses are deliberately KEPT and logged by the caller,
+    so an operator can see a discovered name pointing inward without the scan
+    quietly deciding for them.
+    """
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return (
+        addr.is_loopback
+        or addr.is_link_local
+        or addr.is_unspecified
+        or addr.is_multicast
+    )
+
+
+def is_url_safe_to_probe(url: str) -> bool:
+    """SSRF guard for probing URLs derived from a target's JavaScript (STRIDE I14).
+
+    Endpoints extracted from a scanned target's JS are attacker-influenced; a
+    planted ``http://169.254.169.254/...`` or ``http://10.0.0.5/`` would turn the
+    recon container into an SSRF probe against cloud metadata / the internal
+    network. Returns True only for an http(s) URL whose host is not a metadata
+    hostname and every resolved address is routable/public. An unresolvable host
+    is treated as unsafe (fail closed) since recon has no reason to probe it.
+    """
+    try:
+        parsed = urlparse((url or "").strip())
+    except ValueError:
+        return False
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    if host.lower().rstrip(".") in _METADATA_HOSTNAMES:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False  # fail closed: don't probe hosts we can't resolve
+    resolved = {info[4][0].split("%")[0] for info in infos}
+    if not resolved:
+        return False
+    return all(not is_non_routable_ip(ip) for ip in resolved)
+
+
+_published_networks: list | None = None
+
+
+def _published_cdn_networks() -> list:
+    """The CDN prefixes recon/helpers/cdn_ranges.py ships, parsed once.
+
+    The live list is used only if something in this run already fetched it;
+    otherwise the shipped copy is enough, so the OSINT path never makes a
+    request of its own (cdn_ranges' fetch waits up to 5 s per list).
+    """
+    global _published_networks
+    try:
+        from recon.helpers import cdn_ranges
+        live = getattr(cdn_ranges, "_cloudflare_networks_cache", None)
+        if isinstance(live, list) and live:
+            return live
+        if _published_networks is None:
+            shipped = (tuple(getattr(cdn_ranges, "_CLOUDFLARE_FALLBACK_V4", ()))
+                       + tuple(getattr(cdn_ranges, "_CLOUDFLARE_FALLBACK_V6", ())))
+            networks = []
+            for entry in shipped:
+                try:
+                    networks.append(ipaddress.ip_network(entry, strict=False))
+                except (TypeError, ValueError):
+                    continue
+            _published_networks = networks
+        return _published_networks
+    except Exception:  # noqa: BLE001 - a missing list only means fewer IPs skipped
+        return []
+
+
+def in_published_cdn_range(ip_str: str) -> bool:
+    """True for an address inside a CDN's published edge prefixes.
+
+    The CDN flags collect_cdn_ips reads come from naabu and httpx, which have
+    not run yet when Uncover (GROUP 2b) and Shodan (GROUP 3, beside the port
+    scan) filter their IPs; the published prefixes need no scan.
+    """
+    try:
+        addr = ipaddress.ip_address(ip_str)
+        return any(addr.version == net.version and addr in net
+                   for net in _published_cdn_networks())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def collect_cdn_ips(combined_result: dict) -> set[str]:
+    """Gather IPs flagged as CDN by Naabu/httpx from port_scan and http_probe data."""
+    cdn_ips: set[str] = set()
+
+    port_scan = combined_result.get("port_scan") or {}
+    for ip, info in (port_scan.get("by_ip") or {}).items():
+        if isinstance(info, dict) and info.get("is_cdn"):
+            cdn_ips.add(ip)
+
+    http_probe = combined_result.get("http_probe") or {}
+    for _url, info in (http_probe.get("by_url") or {}).items():
+        if isinstance(info, dict) and info.get("is_cdn"):
+            ip = info.get("ip")
+            if ip:
+                cdn_ips.add(ip)
+
+    return cdn_ips
+
+
+def filter_ips_for_enrichment(
+    ips: list[str],
+    combined_result: dict,
+    module_name: str = "OSINT",
+) -> list[str]:
+    """Filter an IP list, removing non-routable and CDN IPs.
+
+    Logs a summary of skipped IPs once (not per-IP) to keep output clean.
+    """
+    cdn_ips = collect_cdn_ips(combined_result)
+
+    kept: list[str] = []
+    skipped_private = 0
+    skipped_cdn = 0
+
+    for ip in ips:
+        if is_non_routable_ip(ip):
+            skipped_private += 1
+            continue
+        if ip in cdn_ips or in_published_cdn_range(ip):
+            skipped_cdn += 1
+            continue
+        kept.append(ip)
+
+    parts: list[str] = []
+    if skipped_private:
+        parts.append(f"{skipped_private} non-routable/reserved")
+    if skipped_cdn:
+        parts.append(f"{skipped_cdn} CDN")
+    if parts:
+        print(f"[*][{module_name}] Skipped {', '.join(parts)} IP(s) from enrichment")
+
+    return kept

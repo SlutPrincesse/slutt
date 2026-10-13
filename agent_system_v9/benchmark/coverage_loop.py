@@ -1,16 +1,15 @@
 """
 Coverage Loop - Test coverage analysis and enforcement
 """
-import ast
 import hashlib
-import subprocess
 import json
+import subprocess
 import time
-from typing import Dict, List, Optional, Any, Set, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class CoverageType(Enum):
@@ -23,9 +22,9 @@ class CoverageType(Enum):
 @dataclass
 class CoverageData:
     file_path: str
-    line_coverage: Dict[int, int] = field(default_factory=dict)
-    branch_coverage: Dict[str, int] = field(default_factory=dict)
-    function_coverage: Dict[str, int] = field(default_factory=dict)
+    line_coverage: dict[int, int] = field(default_factory=dict)
+    branch_coverage: dict[str, int] = field(default_factory=dict)
+    function_coverage: dict[str, int] = field(default_factory=dict)
     total_lines: int = 0
     covered_lines: int = 0
     total_branches: int = 0
@@ -66,13 +65,13 @@ class CoverageThreshold:
 class CoverageReport:
     report_id: str
     timestamp: float = field(default_factory=time.time)
-    files: List[CoverageData] = field(default_factory=list)
+    files: list[CoverageData] = field(default_factory=list)
     total_coverage: CoverageData = field(default_factory=CoverageData)
     passed: bool = True
-    failed_files: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    failed_files: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "report_id": self.report_id,
             "timestamp": self.timestamp,
@@ -101,7 +100,7 @@ class CoverageReport:
 
 class CoverageCollector:
     def __init__(self):
-        self.data: Dict[str, CoverageData] = {}
+        self.data: dict[str, CoverageData] = {}
 
     def collect_from_pytest(self, project_path: str = ".") -> CoverageReport:
         try:
@@ -112,55 +111,55 @@ class CoverageCollector:
                 text=True,
                 timeout=300,
             )
-            
+
             coverage_file = Path(project_path) / "coverage.json"
             if coverage_file.exists():
                 data = json.loads(coverage_file.read_text())
                 return self._parse_pytest_coverage(data)
         except Exception:
             pass
-        
+
         return CoverageReport(
             report_id=hashlib.md5(f"coverage:{time.time()}".encode()).hexdigest()[:12],
             passed=False,
         )
 
-    def _parse_pytest_coverage(self, data: Dict) -> CoverageReport:
+    def _parse_pytest_coverage(self, data: dict) -> CoverageReport:
         report = CoverageReport(
             report_id=hashlib.md5(f"coverage:{time.time()}".encode()).hexdigest()[:12],
         )
-        
+
         files_data = data.get("files", {})
         total = CoverageData()
-        
+
         for file_path, file_data in files_data.items():
             coverage = CoverageData(file_path=file_path)
-            
+
             executed_lines = file_data.get("executed_lines", [])
             missing_lines = file_data.get("missing_lines", [])
-            
+
             all_lines = set(executed_lines) | set(missing_lines)
             coverage.total_lines = len(all_lines)
             coverage.covered_lines = len(executed_lines)
-            
+
             for line in executed_lines:
                 coverage.line_coverage[line] = 1
             for line in missing_lines:
                 coverage.line_coverage[line] = 0
-            
+
             summary = file_data.get("summary", {})
             coverage.total_branches = summary.get("num_branches", 0)
             coverage.covered_branches = summary.get("covered_branches", 0)
-            
+
             report.files.append(coverage)
             total.total_lines += coverage.total_lines
             total.covered_lines += coverage.covered_lines
             total.total_branches += coverage.total_branches
             total.covered_branches += coverage.covered_branches
-        
+
         report.total_coverage = total
         report.passed = total.line_coverage_percent() >= 80
-        
+
         return report
 
     def collect_from_coverage_py(self, project_path: str = ".") -> CoverageReport:
@@ -168,37 +167,37 @@ class CoverageCollector:
             import coverage
             cov = coverage.Coverage()
             cov.load()
-            
+
             report = CoverageReport(
                 report_id=hashlib.md5(f"coverage:{time.time()}".encode()).hexdigest()[:12],
             )
-            
+
             total = CoverageData()
-            
+
             for file_path in cov.get_data().measured_files():
                 file_cov = CoverageData(file_path=file_path)
-                
+
                 analysis = cov._analyze(file_path)
                 if analysis:
                     executed = analysis.executed
                     missing = analysis.missing
-                    
+
                     all_lines = set(executed) | set(missing)
                     file_cov.total_lines = len(all_lines)
                     file_cov.covered_lines = len(executed)
-                    
+
                     for line in executed:
                         file_cov.line_coverage[line] = 1
                     for line in missing:
                         file_cov.line_coverage[line] = 0
-                
+
                 report.files.append(file_cov)
                 total.total_lines += file_cov.total_lines
                 total.covered_lines += file_cov.covered_lines
-            
+
             report.total_coverage = total
             report.passed = total.line_coverage_percent() >= 80
-            
+
             return report
         except ImportError:
             return CoverageReport(
@@ -211,7 +210,7 @@ class CoverageAnalyzer:
     def __init__(self, thresholds: CoverageThreshold = None):
         self.thresholds = thresholds or CoverageThreshold()
 
-    def analyze(self, report: CoverageReport) -> Dict[str, Any]:
+    def analyze(self, report: CoverageReport) -> dict[str, Any]:
         results = {
             "passed": True,
             "file_results": [],
@@ -222,19 +221,19 @@ class CoverageAnalyzer:
                 "overall": report.total_coverage.overall_coverage(),
             },
         }
-        
+
         if report.total_coverage.line_coverage_percent() < self.thresholds.min_line_coverage:
             results["passed"] = False
-        
+
         if report.total_coverage.branch_coverage_percent() < self.thresholds.min_branch_coverage:
             results["passed"] = False
-        
+
         if report.total_coverage.function_coverage_percent() < self.thresholds.min_function_coverage:
             results["passed"] = False
-        
+
         if report.total_coverage.overall_coverage() < self.thresholds.min_overall_coverage:
             results["passed"] = False
-        
+
         for file_cov in report.files:
             file_result = {
                 "file": file_cov.file_path,
@@ -244,30 +243,30 @@ class CoverageAnalyzer:
                 "passed": True,
                 "issues": [],
             }
-            
+
             if file_cov.line_coverage_percent() < self.thresholds.min_line_coverage:
                 file_result["passed"] = False
                 file_result["issues"].append(f"Line coverage {file_cov.line_coverage_percent():.1f}% below threshold {self.thresholds.min_line_coverage}%")
-            
+
             if file_cov.branch_coverage_percent() < self.thresholds.min_branch_coverage:
                 file_result["passed"] = False
                 file_result["issues"].append(f"Branch coverage {file_cov.branch_coverage_percent():.1f}% below threshold {self.thresholds.min_branch_coverage}%")
-            
+
             if file_cov.function_coverage_percent() < self.thresholds.min_function_coverage:
                 file_result["passed"] = False
                 file_result["issues"].append(f"Function coverage {file_cov.function_coverage_percent():.1f}% below threshold {self.thresholds.min_function_coverage}%")
-            
+
             results["file_results"].append(file_result)
-        
+
         return results
 
-    def get_uncovered_lines(self, report: CoverageReport, file_path: str) -> List[int]:
+    def get_uncovered_lines(self, report: CoverageReport, file_path: str) -> list[int]:
         for file_cov in report.files:
             if file_cov.file_path == file_path:
                 return [line for line, covered in file_cov.line_coverage.items() if covered == 0]
         return []
 
-    def get_coverage_gaps(self, report: CoverageReport) -> List[Dict[str, Any]]:
+    def get_coverage_gaps(self, report: CoverageReport) -> list[dict[str, Any]]:
         gaps = []
         for file_cov in report.files:
             if file_cov.line_coverage_percent() < 100:
@@ -285,34 +284,34 @@ class CoverageAnalyzer:
 class CoverageEnforcer:
     def __init__(self, analyzer: CoverageAnalyzer):
         self.analyzer = analyzer
-        self.history: List[CoverageReport] = []
+        self.history: list[CoverageReport] = []
 
     def enforce(self, report: CoverageReport) -> bool:
         results = self.analyzer.analyze(report)
-        
+
         if not results["passed"]:
             self.history.append(report)
             if len(self.history) > 100:
                 self.history = self.history[-100:]
             return False
-        
+
         self.history.append(report)
         if len(self.history) > 100:
             self.history = self.history[-100:]
         return True
 
-    def enforce_on_diff(self, base_report: CoverageReport, head_report: CoverageReport) -> Dict[str, Any]:
+    def enforce_on_diff(self, base_report: CoverageReport, head_report: CoverageReport) -> dict[str, Any]:
         base_files = {f.file_path: f for f in base_report.files}
         head_files = {f.file_path: f for f in head_report.files}
-        
+
         new_files = set(head_files.keys()) - set(base_files.keys())
         modified_files = set()
-        
+
         for path in head_files:
             if path in base_files:
                 if head_files[path].line_coverage_percent() < base_files[path].line_coverage_percent():
                     modified_files.add(path)
-        
+
         return {
             "new_files": list(new_files),
             "modified_files": list(modified_files),
@@ -335,14 +334,14 @@ class CoverageLoop:
         self.enforcer = enforcer or CoverageEnforcer(self.analyzer)
         self._running = False
         self._task = None
-        self._callbacks: List[Callable] = []
+        self._callbacks: list[Callable] = []
 
     def on_coverage_check(self, callback: Callable):
         self._callbacks.append(callback)
 
     async def run_once(self, project_path: str = ".") -> CoverageReport:
         report = self.collector.collect_from_pytest(project_path)
-        
+
         for callback in self._callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -351,7 +350,7 @@ class CoverageLoop:
                     callback(report)
             except Exception:
                 pass
-        
+
         return report
 
     async def start_loop(self, interval: float = 300.0, project_path: str = "."):
@@ -372,15 +371,15 @@ class CoverageLoop:
             await self.run_once(project_path)
             await asyncio.sleep(interval)
 
-    def get_history(self) -> List[CoverageReport]:
+    def get_history(self) -> list[CoverageReport]:
         return self.enforcer.history
 
-    def get_trend(self, file_path: str = None) -> Dict[str, Any]:
+    def get_trend(self, file_path: str = None) -> dict[str, Any]:
         if not self.enforcer.history:
             return {}
-        
+
         recent = self.enforcer.history[-20:]
-        
+
         if file_path:
             coverages = [
                 next((f.line_coverage_percent() for f in r.files if f.file_path == file_path), 0)
@@ -388,7 +387,7 @@ class CoverageLoop:
             ]
         else:
             coverages = [r.total_coverage.line_coverage_percent() for r in recent]
-        
+
         return {
             "samples": len(coverages),
             "current": coverages[-1] if coverages else 0,

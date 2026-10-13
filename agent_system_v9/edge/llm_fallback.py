@@ -3,12 +3,12 @@ LLM Fallback Gateway - Fallback and failover for LLM providers
 """
 import asyncio
 import hashlib
-import time
 import random
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
+from typing import Any
 
 
 class FallbackReason(Enum):
@@ -35,8 +35,8 @@ class ProviderConfig:
     max_retries: int = 3
     timeout: float = 30.0
     rate_limit: float = 100.0
-    models: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    models: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -46,7 +46,7 @@ class LLMRequest:
     model: str = ""
     max_tokens: int = 1000
     temperature: float = 0.7
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -55,9 +55,9 @@ class LLMResponse:
     text: str
     model: str
     provider: str
-    usage: Dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=dict)
     latency: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -103,11 +103,11 @@ class CircuitBreaker:
 
 class LLMFallbackGateway:
     def __init__(self):
-        self.providers: Dict[str, ProviderState] = {}
-        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
-        self.handlers: Dict[str, Callable] = {}
+        self.providers: dict[str, ProviderState] = {}
+        self.circuit_breakers: dict[str, CircuitBreaker] = {}
+        self.handlers: dict[str, Callable] = {}
         self._lock = asyncio.Lock()
-        self.request_history: List[Dict] = []
+        self.request_history: list[dict] = []
 
     def register_provider(self, config: ProviderConfig, handler: Callable):
         self.providers[config.name] = ProviderState(config=config)
@@ -124,25 +124,25 @@ class LLMFallbackGateway:
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         providers = self._get_available_providers(request.model)
-        
+
         if not providers:
             raise RuntimeError("No available providers")
-        
+
         last_error = None
         for provider_name in providers:
             provider = self.providers[provider_name]
             cb = self.circuit_breakers[provider_name]
-            
+
             if not cb.can_execute():
                 continue
-            
+
             if provider.status == ProviderStatus.CIRCUIT_OPEN:
                 continue
-            
+
             try:
                 handler = self.handlers[provider_name]
                 start = time.time()
-                
+
                 if asyncio.iscoroutinefunction(handler):
                     result = await asyncio.wait_for(
                         handler(request),
@@ -152,9 +152,9 @@ class LLMFallbackGateway:
                     result = await asyncio.get_event_loop().run_in_executor(
                         None, handler, request
                     )
-                
+
                 latency = time.time() - start
-                
+
                 if isinstance(result, LLMResponse):
                     response = result
                 else:
@@ -165,18 +165,18 @@ class LLMFallbackGateway:
                         provider=provider_name,
                         latency=latency,
                     )
-                
+
                 response.provider = provider_name
                 response.latency = latency
-                
+
                 provider.consecutive_failures = 0
                 provider.last_success = time.time()
                 provider.total_requests += 1
                 cb.record_success()
-                
+
                 self._record_request(request, response, provider_name, True)
                 return response
-                
+
             except asyncio.TimeoutError:
                 last_error = "timeout"
                 provider.consecutive_failures += 1
@@ -187,16 +187,16 @@ class LLMFallbackGateway:
                 provider.consecutive_failures += 1
                 provider.total_errors += 1
                 cb.record_failure()
-            
+
             if provider.consecutive_failures >= provider.config.max_retries:
                 provider.status = ProviderStatus.CIRCUIT_OPEN
                 provider.circuit_open_until = time.time() + 300
-            
+
             self._record_request(request, None, provider_name, False, last_error)
-        
+
         raise RuntimeError(f"All providers failed: {last_error}")
 
-    def _get_available_providers(self, model: str) -> List[str]:
+    def _get_available_providers(self, model: str) -> list[str]:
         available = []
         for name, state in self.providers.items():
             if state.status == ProviderStatus.UNAVAILABLE:
@@ -205,7 +205,7 @@ class LLMFallbackGateway:
                 continue
             if self.circuit_breakers[name].can_execute():
                 available.append(name)
-        
+
         available.sort(key=lambda n: -self.providers[n].config.priority)
         return available
 
@@ -221,13 +221,13 @@ class LLMFallbackGateway:
         if len(self.request_history) > 10000:
             self.request_history = self.request_history[-10000:]
 
-    def get_provider_status(self, name: str) -> Optional[ProviderState]:
+    def get_provider_status(self, name: str) -> ProviderState | None:
         return self.providers.get(name)
 
-    def get_all_status(self) -> Dict[str, ProviderState]:
+    def get_all_status(self) -> dict[str, ProviderState]:
         return dict(self.providers)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "total_providers": len(self.providers),
             "healthy": sum(1 for p in self.providers.values() if p.status == ProviderStatus.HEALTHY),
@@ -238,20 +238,20 @@ class LLMFallbackGateway:
 
 
 class LoadBalancedGateway(LLMFallbackGateway):
-    def _get_available_providers(self, model: str) -> List[str]:
+    def _get_available_providers(self, model: str) -> list[str]:
         available = super()._get_available_providers(model)
         if not available:
             return available
-        
+
         weighted = []
         for name in available:
             state = self.providers[name]
             for _ in range(state.config.weight):
                 weighted.append(name)
-        
+
         if not weighted:
             return available
-        
+
         random.shuffle(weighted)
         return weighted
 
@@ -259,14 +259,14 @@ class LoadBalancedGateway(LLMFallbackGateway):
 class StreamingGateway(LLMFallbackGateway):
     async def stream(self, request: LLMRequest):
         providers = self._get_available_providers(request.model)
-        
+
         for provider_name in providers:
             provider = self.providers[provider_name]
             cb = self.circuit_breakers[provider_name]
-            
+
             if not cb.can_execute() or provider.status == ProviderStatus.CIRCUIT_OPEN:
                 continue
-            
+
             try:
                 handler = self.handlers[provider_name]
                 if hasattr(handler, 'stream'):
@@ -280,7 +280,7 @@ class StreamingGateway(LLMFallbackGateway):
                 if provider.consecutive_failures >= provider.config.max_retries:
                     provider.status = ProviderStatus.CIRCUIT_OPEN
                 continue
-        
+
         raise RuntimeError("All streaming providers failed")
 
 
@@ -288,13 +288,13 @@ class CacheLayer:
     def __init__(self, max_size: int = 1000, ttl: float = 3600):
         self.max_size = max_size
         self.ttl = ttl
-        self.cache: Dict[str, tuple] = {}
+        self.cache: dict[str, tuple] = {}
         self._lock = asyncio.Lock()
 
     def _make_key(self, request: LLMRequest) -> str:
         return hashlib.md5(f"{request.prompt}:{request.model}:{request.max_tokens}:{request.temperature}".encode()).hexdigest()
 
-    async def get(self, request: LLMRequest) -> Optional[LLMResponse]:
+    async def get(self, request: LLMRequest) -> LLMResponse | None:
         key = self._make_key(request)
         async with self._lock:
             if key in self.cache:
@@ -328,7 +328,7 @@ class CachedGateway(LLMFallbackGateway):
         cached = await self.cache.get(request)
         if cached:
             return cached
-        
+
         response = await super().complete(request)
         await self.cache.set(request, response)
         return response

@@ -2,11 +2,11 @@
 No-Op Detector - Detects dead code and no-op operations
 """
 import ast
-from typing import Dict, List, Optional, Any, Set, Tuple
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class NoOpType(Enum):
@@ -38,21 +38,21 @@ class NoOpIssue:
 @dataclass
 class NoOpReport:
     file_path: str
-    issues: List[NoOpIssue] = None
+    issues: list[NoOpIssue] = None
     total_issues: int = 0
-    
+
     def __post_init__(self):
         if self.issues is None:
             self.issues = []
         self.total_issues = len(self.issues)
 
-    def by_type(self) -> Dict[NoOpType, int]:
+    def by_type(self) -> dict[NoOpType, int]:
         counts = defaultdict(int)
         for issue in self.issues:
             counts[issue.op_type] += 1
         return dict(counts)
 
-    def by_severity(self) -> Dict[str, int]:
+    def by_severity(self) -> dict[str, int]:
         counts = defaultdict(int)
         for issue in self.issues:
             counts[issue.severity] += 1
@@ -85,16 +85,16 @@ class NoOpDetector:
                 message=f"Syntax error: {e.msg}",
                 severity="error",
             )])
-        
+
         report = NoOpReport(file_path=file_path)
         lines = content.split('\n')
-        
+
         visitor = NoOpVisitor(report, self, lines)
         visitor.visit(tree)
-        
+
         return report
 
-    def check_directory(self, dir_path: str, pattern: str = "*.py") -> Dict[str, NoOpReport]:
+    def check_directory(self, dir_path: str, pattern: str = "*.py") -> dict[str, NoOpReport]:
         reports = {}
         for file_path in Path(dir_path).rglob(pattern):
             if self.ignore_test_files and ('test' in str(file_path).lower() or 'spec' in str(file_path).lower()):
@@ -102,18 +102,18 @@ class NoOpDetector:
             reports[str(file_path)] = self.check_file(str(file_path))
         return reports
 
-    def get_summary(self, reports: Dict[str, NoOpReport]) -> Dict[str, Any]:
+    def get_summary(self, reports: dict[str, NoOpReport]) -> dict[str, Any]:
         all_issues = []
         for report in reports.values():
             all_issues.extend(report.issues)
-        
+
         by_type = defaultdict(int)
         by_severity = defaultdict(int)
-        
+
         for issue in all_issues:
             by_type[issue.op_type.value] += 1
             by_severity[issue.severity] += 1
-        
+
         return {
             "files_checked": len(reports),
             "total_issues": len(all_issues),
@@ -122,16 +122,16 @@ class NoOpDetector:
             "auto_fixable": sum(1 for i in all_issues if i.auto_fixable),
         }
 
-    def auto_fix(self, file_path: str, dry_run: bool = True) -> Tuple[int, List[str]]:
+    def auto_fix(self, file_path: str, dry_run: bool = True) -> tuple[int, list[str]]:
         path = Path(file_path)
         content = path.read_text(encoding='utf-8', errors='ignore')
-        
+
         report = self.check_string(content, file_path)
         fixes_applied = 0
         changes = []
-        
+
         lines = content.split('\n')
-        
+
         for issue in sorted(report.issues, key=lambda x: x.line_number, reverse=True):
             if issue.auto_fixable:
                 if issue.op_type == NoOpType.UNUSED_IMPORT:
@@ -142,20 +142,20 @@ class NoOpDetector:
                     if self._fix_trailing_whitespace(lines, issue):
                         fixes_applied += 1
                         changes.append(f"Fixed trailing whitespace at line {issue.line_number}")
-        
+
         if not dry_run and fixes_applied > 0:
             path.write_text('\n'.join(lines))
-        
+
         return fixes_applied, changes
 
-    def _remove_unused_import(self, lines: List[str], issue: NoOpIssue) -> bool:
+    def _remove_unused_import(self, lines: list[str], issue: NoOpIssue) -> bool:
         line_idx = issue.line_number - 1
         if 0 <= line_idx < len(lines):
             lines[line_idx] = ''
             return True
         return False
 
-    def _fix_trailing_whitespace(self, lines: List[str], issue: NoOpIssue) -> bool:
+    def _fix_trailing_whitespace(self, lines: list[str], issue: NoOpIssue) -> bool:
         line_idx = issue.line_number - 1
         if 0 <= line_idx < len(lines):
             lines[line_idx] = lines[line_idx].rstrip()
@@ -164,13 +164,13 @@ class NoOpDetector:
 
 
 class NoOpVisitor(ast.NodeVisitor):
-    def __init__(self, report: NoOpReport, detector: NoOpDetector, lines: List[str]):
+    def __init__(self, report: NoOpReport, detector: NoOpDetector, lines: list[str]):
         self.report = report
         self.detector = detector
         self.lines = lines
-        self.defined_names: Set[str] = set()
-        self.used_names: Set[str] = set()
-        self.imported_names: Dict[str, Tuple[int, int]] = {}
+        self.defined_names: set[str] = set()
+        self.used_names: set[str] = set()
+        self.imported_names: dict[str, tuple[int, int]] = {}
         self.current_function = None
         self.in_loop = False
         self.in_function = False
@@ -184,18 +184,18 @@ class NoOpVisitor(ast.NodeVisitor):
         if self.detector.ignore_private and node.name.startswith('_') and not node.name.startswith('__'):
             self.generic_visit(node)
             return
-        
+
         old_function = self.current_function
         old_returned = self.returned
         self.current_function = node.name
         self.returned = False
         self.in_function = True
-        
+
         for arg in node.args.args:
             self.defined_names.add(arg.arg)
-        
+
         self.generic_visit(node)
-        
+
         if not self.returned and node.name != '__init__':
             if not any(isinstance(n, ast.Return) for n in ast.walk(node) if not isinstance(n, ast.FunctionDef)):
                 self.report.issues.append(NoOpIssue(
@@ -208,7 +208,7 @@ class NoOpVisitor(ast.NodeVisitor):
                     code_snippet=self._get_snippet(node.lineno),
                     suggestion="Add return statement or remove function if not needed",
                 ))
-        
+
         self.current_function = old_function
         self.returned = old_returned
         self.in_function = False
@@ -236,7 +236,7 @@ class NoOpVisitor(ast.NodeVisitor):
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self.defined_names.add(target.id)
-                
+
                 if isinstance(node.value, ast.Constant) and node.value.value is None:
                     self.report.issues.append(NoOpIssue(
                         file_path=self.report.file_path,
@@ -249,7 +249,7 @@ class NoOpVisitor(ast.NodeVisitor):
                         suggestion="Remove redundant None assignment",
                         auto_fixable=True,
                     ))
-        
+
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name):
@@ -280,7 +280,7 @@ class NoOpVisitor(ast.NodeVisitor):
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.lineno <= node.lineno <= n.end_lineno:
                     func_node = n
                     break
-            
+
             if func_node and len(func_node.body) == 1:
                 self.report.issues.append(NoOpIssue(
                     file_path=self.report.file_path,
@@ -336,7 +336,7 @@ class NoOpVisitor(ast.NodeVisitor):
 
     def _check_unused(self):
         unused = self.defined_names - self.used_names
-        
+
         for name in unused:
             if name in self.imported_names:
                 lineno, col = self.imported_names[name]
@@ -373,13 +373,13 @@ class DeadCodeAnalyzer:
     def __init__(self):
         self.detector = NoOpDetector()
 
-    def analyze(self, file_path: str) -> Dict[str, Any]:
+    def analyze(self, file_path: str) -> dict[str, Any]:
         report = self.detector.check_file(file_path)
-        
+
         unreachable = [i for i in report.issues if i.op_type == NoOpType.UNREACHABLE_CODE]
         dead = [i for i in report.issues if i.op_type == NoOpType.DEAD_CODE]
         empty = [i for i in report.issues if i.op_type == NoOpType.EMPTY_BLOCK]
-        
+
         return {
             "file": file_path,
             "unreachable_count": len(unreachable),
@@ -389,7 +389,7 @@ class DeadCodeAnalyzer:
             "issues": [self._issue_to_dict(i) for i in report.issues],
         }
 
-    def _issue_to_dict(self, issue: NoOpIssue) -> Dict[str, Any]:
+    def _issue_to_dict(self, issue: NoOpIssue) -> dict[str, Any]:
         return {
             "type": issue.op_type.value,
             "line": issue.line_number,

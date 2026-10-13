@@ -2,15 +2,17 @@
 Memory Compiler - Compiles code to memory for hot execution
 """
 import ast
-import hashlib
-import time
 import asyncio
+import hashlib
+import pathlib
 import threading
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+import time
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
+from typing import Any
 
 
 class CompilationTarget(Enum):
@@ -36,12 +38,12 @@ class CompilationUnit:
     target: CompilationTarget = CompilationTarget.BYTECODE
     status: CompilationStatus = CompilationStatus.PENDING
     compiled_code: Any = None
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
-    compiled_at: Optional[float] = None
+    compiled_at: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "unit_id": self.unit_id,
             "file_path": self.file_path,
@@ -59,7 +61,7 @@ class CompilationResult:
     unit: CompilationUnit
     success: bool
     output: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     duration: float = 0.0
 
 
@@ -67,17 +69,17 @@ class MemoryCache:
     def __init__(self, max_size: int = 1000, ttl: float = 3600):
         self.max_size = max_size
         self.ttl = ttl
-        self.cache: Dict[str, CompilationUnit] = {}
-        self.access_times: Dict[str, float] = {}
+        self.cache: dict[str, CompilationUnit] = {}
+        self.access_times: dict[str, float] = {}
         self._lock = threading.RLock()
 
-    def get(self, key: str) -> Optional[CompilationUnit]:
+    def get(self, key: str) -> CompilationUnit | None:
         with self._lock:
             unit = self.cache.get(key)
             if unit and time.time() - self.access_times.get(key, 0) < self.ttl:
                 self.access_times[key] = time.time()
                 return unit
-            elif unit:
+            if unit:
                 self.cache.pop(key, None)
                 self.access_times.pop(key, None)
             return None
@@ -88,7 +90,7 @@ class MemoryCache:
                 oldest = min(self.access_times, key=self.access_times.get)
                 self.cache.pop(oldest, None)
                 self.access_times.pop(oldest, None)
-            
+
             self.cache[key] = unit
             self.access_times[key] = time.time()
 
@@ -162,12 +164,12 @@ class ASTCompiler(BaseCompiler):
 
 class JITCompiler:
     def __init__(self):
-        self.compilers: Dict[CompilationTarget, BaseCompiler] = {
+        self.compilers: dict[CompilationTarget, BaseCompiler] = {
             CompilationTarget.BYTECODE: BytecodeCompiler(),
             CompilationTarget.AST: ASTCompiler(),
         }
         self.cache = MemoryCache()
-        self.compilation_history: List[CompilationResult] = []
+        self.compilation_history: list[CompilationResult] = []
         self._lock = threading.RLock()
 
     def register_compiler(self, target: CompilationTarget, compiler: BaseCompiler):
@@ -181,7 +183,7 @@ class JITCompiler:
         use_cache: bool = True,
     ) -> CompilationResult:
         cache_key = hashlib.md5(f"{source}:{target.value}".encode()).hexdigest()
-        
+
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached and cached.status == CompilationStatus.COMPILED:
@@ -200,7 +202,7 @@ class JITCompiler:
 
         compiler = self.compilers[target]
         result = compiler.compile(unit)
-        
+
         with self._lock:
             self.compilation_history.append(result)
             if len(self.compilation_history) > 1000:
@@ -221,7 +223,7 @@ class JITCompiler:
         result = self.compile(source, target)
         if not result.success:
             raise RuntimeError(f"Compilation failed: {result.error}")
-        
+
         compiler = self.compilers[target]
         return compiler.execute(result.unit, *args, **kwargs)
 
@@ -232,7 +234,7 @@ class JITCompiler:
     ) -> Awaitable[CompilationResult]:
         return asyncio.get_event_loop().run_in_executor(None, self.compile, source, target)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         with self._lock:
             total = len(self.compilation_history)
             successful = sum(1 for r in self.compilation_history if r.success)
@@ -251,10 +253,10 @@ class JITCompiler:
 class HotReloader:
     def __init__(self, jit_compiler: JITCompiler):
         self.jit = jit_compiler
-        self.watched_files: Dict[str, CompilationUnit] = {}
-        self.callbacks: List[Callable] = []
+        self.watched_files: dict[str, CompilationUnit] = {}
+        self.callbacks: list[Callable] = []
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     async def start(self):
         self._running = True
@@ -270,10 +272,9 @@ class HotReloader:
                 pass
 
     def watch_file(self, file_path: str, target: CompilationTarget = CompilationTarget.BYTECODE):
-        import os
         self.watched_files[file_path] = {
             "target": target,
-            "last_mtime": os.path.getmtime(file_path) if os.path.exists(file_path) else 0,
+            "last_mtime": pathlib.Path(file_path).stat().st_mtime if pathlib.Path(file_path).exists() else 0,
         }
 
     def on_reload(self, callback: Callable):
@@ -282,13 +283,12 @@ class HotReloader:
     async def _watch_loop(self):
         while self._running:
             await asyncio.sleep(1.0)
-            import os
             for file_path, info in self.watched_files.items():
                 try:
-                    mtime = os.path.getmtime(file_path)
+                    mtime = pathlib.Path(file_path).stat().st_mtime
                     if mtime > info["last_mtime"]:
                         info["last_mtime"] = mtime
-                        source = open(file_path).read()
+                        source = pathlib.Path(file_path).open().read()
                         result = self.jit.compile(source, info["target"], file_path)
                         for callback in self.callbacks:
                             try:
@@ -304,7 +304,7 @@ class HotReloader:
 
 class CompilationPipeline:
     def __init__(self):
-        self.stages: List[Callable] = []
+        self.stages: list[Callable] = []
         self.jit = JITCompiler()
 
     def add_stage(self, stage: Callable):
@@ -320,31 +320,31 @@ class CompilationPipeline:
 class IncrementalCompiler:
     def __init__(self, jit_compiler: JITCompiler):
         self.jit = jit_compiler
-        self.dependency_graph: Dict[str, Set[str]] = defaultdict(set)
+        self.dependency_graph: dict[str, Set[str]] = defaultdict(set)
         self._lock = threading.RLock()
 
     def add_dependency(self, source_file: str, dependency: str):
         with self._lock:
             self.dependency_graph[source_file].add(dependency)
 
-    def compile_project(self, file_paths: List[str]) -> Dict[str, CompilationResult]:
+    def compile_project(self, file_paths: list[str]) -> dict[str, CompilationResult]:
         results = {}
         for file_path in file_paths:
-            source = open(file_path).read()
+            source = pathlib.Path(file_path).open().read()
             result = self.jit.compile(source, file_path=file_path)
             results[file_path] = result
         return results
 
-    def recompile_changed(self, file_path: str) -> Dict[str, CompilationResult]:
+    def recompile_changed(self, file_path: str) -> dict[str, CompilationResult]:
         with self._lock:
             affected = {file_path}
             for src, deps in self.dependency_graph.items():
                 if file_path in deps:
                     affected.add(src)
-        
+
         results = {}
         for f in affected:
             if f == file_path:
-                source = open(f).read()
+                source = pathlib.Path(f).open().read()
                 results[f] = self.jit.compile(source, file_path=f)
         return results

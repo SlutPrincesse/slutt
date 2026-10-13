@@ -3,14 +3,14 @@ Dynamic Prompt Assembler - Stitches prompt snippets based on tags (git-diff, env
 """
 import os
 import platform
+import re
 import subprocess
 import threading
-import re
-from typing import Dict, List, Optional, Any, Callable, Set
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-import hashlib
+from typing import Any
 
 
 class SnippetType(Enum):
@@ -29,39 +29,39 @@ class PromptSnippet:
     name: str
     content: str
     snippet_type: SnippetType
-    tags: List[str] = field(default_factory=list)
-    conditions: Dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    conditions: dict[str, Any] = field(default_factory=dict)
     priority: int = 0
-    dependencies: List[str] = field(default_factory=list)
-    variables: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    dependencies: list[str] = field(default_factory=list)
+    variables: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class AssemblyContext:
-    git_diff: Optional[str] = None
-    env_vars: Dict[str, str] = field(default_factory=dict)
+    git_diff: str | None = None
+    env_vars: dict[str, str] = field(default_factory=dict)
     os_type: str = ""
     os_version: str = ""
     python_version: str = ""
     working_dir: str = ""
-    project_files: List[str] = field(default_factory=list)
-    recent_errors: List[str] = field(default_factory=list)
-    active_tools: List[str] = field(default_factory=list)
-    memory_context: Dict[str, Any] = field(default_factory=dict)
-    custom: Dict[str, Any] = field(default_factory=dict)
+    project_files: list[str] = field(default_factory=list)
+    recent_errors: list[str] = field(default_factory=list)
+    active_tools: list[str] = field(default_factory=list)
+    memory_context: dict[str, Any] = field(default_factory=dict)
+    custom: dict[str, Any] = field(default_factory=dict)
 
 
 class DynamicPromptAssembler:
     def __init__(self):
-        self._snippets: Dict[str, PromptSnippet] = {}
-        self._tag_index: Dict[str, List[str]] = defaultdict(list)
-        self._type_index: Dict[SnippetType, List[str]] = defaultdict(list)
+        self._snippets: dict[str, PromptSnippet] = {}
+        self._tag_index: dict[str, list[str]] = defaultdict(list)
+        self._type_index: dict[SnippetType, list[str]] = defaultdict(list)
         self._lock = threading.RLock()
-        self._context_providers: Dict[str, Callable[[], Any]] = {}
+        self._context_providers: dict[str, Callable[[], Any]] = {}
         self._register_default_snippets()
         self._register_default_context_providers()
-    
+
     def _register_default_context_providers(self):
         self._context_providers["git_diff"] = self._get_git_diff
         self._context_providers["env_vars"] = lambda: dict(os.environ)
@@ -70,8 +70,8 @@ class DynamicPromptAssembler:
         self._context_providers["python_version"] = lambda: platform.python_version()
         self._context_providers["working_dir"] = lambda: os.getcwd()
         self._context_providers["project_files"] = self._get_project_files
-    
-    def _get_git_diff(self) -> Optional[str]:
+
+    def _get_git_diff(self) -> str | None:
         try:
             result = subprocess.run(
                 ["git", "diff", "--no-color", "HEAD~1..HEAD"],
@@ -82,8 +82,8 @@ class DynamicPromptAssembler:
         except Exception:
             pass
         return None
-    
-    def _get_project_files(self) -> List[str]:
+
+    def _get_project_files(self) -> list[str]:
         try:
             result = subprocess.run(
                 ["git", "ls-files"],
@@ -94,7 +94,7 @@ class DynamicPromptAssembler:
         except Exception:
             pass
         return []
-    
+
     def _register_default_snippets(self):
         # System snippets
         self.register_snippet(PromptSnippet(
@@ -105,7 +105,7 @@ class DynamicPromptAssembler:
             tags=["base", "system"],
             priority=100
         ))
-        
+
         self.register_snippet(PromptSnippet(
             snippet_id="sys_code_style",
             name="Code Style Guidelines",
@@ -114,7 +114,7 @@ class DynamicPromptAssembler:
             tags=["code_style", "constraints"],
             priority=90
         ))
-        
+
         # Context snippets
         self.register_snippet(PromptSnippet(
             snippet_id="ctx_git_diff",
@@ -126,7 +126,7 @@ class DynamicPromptAssembler:
             variables=["git_diff"],
             priority=80
         ))
-        
+
         self.register_snippet(PromptSnippet(
             snippet_id="ctx_env",
             name="Environment Context",
@@ -136,7 +136,7 @@ class DynamicPromptAssembler:
             variables=["os_type", "os_version", "python_version", "working_dir"],
             priority=70
         ))
-        
+
         # Task snippets
         self.register_snippet(PromptSnippet(
             snippet_id="task_debug",
@@ -147,7 +147,7 @@ class DynamicPromptAssembler:
             variables=["task_description", "recent_errors"],
             priority=85
         ))
-        
+
         self.register_snippet(PromptSnippet(
             snippet_id="task_refactor",
             name="Refactor Task",
@@ -157,7 +157,7 @@ class DynamicPromptAssembler:
             variables=["refactor_goals", "project_files"],
             priority=85
         ))
-        
+
         # Tool snippets
         self.register_snippet(PromptSnippet(
             snippet_id="tool_grep",
@@ -168,7 +168,7 @@ class DynamicPromptAssembler:
             variables=["search_pattern"],
             priority=60
         ))
-        
+
         # Memory snippets
         self.register_snippet(PromptSnippet(
             snippet_id="mem_patterns",
@@ -179,50 +179,50 @@ class DynamicPromptAssembler:
             variables=["memory_context"],
             priority=50
         ))
-    
+
     def register_snippet(self, snippet: PromptSnippet):
         with self._lock:
             self._snippets[snippet.snippet_id] = snippet
             for tag in snippet.tags:
                 self._tag_index[tag].append(snippet.snippet_id)
             self._type_index[snippet.snippet_type].append(snippet.snippet_id)
-    
+
     def unregister_snippet(self, snippet_id: str) -> bool:
         with self._lock:
             snippet = self._snippets.pop(snippet_id, None)
             if not snippet:
                 return False
-            
+
             for tag in snippet.tags:
                 if snippet_id in self._tag_index[tag]:
                     self._tag_index[tag].remove(snippet_id)
-            
+
             if snippet_id in self._type_index[snippet.snippet_type]:
                 self._type_index[snippet.snippet_type].remove(snippet_id)
-            
+
             return True
-    
-    def assemble(self, context: AssemblyContext, 
-                 required_tags: List[str] = None,
-                 excluded_tags: List[str] = None,
+
+    def assemble(self, context: AssemblyContext,
+                 required_tags: list[str] = None,
+                 excluded_tags: list[str] = None,
                  max_tokens: int = 8000) -> str:
         # Gather context
         full_context = self._gather_context(context)
-        
+
         # Select snippets
         selected = self._select_snippets(full_context, required_tags, excluded_tags)
-        
+
         # Resolve dependencies and order
         ordered = self._resolve_dependencies(selected)
-        
+
         # Render snippets
         rendered = []
         total_tokens = 0
-        
+
         for snippet in ordered:
             rendered_content = self._render_snippet(snippet, full_context)
             snippet_tokens = self._estimate_tokens(rendered_content)
-            
+
             if total_tokens + snippet_tokens > max_tokens:
                 # Try to truncate
                 if total_tokens < max_tokens * 0.9:
@@ -231,13 +231,13 @@ class DynamicPromptAssembler:
                     rendered.append(rendered_content)
                     total_tokens += self._estimate_tokens(rendered_content)
                 break
-            
+
             rendered.append(rendered_content)
             total_tokens += snippet_tokens
-        
+
         return "\n\n".join(rendered)
-    
-    def _gather_context(self, context: AssemblyContext) -> Dict[str, Any]:
+
+    def _gather_context(self, context: AssemblyContext) -> dict[str, Any]:
         ctx = {
             "git_diff": context.git_diff,
             "env_vars": context.env_vars,
@@ -250,10 +250,10 @@ class DynamicPromptAssembler:
             "active_tools": context.active_tools,
             "memory_context": context.memory_context,
         }
-        
+
         # Add custom context
         ctx.update(context.custom)
-        
+
         # Call context providers for missing values
         for key, provider in self._context_providers.items():
             if key not in ctx or ctx[key] is None:
@@ -261,17 +261,17 @@ class DynamicPromptAssembler:
                     ctx[key] = provider()
                 except Exception:
                     ctx[key] = None
-        
+
         return ctx
-    
-    def _select_snippets(self, context: Dict[str, Any],
-                        required_tags: List[str] = None,
-                        excluded_tags: List[str] = None) -> List[PromptSnippet]:
+
+    def _select_snippets(self, context: dict[str, Any],
+                        required_tags: list[str] = None,
+                        excluded_tags: list[str] = None) -> list[PromptSnippet]:
         required_tags = required_tags or []
         excluded_tags = excluded_tags or []
-        
+
         candidate_ids = set()
-        
+
         # Start with required tags
         if required_tags:
             for tag in required_tags:
@@ -279,30 +279,30 @@ class DynamicPromptAssembler:
         else:
             # All snippets as candidates
             candidate_ids = set(self._snippets.keys())
-        
+
         # Filter by conditions
         selected = []
         for snippet_id in candidate_ids:
             snippet = self._snippets.get(snippet_id)
             if not snippet:
                 continue
-            
+
             # Check excluded tags
             if any(tag in excluded_tags for tag in snippet.tags):
                 continue
-            
+
             # Check conditions
             if self._check_conditions(snippet.conditions, context):
                 selected.append(snippet)
-        
+
         # Sort by priority (descending)
         selected.sort(key=lambda s: -s.priority)
         return selected
-    
-    def _check_conditions(self, conditions: Dict[str, Any], context: Dict[str, Any]) -> bool:
+
+    def _check_conditions(self, conditions: dict[str, Any], context: dict[str, Any]) -> bool:
         for key, condition in conditions.items():
             context_value = context.get(key)
-            
+
             if isinstance(condition, dict):
                 if "exists" in condition:
                     if condition["exists"] and not context_value:
@@ -324,37 +324,37 @@ class DynamicPromptAssembler:
             elif condition is False:
                 if context_value:
                     return False
-        
+
         return True
-    
-    def _resolve_dependencies(self, snippets: List[PromptSnippet]) -> List[PromptSnippet]:
+
+    def _resolve_dependencies(self, snippets: list[PromptSnippet]) -> list[PromptSnippet]:
         # Topological sort based on dependencies
         snippet_map = {s.snippet_id: s for s in snippets}
         visited = set()
         result = []
-        
+
         def visit(snippet_id: str):
             if snippet_id in visited:
                 return
             if snippet_id not in snippet_map:
                 return
-            
+
             snippet = snippet_map[snippet_id]
             for dep_id in snippet.dependencies:
                 if dep_id in snippet_map:
                     visit(dep_id)
-            
+
             visited.add(snippet_id)
             result.append(snippet)
-        
+
         for snippet in snippets:
             visit(snippet.snippet_id)
-        
+
         return result
-    
-    def _render_snippet(self, snippet: PromptSnippet, context: Dict[str, Any]) -> str:
+
+    def _render_snippet(self, snippet: PromptSnippet, context: dict[str, Any]) -> str:
         content = snippet.content
-        
+
         # Replace variables
         for var in snippet.variables:
             placeholder = f"{{{var}}}"
@@ -362,28 +362,28 @@ class DynamicPromptAssembler:
             if isinstance(value, (list, dict)):
                 value = json.dumps(value, indent=2)
             content = content.replace(placeholder, str(value))
-        
+
         return content
-    
+
     def _estimate_tokens(self, text: str) -> int:
         # Rough estimation: ~4 chars per token
         return len(text) // 4
-    
+
     def _truncate_to_tokens(self, text: str, max_tokens: int) -> str:
         max_chars = max_tokens * 4
         if len(text) <= max_chars:
             return text
         return text[:max_chars] + "... [truncated]"
-    
+
     def register_context_provider(self, name: str, provider: Callable[[], Any]):
         self._context_providers[name] = provider
-    
-    def get_snippet(self, snippet_id: str) -> Optional[PromptSnippet]:
+
+    def get_snippet(self, snippet_id: str) -> PromptSnippet | None:
         with self._lock:
             return self._snippets.get(snippet_id)
-    
-    def list_snippets(self, snippet_type: Optional[SnippetType] = None,
-                      tags: List[str] = None) -> List[PromptSnippet]:
+
+    def list_snippets(self, snippet_type: SnippetType | None = None,
+                      tags: list[str] = None) -> list[PromptSnippet]:
         with self._lock:
             if snippet_type:
                 ids = self._type_index.get(snippet_type, [])
@@ -394,13 +394,14 @@ class DynamicPromptAssembler:
                 ids = list(ids)
             else:
                 ids = list(self._snippets.keys())
-            
+
             return [self._snippets[sid] for sid in ids if sid in self._snippets]
 
 
 import json
 
-_assembler: Optional[DynamicPromptAssembler] = None
+_assembler: DynamicPromptAssembler | None = None
+
 
 def get_prompt_assembler() -> DynamicPromptAssembler:
     global _assembler

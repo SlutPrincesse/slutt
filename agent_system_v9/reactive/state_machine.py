@@ -2,13 +2,11 @@
 State Machine Guard - Formal state machine with validation
 """
 import asyncio
-import uuid
-from typing import Dict, List, Optional, Any, Set, Callable, Awaitable, TypeVar, Generic
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
-
+from typing import Any, Generic, TypeVar
 
 T = TypeVar('T')
 S = TypeVar('S')
@@ -26,9 +24,9 @@ class State:
     name: str
     is_initial: bool = False
     is_final: bool = False
-    on_enter: Optional[Callable] = None
-    on_exit: Optional[Callable] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    on_enter: Callable | None = None
+    on_exit: Callable | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __hash__(self):
         return hash(self.name)
@@ -44,13 +42,13 @@ class Transition:
     from_state: str
     to_state: str
     event: str
-    condition: Optional[Callable] = None
-    action: Optional[Callable] = None
+    condition: Callable | None = None
+    action: Callable | None = None
     transition_type: TransitionType = TransitionType.EXTERNAL
     priority: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def matches(self, event: str, context: Dict[str, Any]) -> bool:
+    def matches(self, event: str, context: dict[str, Any]) -> bool:
         if self.event != event:
             return False
         if self.condition:
@@ -73,8 +71,8 @@ class StateMachine(Generic[S]):
     def __init__(
         self,
         name: str,
-        states: List[State],
-        transitions: List[Transition],
+        states: list[State],
+        transitions: list[Transition],
         initial_state: str,
         config: StateMachineConfig = None,
     ):
@@ -83,22 +81,22 @@ class StateMachine(Generic[S]):
         self.transitions = transitions
         self.initial_state = initial_state
         self.config = config or StateMachineConfig()
-        
+
         self.current_state = initial_state
-        self.history: List[Dict[str, Any]] = []
+        self.history: list[dict[str, Any]] = []
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._callbacks: List[Callable] = []
+        self._task: asyncio.Task | None = None
+        self._callbacks: list[Callable] = []
         self._lock = asyncio.Lock()
-        
+
         self._build_transition_map()
 
     def _build_transition_map(self):
-        self._transition_map: Dict[str, Dict[str, List[Transition]]] = defaultdict(lambda: defaultdict(list))
+        self._transition_map: dict[str, dict[str, list[Transition]]] = defaultdict(lambda: defaultdict(list))
         for transition in self.transitions:
             self._transition_map[transition.from_state][transition.event].append(transition)
-        
+
         for from_state in self._transition_map:
             for event in self._transition_map[from_state]:
                 self._transition_map[from_state][event].sort(key=lambda t: -t.priority)
@@ -125,12 +123,12 @@ class StateMachine(Generic[S]):
             except asyncio.TimeoutError:
                 continue
 
-    async def send_event(self, event: str, context: Dict[str, Any] = None):
+    async def send_event(self, event: str, context: dict[str, Any] = None):
         await self._event_queue.put((event, context or {}))
 
-    async def _process_event(self, event: str, context: Dict[str, Any]):
+    async def _process_event(self, event: str, context: dict[str, Any]):
         transitions = self._transition_map.get(self.current_state, {}).get(event, [])
-        
+
         if not transitions:
             if self.config.allow_unknown_events:
                 return
@@ -145,7 +143,7 @@ class StateMachine(Generic[S]):
             return
         raise ValueError(f"No matching transition for event '{event}' in state '{self.current_state}'")
 
-    async def _execute_transition(self, transition: Transition, context: Dict[str, Any]):
+    async def _execute_transition(self, transition: Transition, context: dict[str, Any]):
         from_state_obj = self.states[self.current_state]
         to_state_obj = self.states[transition.to_state]
 
@@ -177,7 +175,7 @@ class StateMachine(Generic[S]):
             "context": context,
             "timestamp": asyncio.get_event_loop().time(),
         })
-        
+
         if len(self.history) > self.config.max_history:
             self.history = self.history[-self.config.max_history:]
 
@@ -191,7 +189,7 @@ class StateMachine(Generic[S]):
             else:
                 state.on_enter({})
 
-    async def _notify_callbacks(self, event: str, from_state: str, to_state: str, context: Dict):
+    async def _notify_callbacks(self, event: str, from_state: str, to_state: str, context: dict):
         for callback in self._callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -213,10 +211,10 @@ class StateMachine(Generic[S]):
     def can_transition(self, event: str) -> bool:
         return event in self._transition_map.get(self.current_state, {})
 
-    def get_possible_events(self) -> List[str]:
+    def get_possible_events(self) -> list[str]:
         return list(self._transition_map.get(self.current_state, {}).keys())
 
-    def get_history(self) -> List[Dict[str, Any]]:
+    def get_history(self) -> list[dict[str, Any]]:
         return list(self.history)
 
     def reset(self):
@@ -227,9 +225,9 @@ class StateMachine(Generic[S]):
 class HierarchicalStateMachine(StateMachine[S]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.parent: Optional[HierarchicalStateMachine] = None
-        self.children: Dict[str, HierarchicalStateMachine] = {}
-        self.active_child: Optional[str] = None
+        self.parent: HierarchicalStateMachine | None = None
+        self.children: dict[str, HierarchicalStateMachine] = {}
+        self.active_child: str | None = None
 
     def add_child(self, name: str, child: 'HierarchicalStateMachine'):
         child.parent = self
@@ -256,7 +254,7 @@ class HierarchicalStateMachine(StateMachine[S]):
 
 class StateMachineGuard:
     def __init__(self):
-        self.machines: Dict[str, StateMachine] = {}
+        self.machines: dict[str, StateMachine] = {}
 
     def register(self, machine: StateMachine) -> str:
         self.machines[machine.name] = machine
@@ -268,7 +266,7 @@ class StateMachineGuard:
             return True
         return False
 
-    def get(self, name: str) -> Optional[StateMachine]:
+    def get(self, name: str) -> StateMachine | None:
         return self.machines.get(name)
 
     async def start_all(self):
@@ -279,16 +277,16 @@ class StateMachineGuard:
         for machine in self.machines.values():
             await machine.stop()
 
-    def get_all_states(self) -> Dict[str, str]:
+    def get_all_states(self) -> dict[str, str]:
         return {name: machine.get_state() for name, machine in self.machines.items()}
 
 
 class StateMachineBuilder:
     def __init__(self, name: str):
         self.name = name
-        self.states: List[State] = []
-        self.transitions: List[Transition] = []
-        self.initial_state: Optional[str] = None
+        self.states: list[State] = []
+        self.transitions: list[Transition] = []
+        self.initial_state: str | None = None
         self.config = StateMachineConfig()
 
     def add_state(
@@ -296,9 +294,9 @@ class StateMachineBuilder:
         name: str,
         is_initial: bool = False,
         is_final: bool = False,
-        on_enter: Optional[Callable] = None,
-        on_exit: Optional[Callable] = None,
-        metadata: Dict[str, Any] = None,
+        on_enter: Callable | None = None,
+        on_exit: Callable | None = None,
+        metadata: dict[str, Any] = None,
     ) -> 'StateMachineBuilder':
         state = State(name, is_initial, is_final, on_enter, on_exit, metadata)
         self.states.append(state)
@@ -311,11 +309,11 @@ class StateMachineBuilder:
         from_state: str,
         to_state: str,
         event: str,
-        condition: Optional[Callable] = None,
-        action: Optional[Callable] = None,
+        condition: Callable | None = None,
+        action: Callable | None = None,
         transition_type: TransitionType = TransitionType.EXTERNAL,
         priority: int = 0,
-        metadata: Dict[str, Any] = None,
+        metadata: dict[str, Any] = None,
     ) -> 'StateMachineBuilder':
         transition = Transition(
             from_state=from_state,
@@ -348,38 +346,38 @@ class StateMachineBuilder:
 
 class ProtocolStateMachine:
     def __init__(self):
-        self.protocols: Dict[str, StateMachine] = {}
+        self.protocols: dict[str, StateMachine] = {}
 
-    def define_protocol(self, name: str, states: List[str], transitions: List[Dict[str, str]], initial: str):
+    def define_protocol(self, name: str, states: list[str], transitions: list[dict[str, str]], initial: str):
         builder = StateMachineBuilder(name)
-        
+
         for state_name in states:
             builder.add_state(state_name, is_initial=(state_name == initial))
-        
+
         for trans in transitions:
             builder.add_transition(
                 trans["from"],
                 trans["to"],
                 trans["event"],
             )
-        
+
         self.protocols[name] = builder.build()
 
-    def validate_trace(self, protocol_name: str, events: List[str]) -> bool:
+    def validate_trace(self, protocol_name: str, events: list[str]) -> bool:
         machine = self.protocols.get(protocol_name)
         if not machine:
             return False
-        
+
         test_machine = StateMachine(
             f"test_{protocol_name}",
             machine.states.values(),
             machine.transitions,
             machine.initial_state,
         )
-        
+
         for event in events:
             if not test_machine.can_transition(event):
                 return False
             test_machine.current_state = machine._transition_map[test_machine.current_state][event][0].to_state
-        
+
         return True

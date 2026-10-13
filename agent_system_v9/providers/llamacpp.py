@@ -1,11 +1,11 @@
-import os
-import json
 import asyncio
+import os
 import subprocess
-from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -17,19 +17,19 @@ except ImportError:
     LLAMA_CPP_AVAILABLE = False
 
 from .base import (
-    LLMProvider,
-    ModelInfo,
-    LLMResponse,
     LLMChunk,
-    ProviderType,
+    LLMProvider,
+    LLMResponse,
+    ModelInfo,
     ProviderError,
+    ProviderType,
 )
 
 
 @dataclass
 class LlamaCppConfig:
     model_path: str
-    base_url: Optional[str] = None
+    base_url: str | None = None
     n_gpu_layers: int = -1
     n_ctx: int = 8192
     n_batch: int = 512
@@ -52,7 +52,7 @@ class LlamaCppConfig:
     use_mlock: bool = False
     embedding: bool = False
     kv_cache_quant: bool = True
-    speculative: Optional[str] = None
+    speculative: str | None = None
     n_draft: int = 5
     n_predict: int = -1
     temperature: float = 0.7
@@ -68,21 +68,21 @@ class LlamaCppConfig:
     mirostat: int = 0
     mirostat_tau: float = 5.0
     mirostat_eta: float = 0.1
-    grammar: Optional[str] = None
-    json_schema: Optional[str] = None
+    grammar: str | None = None
+    json_schema: str | None = None
     logits_all: bool = False
-    stopping_criteria: Optional[List[str]] = None
+    stopping_criteria: list[str] | None = None
 
 
 class LlamaCppProvider(LLMProvider):
     def __init__(self, config: LlamaCppConfig):
         super().__init__(config.model_path)
         self.config = config
-        self._llama: Optional[Llama] = None
-        self._server_process: Optional[subprocess.Popen] = None
-        self._client: Optional[httpx.AsyncClient] = None
+        self._llama: Llama | None = None
+        self._server_process: subprocess.Popen | None = None
+        self._client: httpx.AsyncClient | None = None
         self._executor = ThreadPoolExecutor(max_workers=2)
-        self._kv_cache: Dict[str, Any] = {}
+        self._kv_cache: dict[str, Any] = {}
         self._model_info = self._build_model_info()
 
     def _build_model_info(self) -> ModelInfo:
@@ -145,7 +145,7 @@ class LlamaCppProvider(LLMProvider):
     async def _ensure_server(self) -> str:
         if self.config.base_url:
             return self.config.base_url
-        
+
         if self._server_process is None or self._server_process.poll() is not None:
             port = 8080
             self._server_process = subprocess.Popen([
@@ -160,9 +160,9 @@ class LlamaCppProvider(LLMProvider):
                 "--cache-type-v", "q8_0" if self.config.kv_cache_quant else "f16",
             ] + (["--flash-attn"] if self.config.flash_attn else []) +
             (["--speculative", self.config.speculative, "--n-draft", str(self.config.n_draft)] if self.config.speculative else []))
-            
+
             await asyncio.sleep(2)
-        
+
         return f"http://localhost:{port}"
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -186,14 +186,14 @@ class LlamaCppProvider(LLMProvider):
 
     async def chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         **kwargs
     ) -> LLMResponse:
         llama = self._initialize_llama()
-        
+
         prompt = self._messages_to_prompt(messages)
-        
+
         completion = await asyncio.get_event_loop().run_in_executor(
             self._executor,
             lambda: llama.create_chat_completion(
@@ -220,17 +220,17 @@ class LlamaCppProvider(LLMProvider):
                 stream=False,
             )
         )
-        
+
         return self._parse_completion(completion)
 
     async def stream_chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         **kwargs
     ) -> AsyncIterator[LLMChunk]:
         llama = self._initialize_llama()
-        
+
         stream = await asyncio.get_event_loop().run_in_executor(
             self._executor,
             lambda: llama.create_chat_completion(
@@ -257,11 +257,11 @@ class LlamaCppProvider(LLMProvider):
                 stream=True,
             )
         )
-        
+
         for chunk in stream:
             yield self._parse_stream_chunk(chunk)
 
-    def _messages_to_prompt(self, messages: List[Dict[str, Any]]) -> str:
+    def _messages_to_prompt(self, messages: list[dict[str, Any]]) -> str:
         prompt_parts = []
         for msg in messages:
             role = msg.get("role", "user")
@@ -277,14 +277,14 @@ class LlamaCppProvider(LLMProvider):
         prompt_parts.append("<|assistant|>")
         return "\n".join(prompt_parts)
 
-    def _parse_completion(self, completion: Dict[str, Any]) -> LLMResponse:
+    def _parse_completion(self, completion: dict[str, Any]) -> LLMResponse:
         choice = completion["choices"][0]
         message = choice["message"]
         usage = completion.get("usage", {})
-        
+
         input_tokens = usage.get("prompt_tokens", 0)
         output_tokens = usage.get("completion_tokens", 0)
-        
+
         return LLMResponse(
             content=message.get("content", "") or "",
             tool_calls=message.get("tool_calls", []),
@@ -300,10 +300,10 @@ class LlamaCppProvider(LLMProvider):
             }
         )
 
-    def _parse_stream_chunk(self, chunk: Dict[str, Any]) -> LLMChunk:
+    def _parse_stream_chunk(self, chunk: dict[str, Any]) -> LLMChunk:
         choice = chunk["choices"][0]
         delta = choice.get("delta", {})
-        
+
         return LLMChunk(
             delta=delta.get("content", "") or "",
             tool_calls=delta.get("tool_calls", []),
@@ -317,18 +317,18 @@ class LlamaCppProvider(LLMProvider):
     def get_model_info(self) -> ModelInfo:
         return self._model_info
 
-    def get_kv_cache_stats(self) -> Dict[str, Any]:
+    def get_kv_cache_stats(self) -> dict[str, Any]:
         return {
             "entries": len(self._kv_cache),
             "total_size_mb": sum(len(str(v)) for v in self._kv_cache.values()) / (1024 * 1024),
         }
 
-    async def batch_inference(self, requests: List[Dict[str, Any]]) -> List[LLMResponse]:
+    async def batch_inference(self, requests: list[dict[str, Any]]) -> list[LLMResponse]:
         llama = self._initialize_llama()
-        
+
         async def process_request(req):
             return await self.chat(**req)
-        
+
         results = await asyncio.gather(*[process_request(r) for r in requests])
         return results
 
@@ -337,7 +337,7 @@ class LlamaCppProvider(LLMProvider):
         model_path = os.getenv("LLAMACPP_MODEL_PATH")
         if not model_path:
             raise ValueError("LLAMACPP_MODEL_PATH not set")
-        
+
         config = LlamaCppConfig(
             model_path=model_path,
             base_url=os.getenv("LLAMACPP_BASE_URL"),
@@ -352,7 +352,7 @@ class LlamaCppProvider(LLMProvider):
         return cls(config)
 
     @classmethod
-    def discover_gguf_models(cls, search_paths: List[str] = None) -> List[str]:
+    def discover_gguf_models(cls, search_paths: list[str] = None) -> list[str]:
         if search_paths is None:
             search_paths = [
                 os.getenv("LLAMACPP_MODEL_DIR", "~/.cache/llama.cpp/models"),
@@ -360,7 +360,7 @@ class LlamaCppProvider(LLMProvider):
                 "/workspace/models",
                 "./models",
             ]
-        
+
         models = []
         for path_str in search_paths:
             path = Path(path_str).expanduser()

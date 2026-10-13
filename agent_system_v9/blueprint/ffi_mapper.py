@@ -2,14 +2,11 @@
 FFI Mapper - Foreign Function Interface mapping between languages
 """
 import ctypes
-import json
 import platform
-import subprocess
-from typing import Dict, List, Optional, Any, Set, Union, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class CallingConvention(Enum):
@@ -42,15 +39,15 @@ class FFIBasicType(Enum):
 @dataclass
 class FFIType:
     name: str
-    basic_type: Optional[FFIBasicType] = None
+    basic_type: FFIBasicType | None = None
     is_pointer: bool = False
     is_array: bool = False
-    array_size: Optional[int] = None
-    struct_fields: List['FFIType'] = field(default_factory=list)
-    enum_values: Dict[str, int] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    array_size: int | None = None
+    struct_fields: list['FFIType'] = field(default_factory=list)
+    enum_values: dict[str, int] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "basic_type": self.basic_type.value if self.basic_type else None,
@@ -63,7 +60,7 @@ class FFIType:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FFIType':
+    def from_dict(cls, data: dict[str, Any]) -> 'FFIType':
         return cls(
             name=data["name"],
             basic_type=FFIBasicType(data["basic_type"]) if data.get("basic_type") else None,
@@ -80,14 +77,14 @@ class FFIType:
 class FFIFunction:
     name: str
     return_type: FFIType
-    parameters: List[FFIType] = field(default_factory=list)
+    parameters: list[FFIType] = field(default_factory=list)
     calling_convention: CallingConvention = CallingConvention.CDECL
     is_variadic: bool = False
     library: str = ""
     symbol: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "return_type": self.return_type.to_dict(),
@@ -100,7 +97,7 @@ class FFIFunction:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FFIFunction':
+    def from_dict(cls, data: dict[str, Any]) -> 'FFIFunction':
         return cls(
             name=data["name"],
             return_type=FFIType.from_dict(data["return_type"]),
@@ -117,11 +114,11 @@ class FFIFunction:
 class FFILibrary:
     name: str
     path: str
-    functions: List[FFIFunction] = field(default_factory=list)
-    types: Dict[str, FFIType] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    functions: list[FFIFunction] = field(default_factory=list)
+    types: dict[str, FFIType] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "path": self.path,
@@ -131,7 +128,7 @@ class FFILibrary:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FFILibrary':
+    def from_dict(cls, data: dict[str, Any]) -> 'FFILibrary':
         return cls(
             name=data["name"],
             path=data["path"],
@@ -143,8 +140,8 @@ class FFILibrary:
 
 class FFIMapper:
     def __init__(self):
-        self.libraries: Dict[str, FFILibrary] = {}
-        self.type_mappings: Dict[str, Any] = {}
+        self.libraries: dict[str, FFILibrary] = {}
+        self.type_mappings: dict[str, Any] = {}
         self._init_ctypes_mappings()
 
     def _init_ctypes_mappings(self):
@@ -166,12 +163,12 @@ class FFIMapper:
             FFIBasicType.WSTRING: ctypes.c_wchar_p,
         }
 
-    def load_library(self, path: str, name: Optional[str] = None) -> FFILibrary:
+    def load_library(self, path: str, name: str | None = None) -> FFILibrary:
         if name is None:
             name = Path(path).stem
 
         lib = FFILibrary(name=name, path=path)
-        
+
         try:
             if platform.system() == "Windows":
                 ctypes_lib = ctypes.WinDLL(path)
@@ -194,13 +191,13 @@ class FFIMapper:
             return
 
         ctypes_lib = lib.metadata["ctypes_handle"]
-        
+
         try:
             c_func = getattr(ctypes_lib, func.symbol or func.name)
-            
+
             c_func.restype = self._ffi_type_to_ctypes(func.return_type)
             c_func.argtypes = [self._ffi_type_to_ctypes(p) for p in func.parameters]
-            
+
             func.metadata["ctypes_func"] = c_func
         except Exception as e:
             func.metadata["bind_error"] = str(e)
@@ -213,10 +210,10 @@ class FFIMapper:
             if ffi_type.is_array and ffi_type.array_size:
                 return ctype * ffi_type.array_size
             return ctype
-        
+
         if ffi_type.struct_fields:
             return self._create_struct_type(ffi_type)
-        
+
         return ctypes.c_void_p
 
     def _create_struct_type(self, ffi_type: FFIType):
@@ -234,7 +231,7 @@ class FFIMapper:
 
         lib = self.libraries[library_name]
         func = next((f for f in lib.functions if f.name == function_name), None)
-        
+
         if not func:
             raise ValueError(f"Function not found: {function_name}")
 
@@ -242,27 +239,27 @@ class FFIMapper:
             raise ValueError(f"Function not bound: {function_name}")
 
         c_func = func.metadata["ctypes_func"]
-        
+
         converted_args = []
         for i, (arg, param_type) in enumerate(zip(args, func.parameters)):
             converted_args.append(self._convert_arg(arg, param_type))
-        
+
         result = c_func(*converted_args)
         return self._convert_result(result, func.return_type)
 
     def _convert_arg(self, value: Any, ffi_type: FFIType) -> Any:
         if ffi_type.basic_type == FFIBasicType.STRING and isinstance(value, str):
             return value.encode('utf-8')
-        elif ffi_type.basic_type == FFIBasicType.WSTRING and isinstance(value, str):
+        if ffi_type.basic_type == FFIBasicType.WSTRING and isinstance(value, str):
             return value
-        elif ffi_type.basic_type == FFIBasicType.POINTER and isinstance(value, (bytes, bytearray)):
+        if ffi_type.basic_type == FFIBasicType.POINTER and isinstance(value, (bytes, bytearray)):
             return ctypes.c_char_p(value)
         return value
 
     def _convert_result(self, value: Any, ffi_type: FFIType) -> Any:
         if ffi_type.basic_type == FFIBasicType.STRING and isinstance(value, bytes):
             return value.decode('utf-8')
-        elif ffi_type.basic_type == FFIBasicType.WSTRING and isinstance(value, int):
+        if ffi_type.basic_type == FFIBasicType.WSTRING and isinstance(value, int):
             return ctypes.wstring_at(value)
         return value
 
@@ -271,15 +268,14 @@ class FFIMapper:
             raise ValueError(f"Library not loaded: {library_name}")
 
         lib = self.libraries[library_name]
-        
+
         if target == "python":
             return self._generate_python_bindings(lib)
-        elif target == "c":
+        if target == "c":
             return self._generate_c_header(lib)
-        elif target == "rust":
+        if target == "rust":
             return self._generate_rust_bindings(lib)
-        else:
-            raise ValueError(f"Unknown target: {target}")
+        raise ValueError(f"Unknown target: {target}")
 
     def _generate_python_bindings(self, lib: FFILibrary) -> str:
         lines = [
@@ -339,13 +335,13 @@ class FFIMapper:
             return_type = self._basic_type_to_c(func.return_type.basic_type)
             if func.return_type.is_pointer:
                 return_type += "*"
-            
+
             lines.append(f"{return_type} {func.name}({', '.join(params)});")
 
         lines.extend(["", "#endif // __AUTO_GEN_H__", ""])
         return "\n".join(lines)
 
-    def _basic_type_to_c(self, basic_type: Optional[FFIBasicType]) -> str:
+    def _basic_type_to_c(self, basic_type: FFIBasicType | None) -> str:
         if not basic_type:
             return "void"
         mapping = {
@@ -397,7 +393,7 @@ class FFIMapper:
         lines.extend(["}", ""])
         return "\n".join(lines)
 
-    def _basic_type_to_rust(self, basic_type: Optional[FFIBasicType]) -> str:
+    def _basic_type_to_rust(self, basic_type: FFIBasicType | None) -> str:
         if not basic_type:
             return "c_void"
         mapping = {
@@ -421,19 +417,19 @@ class FFIMapper:
 
     def parse_c_header(self, header_path: str) -> FFILibrary:
         import re
-        
+
         content = Path(header_path).read_text()
         lib = FFILibrary(name=Path(header_path).stem, path=header_path)
 
         func_pattern = re.compile(
             r'(\w+(?:\s*\*)?)\s+(\w+)\s*\(([^)]*)\)\s*;'
         )
-        
+
         for match in func_pattern.finditer(content):
             return_type_str, func_name, params_str = match.groups()
-            
+
             return_type = self._parse_c_type(return_type_str.strip())
-            
+
             params = []
             for param_str in params_str.split(','):
                 param_str = param_str.strip()
@@ -456,7 +452,7 @@ class FFIMapper:
     def _parse_c_type(self, type_str: str) -> FFIType:
         is_pointer = '*' in type_str
         clean_type = type_str.replace('*', '').replace('const', '').strip()
-        
+
         basic_mapping = {
             'void': FFIBasicType.VOID,
             'bool': FFIBasicType.BOOL,
@@ -478,7 +474,7 @@ class FFIMapper:
         basic_type = basic_mapping.get(clean_type)
         if basic_type is None and clean_type.endswith('_t'):
             basic_type = FFIBasicType.INT32
-        
+
         return FFIType(
             name=clean_type,
             basic_type=basic_type,

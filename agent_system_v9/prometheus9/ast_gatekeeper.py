@@ -2,13 +2,13 @@
 AST State-Verification Gatekeeper - Enforces mandatory AST and state checks prior to I/O file edits
 """
 import ast
-import threading
 import hashlib
+import threading
 import time
-from typing import Dict, List, Optional, Any, Callable, Set
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from typing import Any
 
 
 class VerificationStatus(Enum):
@@ -23,19 +23,19 @@ class VerificationResult:
     check_id: str
     status: VerificationStatus
     message: str
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
 
 class ASTStateGatekeeper:
     def __init__(self, strict: bool = True):
         self.strict = strict
-        self._checks: List[Callable] = []
+        self._checks: list[Callable] = []
         self._lock = threading.RLock()
-        self._file_states: Dict[str, str] = {}  # file_path -> content_hash
-        self._ast_cache: Dict[str, ast.AST] = {}
+        self._file_states: dict[str, str] = {}  # file_path -> content_hash
+        self._ast_cache: dict[str, ast.AST] = {}
         self._register_default_checks()
-    
+
     def _register_default_checks(self):
         self.add_check(self._check_syntax_valid)
         self.add_check(self._check_no_syntax_errors)
@@ -44,22 +44,22 @@ class ASTStateGatekeeper:
         if self.strict:
             self.add_check(self._check_type_annotations)
             self.add_check(self._check_complexity)
-    
+
     def add_check(self, check: Callable[[str, str], VerificationResult]):
         with self._lock:
             self._checks.append(check)
-    
-    def verify(self, file_path: str, new_content: str) -> List[VerificationResult]:
+
+    def verify(self, file_path: str, new_content: str) -> list[VerificationResult]:
         results = []
-        
+
         # Check if content actually changed
         new_hash = hashlib.sha256(new_content.encode()).hexdigest()
         with self._lock:
             old_hash = self._file_states.get(file_path)
-        
+
         if old_hash == new_hash:
             return [VerificationResult("unchanged", VerificationStatus.SKIPPED, "Content unchanged")]
-        
+
         # Run all checks
         for check in self._checks:
             try:
@@ -71,7 +71,7 @@ class ASTStateGatekeeper:
                     status=VerificationStatus.FAILED,
                     message=f"Check failed: {e}"
                 ))
-        
+
         # Update state if all passed
         if all(r.status == VerificationStatus.PASSED for r in results):
             with self._lock:
@@ -81,16 +81,16 @@ class ASTStateGatekeeper:
                     self._ast_cache[file_path] = ast.parse(new_content)
                 except Exception:
                     pass
-        
+
         return results
-    
+
     def _check_syntax_valid(self, file_path: str, content: str) -> VerificationResult:
         try:
             ast.parse(content)
             return VerificationResult("syntax", VerificationStatus.PASSED, "Syntax valid")
         except SyntaxError as e:
             return VerificationResult("syntax", VerificationStatus.FAILED, f"Syntax error: {e}")
-    
+
     def _check_no_syntax_errors(self, file_path: str, content: str) -> VerificationResult:
         # More thorough syntax checking
         try:
@@ -103,7 +103,7 @@ class ASTStateGatekeeper:
             return VerificationResult("no_syntax_errors", VerificationStatus.PASSED, "No syntax errors")
         except Exception as e:
             return VerificationResult("no_syntax_errors", VerificationStatus.FAILED, str(e))
-    
+
     def _check_imports_resolvable(self, file_path: str, content: str) -> VerificationResult:
         try:
             tree = ast.parse(content)
@@ -115,14 +115,14 @@ class ASTStateGatekeeper:
             return VerificationResult("imports", VerificationStatus.PASSED, "Imports resolvable")
         except Exception:
             return VerificationResult("imports", VerificationStatus.FAILED, "Import check failed")
-    
+
     def _check_no_undefined_names(self, file_path: str, content: str) -> VerificationResult:
         try:
             tree = ast.parse(content)
             # Simple undefined name check
             defined = set()
             used = set()
-            
+
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.Assign)):
                     if isinstance(node, ast.Assign):
@@ -133,15 +133,15 @@ class ASTStateGatekeeper:
                         defined.add(node.name)
                 elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                     used.add(node.id)
-            
+
             undefined = used - defined - {'True', 'False', 'None', 'print', 'len', 'str', 'int', 'list', 'dict', 'set'}
             if undefined:
                 return VerificationResult("undefined_names", VerificationStatus.FAILED, f"Undefined: {undefined}")
-            
+
             return VerificationResult("undefined_names", VerificationStatus.PASSED, "No undefined names")
         except Exception:
             return VerificationResult("undefined_names", VerificationStatus.PASSED, "Check skipped")
-    
+
     def _check_type_annotations(self, file_path: str, content: str) -> VerificationResult:
         try:
             tree = ast.parse(content)
@@ -153,13 +153,13 @@ class ASTStateGatekeeper:
                     for arg in node.args.args:
                         if arg.annotation is None and arg.arg != 'self':
                             missing.append(f"{node.name}.{arg.arg}: missing type")
-            
+
             if missing:
                 return VerificationResult("type_annotations", VerificationStatus.FAILED, f"Missing types: {missing}")
             return VerificationResult("type_annotations", VerificationStatus.PASSED, "All typed")
         except Exception:
             return VerificationResult("type_annotations", VerificationStatus.PASSED, "Check skipped")
-    
+
     def _check_complexity(self, file_path: str, content: str) -> VerificationResult:
         try:
             tree = ast.parse(content)
@@ -167,31 +167,30 @@ class ASTStateGatekeeper:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     complexity = self._calculate_complexity(node)
                     if complexity > 10:
-                        return VerificationResult("complexity", VerificationStatus.FAILED, 
+                        return VerificationResult("complexity", VerificationStatus.FAILED,
                                                 f"High complexity ({complexity}) in {node.name}")
             return VerificationResult("complexity", VerificationStatus.PASSED, "Complexity OK")
         except Exception:
             return VerificationResult("complexity", VerificationStatus.PASSED, "Check skipped")
-    
+
     def _calculate_complexity(self, node: ast.FunctionDef) -> int:
         complexity = 1
         for child in ast.walk(node):
-            if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor, ast.ExceptHandler)):
-                complexity += 1
-            elif isinstance(child, (ast.And, ast.Or)):
+            if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor, ast.ExceptHandler)) or isinstance(child, (ast.And, ast.Or)):
                 complexity += 1
         return complexity
-    
-    def get_file_state(self, file_path: str) -> Optional[str]:
+
+    def get_file_state(self, file_path: str) -> str | None:
         with self._lock:
             return self._file_states.get(file_path)
-    
-    def get_ast(self, file_path: str) -> Optional[ast.AST]:
+
+    def get_ast(self, file_path: str) -> ast.AST | None:
         with self._lock:
             return self._ast_cache.get(file_path)
 
 
-_ast_gatekeeper: Optional[ASTStateGatekeeper] = None
+_ast_gatekeeper: ASTStateGatekeeper | None = None
+
 
 def get_ast_gatekeeper() -> ASTStateGatekeeper:
     global _ast_gatekeeper

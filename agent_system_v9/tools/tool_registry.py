@@ -1,17 +1,15 @@
 import asyncio
+import importlib.util
 import inspect
-import hashlib
-import json
-import uuid
-from typing import Any, Dict, List, Optional, Callable, Set, Type, Union
-from dataclasses import dataclass, field, asdict
+import sys
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from datetime import datetime
-import importlib.util
-import sys
+from typing import Any, Optional, Union
 
-from .tool_synthesizer import SynthesizedTool, ToolSynthesizer, SynthesisStrategy
+from .tool_synthesizer import SynthesizedTool, ToolSynthesizer
 
 
 class ToolCategory(Enum):
@@ -42,7 +40,7 @@ class ToolParameter:
     description: str
     required: bool = True
     default: Any = None
-    enum: Optional[List[Any]] = None
+    enum: list[Any] | None = None
 
 
 @dataclass
@@ -51,31 +49,31 @@ class ToolEntry:
     description: str
     category: ToolCategory
     function: Callable
-    parameters: List[ToolParameter] = field(default_factory=list)
-    returns: Dict[str, Any] = field(default_factory=dict)
+    parameters: list[ToolParameter] = field(default_factory=list)
+    returns: dict[str, Any] = field(default_factory=dict)
     status: ToolStatus = ToolStatus.REGISTERED
     version: str = "1.0.0"
     author: str = "system"
-    tags: List[str] = field(default_factory=list)
-    sandbox_spec: Optional[Dict[str, Any]] = None
-    provider_hints: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    sandbox_spec: dict[str, Any] | None = None
+    provider_hints: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     usage_count: int = 0
-    last_used: Optional[str] = None
+    last_used: str | None = None
     avg_latency_ms: float = 0.0
     error_count: int = 0
-    synthesized_from: Optional[str] = None
+    synthesized_from: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["category"] = self.category.value
         data["status"] = self.status.value
         data["function"] = self.function.__name__ if self.function else None
         return data
 
-    def to_openai_function(self) -> Dict[str, Any]:
+    def to_openai_function(self) -> dict[str, Any]:
         properties = {}
         required = []
         for param in self.parameters:
@@ -87,7 +85,7 @@ class ToolEntry:
             properties[param.name] = prop
             if param.required:
                 required.append(param.name)
-        
+
         return {
             "type": "function",
             "function": {
@@ -101,7 +99,7 @@ class ToolEntry:
             },
         }
 
-    def validate_args(self, args: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+    def validate_args(self, args: dict[str, Any]) -> tuple[bool, str | None]:
         for param in self.parameters:
             if param.required and param.name not in args:
                 return False, f"Missing required parameter: {param.name}"
@@ -119,12 +117,12 @@ class SandboxSpec:
     cpu_limit: str = "0.5"
     timeout_seconds: int = 30
     network_enabled: bool = False
-    volumes: List[str] = field(default_factory=list)
-    environment: Dict[str, str] = field(default_factory=dict)
+    volumes: list[str] = field(default_factory=list)
+    environment: dict[str, str] = field(default_factory=dict)
     working_dir: str = "/workspace"
     user: str = "nobody"
-    capabilities: List[str] = field(default_factory=list)
-    seccomp_profile: Optional[str] = None
+    capabilities: list[str] = field(default_factory=list)
+    seccomp_profile: str | None = None
 
 
 class DynamicToolRegistry:
@@ -139,13 +137,13 @@ class DynamicToolRegistry:
     def __init__(self):
         if self._initialized:
             return
-        self._tools: Dict[str, ToolEntry] = {}
-        self._categories: Dict[ToolCategory, Set[str]] = {cat: set() for cat in ToolCategory}
+        self._tools: dict[str, ToolEntry] = {}
+        self._categories: dict[ToolCategory, set[str]] = {cat: set() for cat in ToolCategory}
         self._synthesizer = ToolSynthesizer()
         self._sandbox_isolator = None
         self._event_bus = None
-        self._auto_load_paths: List[Path] = []
-        self._tool_loaders: Dict[str, Callable] = {}
+        self._auto_load_paths: list[Path] = []
+        self._tool_loaders: dict[str, Callable] = {}
         self._initialized = True
 
     @classmethod
@@ -166,10 +164,10 @@ class DynamicToolRegistry:
         function: Callable,
         description: str,
         category: ToolCategory = ToolCategory.SYSTEM,
-        parameters: List[ToolParameter] = None,
-        returns: Dict[str, Any] = None,
+        parameters: list[ToolParameter] = None,
+        returns: dict[str, Any] = None,
         sandbox_spec: SandboxSpec = None,
-        tags: List[str] = None,
+        tags: list[str] = None,
         version: str = "1.0.0",
         author: str = "system",
         **metadata
@@ -199,7 +197,7 @@ class DynamicToolRegistry:
         self._emit_event("tool_registered", {"tool": name, "category": category.value})
         return entry
 
-    def _infer_parameters(self, function: Callable) -> List[ToolParameter]:
+    def _infer_parameters(self, function: Callable) -> list[ToolParameter]:
         sig = inspect.signature(function)
         params = []
         for name, param in sig.parameters.items():
@@ -231,9 +229,9 @@ class DynamicToolRegistry:
         }
         if hasattr(annotation, "__origin__"):
             origin = annotation.__origin__
-            if origin in (list, List):
+            if origin in (list, list):
                 return "array"
-            if origin in (dict, Dict):
+            if origin in (dict, dict):
                 return "object"
             if origin is Union:
                 args = annotation.__args__
@@ -251,31 +249,31 @@ class DynamicToolRegistry:
         self._emit_event("tool_unregistered", {"tool": name})
         return True
 
-    def get(self, name: str) -> Optional[ToolEntry]:
+    def get(self, name: str) -> ToolEntry | None:
         return self._tools.get(name)
 
-    def get_by_category(self, category: ToolCategory) -> List[ToolEntry]:
+    def get_by_category(self, category: ToolCategory) -> list[ToolEntry]:
         return [self._tools[name] for name in self._categories.get(category, set())]
 
-    def search(self, query: str, category: ToolCategory = None) -> List[ToolEntry]:
+    def search(self, query: str, category: ToolCategory = None) -> list[ToolEntry]:
         query_lower = query.lower()
         results = []
         for entry in self._tools.values():
             if category and entry.category != category:
                 continue
-            if (query_lower in entry.name.lower() or 
+            if (query_lower in entry.name.lower() or
                 query_lower in entry.description.lower() or
                 any(query_lower in tag.lower() for tag in entry.tags)):
                 results.append(entry)
         return results
 
-    def list_all(self) -> List[ToolEntry]:
+    def list_all(self) -> list[ToolEntry]:
         return list(self._tools.values())
 
     async def execute(
         self,
         name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         sandbox: bool = False,
         provider: str = None,
     ) -> Any:
@@ -295,7 +293,7 @@ class DynamicToolRegistry:
                 result = await self._execute_in_sandbox(entry, args)
             else:
                 result = await self._execute_direct(entry, args)
-            
+
             self._emit_event("tool_executed", {"tool": name, "success": True})
             return result
         except Exception as e:
@@ -303,16 +301,16 @@ class DynamicToolRegistry:
             self._emit_event("tool_executed", {"tool": name, "success": False, "error": str(e)})
             raise
 
-    async def _execute_direct(self, entry: ToolEntry, args: Dict[str, Any]) -> Any:
+    async def _execute_direct(self, entry: ToolEntry, args: dict[str, Any]) -> Any:
         func = entry.function
         if asyncio.iscoroutinefunction(func):
             return await func(**args)
         return func(**args)
 
-    async def _execute_in_sandbox(self, entry: ToolEntry, args: Dict[str, Any]) -> Any:
+    async def _execute_in_sandbox(self, entry: ToolEntry, args: dict[str, Any]) -> Any:
         if not self._sandbox_isolator:
             raise RuntimeError("Sandbox isolator not configured")
-        
+
         spec = entry.sandbox_spec or SandboxSpec().__dict__
         return await self._sandbox_isolator.execute_tool(entry.name, entry.function, args, spec)
 
@@ -331,7 +329,7 @@ class DynamicToolRegistry:
         )
         return entry
 
-    def _spec_to_parameters(self, spec: Dict[str, Any]) -> List[ToolParameter]:
+    def _spec_to_parameters(self, spec: dict[str, Any]) -> list[ToolParameter]:
         params = []
         properties = spec.get("properties", {})
         required = spec.get("required", [])
@@ -349,7 +347,7 @@ class DynamicToolRegistry:
     def auto_load_generated(self, directory: Path = None) -> int:
         if directory is None:
             directory = Path(__file__).parent / "generated"
-        
+
         if not directory.exists():
             return 0
 
@@ -360,7 +358,7 @@ class DynamicToolRegistry:
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[py_file.stem] = module
                 spec.loader.exec_module(module)
-                
+
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
                     if callable(attr) and hasattr(attr, "_tool_spec"):
@@ -375,10 +373,10 @@ class DynamicToolRegistry:
                         count += 1
             except Exception:
                 pass
-        
+
         return count
 
-    def register_loader(self, pattern: str, loader: Callable[[Path], List[ToolEntry]]):
+    def register_loader(self, pattern: str, loader: Callable[[Path], list[ToolEntry]]):
         self._tool_loaders[pattern] = loader
 
     async def load_from_path(self, path: Path) -> int:
@@ -391,11 +389,11 @@ class DynamicToolRegistry:
                 return len(entries)
         return 0
 
-    def get_openai_functions(self, category: ToolCategory = None) -> List[Dict[str, Any]]:
+    def get_openai_functions(self, category: ToolCategory = None) -> list[dict[str, Any]]:
         tools = self.get_by_category(category) if category else self.list_all()
         return [t.to_openai_function() for t in tools if t.status == ToolStatus.ACTIVE]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "total_tools": len(self._tools),
             "by_category": {cat.value: len(names) for cat, names in self._categories.items()},
@@ -404,7 +402,7 @@ class DynamicToolRegistry:
             "total_errors": sum(t.error_count for t in self._tools.values()),
         }
 
-    def _emit_event(self, event_type: str, data: Dict[str, Any]):
+    def _emit_event(self, event_type: str, data: dict[str, Any]):
         if self._event_bus:
             try:
                 self._event_bus.publish(f"tool.{event_type}", data)
@@ -430,9 +428,9 @@ def tool(
     name: str = None,
     description: str = "",
     category: ToolCategory = ToolCategory.SYSTEM,
-    parameters: List[ToolParameter] = None,
+    parameters: list[ToolParameter] = None,
     sandbox: SandboxSpec = None,
-    tags: List[str] = None,
+    tags: list[str] = None,
 ):
     def decorator(func: Callable) -> Callable:
         tool_name = name or func.__name__

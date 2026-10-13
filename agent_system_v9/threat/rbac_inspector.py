@@ -4,11 +4,10 @@ RBAC Inspector - Role-Based Access Control auditing and validation
 import hashlib
 import json
 import time
-from typing import Dict, List, Optional, Any, Set, Callable, Tuple
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class Permission(Enum):
@@ -37,9 +36,9 @@ class ResourceType(Enum):
 class Role:
     role_id: str
     name: str
-    permissions: Dict[ResourceType, Set[Permission]] = field(default_factory=dict)
-    parent_roles: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    permissions: dict[ResourceType, set[Permission]] = field(default_factory=dict)
+    parent_roles: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
     def has_permission(self, resource: ResourceType, permission: Permission) -> bool:
@@ -54,7 +53,7 @@ class Role:
         if resource in self.permissions:
             self.permissions[resource].discard(permission)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "role_id": self.role_id,
             "name": self.name,
@@ -69,13 +68,13 @@ class Role:
 class User:
     user_id: str
     username: str
-    roles: List[str] = field(default_factory=list)
-    direct_permissions: Dict[ResourceType, Set[Permission]] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    roles: list[str] = field(default_factory=list)
+    direct_permissions: dict[ResourceType, set[Permission]] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     last_login: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "user_id": self.user_id,
             "username": self.username,
@@ -93,12 +92,12 @@ class AccessControlEntry:
     resource_type: ResourceType
     resource_id: str
     role_id: str
-    permissions: Set[Permission] = field(default_factory=set)
+    permissions: set[Permission] = field(default_factory=set)
     effect: str = "allow"
-    conditions: Dict[str, Any] = field(default_factory=dict)
+    conditions: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "ace_id": self.ace_id,
             "resource_type": self.resource_type.value,
@@ -118,12 +117,12 @@ class RBACViolation:
     resource_type: ResourceType
     resource_id: str
     attempted_permission: Permission
-    required_permissions: Set[Permission]
-    user_roles: List[str]
+    required_permissions: set[Permission]
+    user_roles: list[str]
     timestamp: float = field(default_factory=time.time)
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "violation_id": self.violation_id,
             "user_id": self.user_id,
@@ -139,12 +138,12 @@ class RBACViolation:
 
 class RBACInspector:
     def __init__(self):
-        self.roles: Dict[str, Role] = {}
-        self.users: Dict[str, User] = {}
-        self.aces: List[AccessControlEntry] = []
-        self.violations: List[RBACViolation] = []
-        self._role_hierarchy_cache: Dict[str, Set[str]] = {}
-        self._user_permissions_cache: Dict[str, Dict[ResourceType, Set[Permission]]] = {}
+        self.roles: dict[str, Role] = {}
+        self.users: dict[str, User] = {}
+        self.aces: list[AccessControlEntry] = []
+        self.violations: list[RBACViolation] = []
+        self._role_hierarchy_cache: dict[str, set[str]] = {}
+        self._user_permissions_cache: dict[str, dict[ResourceType, set[Permission]]] = {}
 
     def create_role(self, name: str, role_id: str = None) -> Role:
         role_id = role_id or hashlib.md5(f"{name}:{time.time()}".encode()).hexdigest()[:12]
@@ -182,8 +181,8 @@ class RBACInspector:
             return True
         return False
 
-    def add_ace(self, resource_type: ResourceType, resource_id: str, role_id: str, 
-                permissions: Set[Permission], effect: str = "allow") -> AccessControlEntry:
+    def add_ace(self, resource_type: ResourceType, resource_id: str, role_id: str,
+                permissions: set[Permission], effect: str = "allow") -> AccessControlEntry:
         ace = AccessControlEntry(
             ace_id=hashlib.md5(f"{resource_type}:{resource_id}:{role_id}:{time.time()}".encode()).hexdigest()[:12],
             resource_type=resource_type,
@@ -196,8 +195,8 @@ class RBACInspector:
         self._invalidate_cache()
         return ace
 
-    def check_access(self, user_id: str, resource_type: ResourceType, resource_id: str, 
-                     permission: Permission, context: Dict = None) -> Tuple[bool, Optional[RBACViolation]]:
+    def check_access(self, user_id: str, resource_type: ResourceType, resource_id: str,
+                     permission: Permission, context: dict = None) -> tuple[bool, RBACViolation | None]:
         user = self.users.get(user_id)
         if not user:
             violation = RBACViolation(
@@ -212,17 +211,17 @@ class RBACInspector:
             )
             self.violations.append(violation)
             return False, violation
-        
+
         user_perms = self._get_user_effective_permissions(user_id)
         has_perm = permission in user_perms.get(resource_type, set())
-        
+
         if not has_perm:
             required_perms = {permission}
             for ace in self.aces:
                 if ace.resource_type == resource_type and ace.resource_id == resource_id:
                     if ace.effect == "allow" and permission in ace.permissions:
                         required_perms.add(permission)
-            
+
             violation = RBACViolation(
                 violation_id=hashlib.md5(f"violation:{user_id}:{resource_id}:{time.time()}".encode()).hexdigest()[:12],
                 user_id=user_id,
@@ -235,59 +234,59 @@ class RBACInspector:
             )
             self.violations.append(violation)
             return False, violation
-        
+
         return True, None
 
-    def _get_user_effective_permissions(self, user_id: str) -> Dict[ResourceType, Set[Permission]]:
+    def _get_user_effective_permissions(self, user_id: str) -> dict[ResourceType, set[Permission]]:
         if user_id in self._user_permissions_cache:
             return self._user_permissions_cache[user_id]
-        
+
         user = self.users.get(user_id)
         if not user:
             return {}
-        
-        effective_perms: Dict[ResourceType, Set[Permission]] = defaultdict(set)
-        
+
+        effective_perms: dict[ResourceType, set[Permission]] = defaultdict(set)
+
         for resource, perms in user.direct_permissions.items():
             effective_perms[resource].update(perms)
-        
+
         all_roles = self._get_all_roles_for_user(user_id)
         for role_id in all_roles:
             role = self.roles.get(role_id)
             if role:
                 for resource, perms in role.permissions.items():
                     effective_perms[resource].update(perms)
-        
+
         for ace in self.aces:
             if ace.role_id in all_roles and ace.effect == "allow":
                 effective_perms[ace.resource_type].update(ace.permissions)
-        
+
         self._user_permissions_cache[user_id] = dict(effective_perms)
         return dict(effective_perms)
 
-    def _get_all_roles_for_user(self, user_id: str) -> Set[str]:
+    def _get_all_roles_for_user(self, user_id: str) -> set[str]:
         user = self.users.get(user_id)
         if not user:
             return set()
-        
+
         all_roles = set(user.roles)
         for role_id in user.roles:
             all_roles.update(self._get_role_hierarchy(role_id))
         return all_roles
 
-    def _get_role_hierarchy(self, role_id: str) -> Set[str]:
+    def _get_role_hierarchy(self, role_id: str) -> set[str]:
         if role_id in self._role_hierarchy_cache:
             return self._role_hierarchy_cache[role_id]
-        
+
         role = self.roles.get(role_id)
         if not role:
             return set()
-        
+
         hierarchy = set()
         for parent_id in role.parent_roles:
             hierarchy.add(parent_id)
             hierarchy.update(self._get_role_hierarchy(parent_id))
-        
+
         self._role_hierarchy_cache[role_id] = hierarchy
         return hierarchy
 
@@ -295,32 +294,32 @@ class RBACInspector:
         self._role_hierarchy_cache.clear()
         self._user_permissions_cache.clear()
 
-    def audit_rbac(self) -> Dict[str, Any]:
+    def audit_rbac(self) -> dict[str, Any]:
         issues = []
         warnings = []
-        
+
         for user_id, user in self.users.items():
             if not user.roles:
                 warnings.append(f"User {user.username} has no roles assigned")
-            
+
             perms = self._get_user_effective_permissions(user_id)
             for resource, permissions in perms.items():
                 if Permission.ADMIN in permissions and resource == ResourceType.SECRET:
                     issues.append(f"User {user.username} has admin access to secrets")
-        
+
         for role_id, role in self.roles.items():
             if not role.permissions:
                 warnings.append(f"Role {role.name} has no permissions")
-            
+
             for resource, permissions in role.permissions.items():
                 if Permission.ADMIN in permissions and resource in [ResourceType.SECRET, ResourceType.CONFIG]:
                     issues.append(f"Role {role.name} has admin access to {resource.value}")
-        
+
         for ace in self.aces:
             if ace.effect == "allow" and Permission.ADMIN in ace.permissions:
                 if ace.resource_type in [ResourceType.SECRET, ResourceType.CONFIG]:
                     issues.append(f"ACE {ace.ace_id} grants admin access to {ace.resource_type.value}")
-        
+
         return {
             "total_users": len(self.users),
             "total_roles": len(self.roles),
@@ -331,7 +330,7 @@ class RBACInspector:
             "compliance_score": max(0, 100 - len(issues) * 10 - len(warnings) * 2),
         }
 
-    def get_violations(self, user_id: str = None, limit: int = 100) -> List[RBACViolation]:
+    def get_violations(self, user_id: str = None, limit: int = 100) -> list[RBACViolation]:
         violations = self.violations
         if user_id:
             violations = [v for v in violations if v.user_id == user_id]
@@ -362,29 +361,29 @@ class RBACPolicyEngine:
     def __init__(self, inspector: RBACInspector):
         self.inspector = inspector
 
-    def enforce_least_privilege(self, user_id: str) -> Dict[str, List[str]]:
+    def enforce_least_privilege(self, user_id: str) -> dict[str, list[str]]:
         user = self.inspector.users.get(user_id)
         if not user:
             return {}
-        
+
         current_perms = self.inspector._get_user_effective_permissions(user_id)
         recommendations = {}
-        
+
         for resource, permissions in current_perms.items():
             if Permission.ADMIN in permissions:
                 recommendations.setdefault("remove_admin", []).append(
                     f"User has admin on {resource.value}"
                 )
-        
+
         return recommendations
 
-    def detect_privilege_escalation_paths(self) -> List[Dict[str, Any]]:
+    def detect_privilege_escalation_paths(self) -> list[dict[str, Any]]:
         paths = []
-        
+
         for user_id, user in self.inspector.users.items():
             perms = self.inspector._get_user_effective_permissions(user_id)
             roles = self.inspector._get_all_roles_for_user(user_id)
-            
+
             for role_id in roles:
                 role = self.inspector.roles.get(role_id)
                 if role and Permission.ADMIN in role.permissions.get(ResourceType.ROLE, set()):
@@ -393,18 +392,18 @@ class RBACPolicyEngine:
                         "role": role.name,
                         "path": "Can assign roles -> privilege escalation",
                     })
-        
+
         return paths
 
-    def generate_segregation_of_duties_report(self) -> Dict[str, Any]:
+    def generate_segregation_of_duties_report(self) -> dict[str, Any]:
         conflicts = []
-        
+
         sod_pairs = [
             (Permission.CREATE, Permission.APPROVE),
             (Permission.WRITE, Permission.DELETE),
             (Permission.READ, Permission.ADMIN),
         ]
-        
+
         for user_id, user in self.inspector.users.items():
             perms = self.inspector._get_user_effective_permissions(user_id)
             for resource, permissions in perms.items():
@@ -415,7 +414,7 @@ class RBACPolicyEngine:
                             "resource": resource.value,
                             "conflict": f"{p1.value} + {p2.value}",
                         })
-        
+
         return {
             "total_users_checked": len(self.inspector.users),
             "conflicts_found": len(conflicts),

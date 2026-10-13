@@ -4,11 +4,11 @@ Traceability Inspector - Tracks code-to-requirements traceability
 import hashlib
 import json
 import re
-from typing import Dict, List, Optional, Any, Set, Tuple
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class TraceabilityType(Enum):
@@ -37,10 +37,10 @@ class TraceLink:
     target_id: str
     traceability_type: TraceabilityType
     confidence: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=lambda: __import__('time').time())
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "link_id": self.link_id,
             "source_type": self.source_type,
@@ -54,7 +54,7 @@ class TraceLink:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'TraceLink':
+    def from_dict(cls, data: dict[str, Any]) -> 'TraceLink':
         return cls(
             link_id=data["link_id"],
             source_type=data["source_type"],
@@ -75,10 +75,10 @@ class Requirement:
     description: str
     priority: str = "medium"
     status: str = "open"
-    tags: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "req_id": self.req_id,
             "title": self.title,
@@ -100,9 +100,9 @@ class CodeElement:
     line_end: int
     signature: str = ""
     docstring: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "element_id": self.element_id,
             "element_type": self.element_type,
@@ -120,12 +120,12 @@ class CodeElement:
 class CoverageReport:
     requirement_id: str
     status: CoverageStatus
-    linked_elements: List[CodeElement]
-    missing_elements: List[str]
+    linked_elements: list[CodeElement]
+    missing_elements: list[str]
     coverage_percentage: float
-    gaps: List[str] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "requirement_id": self.requirement_id,
             "status": self.status.value,
@@ -138,10 +138,10 @@ class CoverageReport:
 
 class TraceabilityInspector:
     def __init__(self):
-        self.requirements: Dict[str, Requirement] = {}
-        self.code_elements: Dict[str, CodeElement] = {}
-        self.links: List[TraceLink] = []
-        self._link_index: Dict[str, List[TraceLink]] = defaultdict(list)
+        self.requirements: dict[str, Requirement] = {}
+        self.code_elements: dict[str, CodeElement] = {}
+        self.links: list[TraceLink] = []
+        self._link_index: dict[str, list[TraceLink]] = defaultdict(list)
         self._requirement_patterns = [
             r'(?i)(REQ|REQUIREMENT|USER STORY|US)[\s\-_:#]*([A-Z0-9\-]+)',
             r'(?i)(JIRA|TICKET|ISSUE)[\s\-_:#]*([A-Z0-9\-]+)',
@@ -163,20 +163,20 @@ class TraceabilityInspector:
     def _parse_markdown_requirements(self, path: str):
         content = Path(path).read_text()
         sections = re.split(r'^##\s+', content, flags=re.MULTILINE)
-        
+
         for section in sections[1:]:
             lines = section.strip().split('\n')
             title = lines[0].strip()
             req_id_match = re.search(r'(?i)(REQ|REQUIREMENT|US)[\s\-_:#]*([A-Z0-9\-]+)', title)
             req_id = req_id_match.group(2) if req_id_match else hashlib.md5(title.encode()).hexdigest()[:8]
-            
+
             description = '\n'.join(lines[1:]).strip()
             self.add_requirement(Requirement(req_id=req_id, title=title, description=description))
 
-    def scan_codebase(self, root_path: str, extensions: List[str] = None):
+    def scan_codebase(self, root_path: str, extensions: list[str] = None):
         if extensions is None:
             extensions = ['.py', '.js', '.ts', '.java', '.go', '.rs', '.cpp', '.cs']
-        
+
         for ext in extensions:
             for file_path in Path(root_path).rglob(f'*{ext}'):
                 self._scan_file(str(file_path))
@@ -188,11 +188,11 @@ class TraceabilityInspector:
             return
 
         lines = content.split('\n')
-        
+
         for i, line in enumerate(lines):
             req_ids = self._extract_requirement_ids(line)
             for req_id in req_ids:
-                element_id = f"{file_path}:{i+1}"
+                element_id = f"{file_path}:{i + 1}"
                 self._create_link(req_id, "requirement", element_id, "code", TraceabilityType.REQUIREMENT_TO_CODE)
 
         functions = self._extract_functions(content, file_path)
@@ -202,7 +202,7 @@ class TraceabilityInspector:
             for req_id in req_ids:
                 self._create_link(req_id, "requirement", func.element_id, "code", TraceabilityType.REQUIREMENT_TO_CODE)
 
-    def _extract_requirement_ids(self, text: str) -> List[str]:
+    def _extract_requirement_ids(self, text: str) -> list[str]:
         ids = []
         for pattern in self._requirement_patterns:
             matches = re.findall(pattern, text)
@@ -213,18 +213,18 @@ class TraceabilityInspector:
                     ids.append(match)
         return list(set(ids))
 
-    def _extract_functions(self, content: str, file_path: str) -> List[CodeElement]:
+    def _extract_functions(self, content: str, file_path: str) -> list[CodeElement]:
         elements = []
         lines = content.split('\n')
-        
+
         if file_path.endswith('.py'):
             elements.extend(self._extract_python_functions(content, file_path, lines))
         elif file_path.endswith(('.js', '.ts')):
             elements.extend(self._extract_js_functions(content, file_path, lines))
-        
+
         return elements
 
-    def _extract_python_functions(self, content: str, file_path: str, lines: List[str]) -> List[CodeElement]:
+    def _extract_python_functions(self, content: str, file_path: str, lines: list[str]) -> list[CodeElement]:
         import ast
         elements = []
         try:
@@ -236,7 +236,7 @@ class TraceabilityInspector:
                     signature = f"def {node.name}(...)"
                     if isinstance(node, ast.ClassDef):
                         signature = f"class {node.name}"
-                    
+
                     elements.append(CodeElement(
                         element_id=element_id,
                         element_type="function" if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "class",
@@ -251,29 +251,29 @@ class TraceabilityInspector:
             pass
         return elements
 
-    def _extract_js_functions(self, content: str, file_path: str, lines: List[str]) -> List[CodeElement]:
+    def _extract_js_functions(self, content: str, file_path: str, lines: list[str]) -> list[CodeElement]:
         elements = []
         func_pattern = re.compile(r'(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(|(\w+)\s*[:=]\s*(?:async\s+)?function\s*\(')
-        
+
         for i, line in enumerate(lines):
             match = func_pattern.search(line)
             if match:
                 name = match.group(1) or match.group(2)
-                element_id = f"{file_path}:{i+1}"
+                element_id = f"{file_path}:{i + 1}"
                 elements.append(CodeElement(
                     element_id=element_id,
                     element_type="function",
                     name=name,
                     file_path=file_path,
-                    line_start=i+1,
-                    line_end=i+1,
+                    line_start=i + 1,
+                    line_end=i + 1,
                     signature=line.strip(),
                 ))
         return elements
 
     def _create_link(self, source_id: str, source_type: str, target_id: str, target_type: str, trace_type: TraceabilityType):
         link_id = hashlib.md5(f"{source_id}:{target_id}:{trace_type.value}".encode()).hexdigest()[:12]
-        
+
         link = TraceLink(
             link_id=link_id,
             source_type=source_type,
@@ -282,29 +282,29 @@ class TraceabilityInspector:
             target_id=target_id,
             traceability_type=trace_type,
         )
-        
+
         self.links.append(link)
         self._link_index[source_id].append(link)
         self._link_index[target_id].append(link)
 
-    def get_links_for_requirement(self, req_id: str) -> List[TraceLink]:
+    def get_links_for_requirement(self, req_id: str) -> list[TraceLink]:
         return self._link_index.get(req_id, [])
 
-    def get_links_for_code(self, element_id: str) -> List[TraceLink]:
+    def get_links_for_code(self, element_id: str) -> list[TraceLink]:
         return self._link_index.get(element_id, [])
 
-    def check_coverage(self) -> List[CoverageReport]:
+    def check_coverage(self) -> list[CoverageReport]:
         reports = []
-        
+
         for req_id, req in self.requirements.items():
             links = self.get_links_for_requirement(req_id)
             code_links = [l for l in links if l.target_type == "code"]
-            
+
             linked_elements = []
             for link in code_links:
                 if link.target_id in self.code_elements:
                     linked_elements.append(self.code_elements[link.target_id])
-            
+
             if not linked_elements:
                 status = CoverageStatus.UNCOVERED
                 coverage = 0.0
@@ -314,7 +314,7 @@ class TraceabilityInspector:
             else:
                 status = CoverageStatus.COVERED
                 coverage = 100.0
-            
+
             reports.append(CoverageReport(
                 requirement_id=req_id,
                 status=status,
@@ -323,16 +323,16 @@ class TraceabilityInspector:
                 coverage_percentage=coverage,
                 gaps=["No implementation found"] if status == CoverageStatus.UNCOVERED else [],
             ))
-        
+
         return reports
 
-    def generate_traceability_matrix(self) -> Dict[str, Any]:
+    def generate_traceability_matrix(self) -> dict[str, Any]:
         matrix = {
             "requirements": {},
             "code_elements": {},
             "links": [l.to_dict() for l in self.links],
         }
-        
+
         for req_id, req in self.requirements.items():
             links = self.get_links_for_requirement(req_id)
             matrix["requirements"][req_id] = {
@@ -340,7 +340,7 @@ class TraceabilityInspector:
                 "linked_code": [l.target_id for l in links if l.target_type == "code"],
                 "linked_tests": [l.target_id for l in links if l.target_type == "test"],
             }
-        
+
         for elem_id, elem in self.code_elements.items():
             links = self.get_links_for_code(elem_id)
             matrix["code_elements"][elem_id] = {
@@ -348,7 +348,7 @@ class TraceabilityInspector:
                 "linked_requirements": [l.source_id for l in links if l.source_type == "requirement"],
                 "linked_tests": [l.target_id for l in links if l.target_type == "test"],
             }
-        
+
         return matrix
 
     def export(self, path: str, format: str = "json"):
@@ -357,15 +357,15 @@ class TraceabilityInspector:
             "code_elements": {k: v.to_dict() for k, v in self.code_elements.items()},
             "links": [l.to_dict() for l in self.links],
         }
-        
+
         if format == "json":
             Path(path).write_text(json.dumps(data, indent=2))
         elif format == "markdown":
             self._export_markdown(path, data)
 
-    def _export_markdown(self, path: str, data: Dict):
+    def _export_markdown(self, path: str, data: dict):
         lines = ["# Traceability Report\n"]
-        
+
         lines.append("## Requirements\n")
         for req_id, req in data["requirements"].items():
             lines.append(f"### {req_id}: {req['title']}\n")
@@ -376,7 +376,7 @@ class TraceabilityInspector:
                 for link in links:
                     lines.append(f"- {link['target_id']}\n")
             lines.append("\n")
-        
+
         Path(path).write_text('\n'.join(lines))
 
 
@@ -384,18 +384,18 @@ class DependencyAnalyzer:
     def __init__(self, inspector: TraceabilityInspector):
         self.inspector = inspector
 
-    def analyze_dependencies(self, root_path: str) -> Dict[str, List[str]]:
+    def analyze_dependencies(self, root_path: str) -> dict[str, list[str]]:
         dependencies = defaultdict(set)
-        
+
         for ext in ['.py', '.js', '.ts']:
             for file_path in Path(root_path).rglob(f'*{ext}'):
                 deps = self._extract_dependencies(str(file_path))
                 rel_path = str(file_path.relative_to(root_path))
                 dependencies[rel_path] = deps
-        
+
         return {k: list(v) for k, v in dependencies.items()}
 
-    def _extract_dependencies(self, file_path: str) -> Set[str]:
+    def _extract_dependencies(self, file_path: str) -> set[str]:
         deps = set()
         try:
             content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
@@ -408,7 +408,7 @@ class DependencyAnalyzer:
                 module = match.group(1) or match.group(2)
                 if module and not module.startswith('.'):
                     deps.add(module.split('.')[0])
-        
+
         elif file_path.endswith(('.js', '.ts')):
             import_pattern = re.compile(r'import\s+(?:.*?\s+from\s+)?[\'"]([^\'"]+)[\'"]')
             for match in import_pattern.finditer(content):
@@ -417,15 +417,15 @@ class DependencyAnalyzer:
                     deps.add(module)
                 else:
                     deps.add(module.split('/')[0])
-        
+
         return deps
 
-    def find_circular_dependencies(self, dependencies: Dict[str, List[str]]) -> List[List[str]]:
+    def find_circular_dependencies(self, dependencies: dict[str, list[str]]) -> list[list[str]]:
         visited = set()
         rec_stack = set()
         cycles = []
 
-        def dfs(node: str, path: List[str]):
+        def dfs(node: str, path: list[str]):
             visited.add(node)
             rec_stack.add(node)
             path.append(node)

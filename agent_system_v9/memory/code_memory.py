@@ -1,11 +1,10 @@
-import uuid
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Set
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class NodeType(Enum):
@@ -45,8 +44,8 @@ class CodeNode:
     end_line: int
     content: str
     summary: str = ""
-    embedding: Optional[List[float]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
@@ -55,13 +54,13 @@ class CodeNode:
             content_hash = hashlib.sha256(f"{self.file_path}:{self.start_line}:{self.end_line}".encode()).hexdigest()[:16]
             self.id = f"{self.node_type.value}_{content_hash}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["node_type"] = self.node_type.value
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CodeNode":
+    def from_dict(cls, data: dict[str, Any]) -> "CodeNode":
         data["node_type"] = NodeType(data["node_type"])
         return cls(**data)
 
@@ -73,7 +72,7 @@ class CodeEdge:
     target_id: str
     edge_type: EdgeType
     weight: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
     def __post_init__(self):
@@ -81,26 +80,26 @@ class CodeEdge:
             content_hash = hashlib.sha256(f"{self.source_id}:{self.target_id}:{self.edge_type.value}".encode()).hexdigest()[:16]
             self.id = f"edge_{content_hash}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["edge_type"] = self.edge_type.value
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CodeEdge":
+    def from_dict(cls, data: dict[str, Any]) -> "CodeEdge":
         data["edge_type"] = EdgeType(data["edge_type"])
         return cls(**data)
 
 
 class CodeMemory:
-    def __init__(self, storage_path: Optional[Path] = None):
-        self.nodes: Dict[str, CodeNode] = {}
-        self.edges: Dict[str, CodeEdge] = {}
-        self._node_index: Dict[str, Set[str]] = {}
-        self._file_index: Dict[str, Set[str]] = {}
-        self._name_index: Dict[str, Set[str]] = {}
+    def __init__(self, storage_path: Path | None = None):
+        self.nodes: dict[str, CodeNode] = {}
+        self.edges: dict[str, CodeEdge] = {}
+        self._node_index: dict[str, set[str]] = {}
+        self._file_index: dict[str, set[str]] = {}
+        self._name_index: dict[str, set[str]] = {}
         self.storage_path = storage_path
-        
+
         if storage_path and storage_path.exists():
             self.load(storage_path)
 
@@ -126,27 +125,27 @@ class CodeMemory:
             self._node_index[node.node_type.value] = set()
         self._node_index[node.node_type.value].add(node.id)
 
-    def get_node(self, node_id: str) -> Optional[CodeNode]:
+    def get_node(self, node_id: str) -> CodeNode | None:
         return self.nodes.get(node_id)
 
-    def get_nodes_by_file(self, file_path: str) -> List[CodeNode]:
+    def get_nodes_by_file(self, file_path: str) -> list[CodeNode]:
         node_ids = self._file_index.get(file_path, set())
         return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
 
-    def get_nodes_by_name(self, name: str) -> List[CodeNode]:
+    def get_nodes_by_name(self, name: str) -> list[CodeNode]:
         node_ids = self._name_index.get(name, set())
         return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
 
-    def get_nodes_by_type(self, node_type: NodeType) -> List[CodeNode]:
+    def get_nodes_by_type(self, node_type: NodeType) -> list[CodeNode]:
         node_ids = self._node_index.get(node_type.value, set())
         return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
 
-    def get_neighbors(self, node_id: str, edge_type: EdgeType = None, direction: str = "both") -> List[CodeNode]:
+    def get_neighbors(self, node_id: str, edge_type: EdgeType = None, direction: str = "both") -> list[CodeNode]:
         neighbors = []
         for edge in self.edges.values():
             if edge_type and edge.edge_type != edge_type:
                 continue
-            
+
             if direction in ("both", "outgoing") and edge.source_id == node_id:
                 if edge.target_id in self.nodes:
                     neighbors.append(self.nodes[edge.target_id])
@@ -155,10 +154,10 @@ class CodeMemory:
                     neighbors.append(self.nodes[edge.source_id])
         return neighbors
 
-    def get_call_graph(self, root_id: str, depth: int = 3) -> Dict[str, Any]:
+    def get_call_graph(self, root_id: str, depth: int = 3) -> dict[str, Any]:
         visited = set()
         result = {"nodes": [], "edges": []}
-        
+
         def traverse(node_id: str, current_depth: int):
             if current_depth > depth or node_id in visited:
                 return
@@ -170,29 +169,29 @@ class CodeMemory:
                     if edge.source_id == node_id and edge.edge_type == EdgeType.CALLS:
                         result["edges"].append(edge.to_dict())
                         traverse(edge.target_id, current_depth + 1)
-        
+
         traverse(root_id, 0)
         return result
 
-    def find_path(self, source_id: str, target_id: str, max_depth: int = 5) -> Optional[List[CodeNode]]:
+    def find_path(self, source_id: str, target_id: str, max_depth: int = 5) -> list[CodeNode] | None:
         from collections import deque
-        
+
         queue = deque([(source_id, [source_id])])
         visited = {source_id}
-        
+
         while queue:
             current_id, path = queue.popleft()
             if current_id == target_id:
                 return [self.nodes[nid] for nid in path if nid in self.nodes]
-            
+
             if len(path) >= max_depth:
                 continue
-            
+
             for edge in self.edges.values():
                 if edge.source_id == current_id and edge.target_id not in visited:
                     visited.add(edge.target_id)
                     queue.append((edge.target_id, path + [edge.target_id]))
-        
+
         return None
 
     def update_node(self, node_id: str, **kwargs) -> bool:
@@ -212,15 +211,15 @@ class CodeMemory:
         self._file_index.get(node.file_path, set()).discard(node_id)
         self._name_index.get(node.name, set()).discard(node_id)
         self._node_index.get(node.node_type.value, set()).discard(node_id)
-        
+
         edges_to_remove = [eid for eid, e in self.edges.items() if e.source_id == node_id or e.target_id == node_id]
         for eid in edges_to_remove:
             del self.edges[eid]
-        
+
         del self.nodes[node_id]
         return True
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "total_nodes": len(self.nodes),
             "total_edges": len(self.edges),
@@ -234,7 +233,7 @@ class CodeMemory:
         if not path:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         data = {
             "nodes": {k: v.to_dict() for k, v in self.nodes.items()},
             "edges": {k: v.to_dict() for k, v in self.edges.items()},
@@ -247,7 +246,7 @@ class CodeMemory:
             self.nodes[nid] = CodeNode.from_dict(ndata)
         for eid, edata in data.get("edges", {}).items():
             self.edges[eid] = CodeEdge.from_dict(edata)
-        
+
         for node in self.nodes.values():
             self._index_node(node)
 

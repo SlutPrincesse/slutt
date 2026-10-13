@@ -1,15 +1,15 @@
 """
 Reinforcement Optimization Loop - Evaluates output quality against scores to auto-refine prompt templates
 """
-import json
+import hashlib
 import threading
 import time
 import uuid
-from typing import Dict, List, Optional, Any, Callable, Tuple
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict, deque
-import hashlib
+from typing import Any
 
 
 class OptimizationStrategy(Enum):
@@ -24,10 +24,10 @@ class PromptTemplate:
     template_id: str
     name: str
     content: str
-    variables: List[str] = field(default_factory=list)
+    variables: list[str] = field(default_factory=list)
     version: int = 1
-    parent_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    parent_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -36,10 +36,10 @@ class PromptTemplate:
 class EvaluationResult:
     evaluation_id: str
     template_id: str
-    input_data: Dict[str, Any]
+    input_data: dict[str, Any]
     output: str
     score: float
-    metrics: Dict[str, float] = field(default_factory=dict)
+    metrics: dict[str, float] = field(default_factory=dict)
     feedback: str = ""
     timestamp: float = field(default_factory=time.time)
 
@@ -53,7 +53,7 @@ class OptimizationResult:
     best_score: float
     initial_score: float
     improved_template: PromptTemplate
-    history: List[EvaluationResult] = field(default_factory=list)
+    history: list[EvaluationResult] = field(default_factory=list)
     converged: bool = False
     duration: float = 0.0
 
@@ -64,29 +64,29 @@ class ReinforcementOptimizationLoop:
         self.max_iterations = max_iterations
         self.convergence_threshold = convergence_threshold
         self.strategy = strategy
-        
-        self._templates: Dict[str, PromptTemplate] = {}
-        self._evaluations: Dict[str, List[EvaluationResult]] = defaultdict(list)
-        self._optimization_history: List[OptimizationResult] = []
+
+        self._templates: dict[str, PromptTemplate] = {}
+        self._evaluations: dict[str, list[EvaluationResult]] = defaultdict(list)
+        self._optimization_history: list[OptimizationResult] = []
         self._lock = threading.RLock()
-        self._evaluator: Optional[Callable] = None
-        self._mutator: Optional[Callable] = None
-    
-    def set_evaluator(self, evaluator: Callable[[str, Dict[str, Any]], Tuple[float, Dict[str, float], str]]):
+        self._evaluator: Callable | None = None
+        self._mutator: Callable | None = None
+
+    def set_evaluator(self, evaluator: Callable[[str, dict[str, Any]], tuple[float, dict[str, float], str]]):
         """Set custom evaluator function: (output, input_data) -> (score, metrics, feedback)"""
         self._evaluator = evaluator
-    
+
     def set_mutator(self, mutator: Callable[[PromptTemplate, EvaluationResult], PromptTemplate]):
         """Set custom mutator function: (template, evaluation) -> new_template"""
         self._mutator = mutator
-    
+
     def register_template(self, template: PromptTemplate) -> str:
         with self._lock:
             self._templates[template.template_id] = template
         return template.template_id
-    
-    def create_template(self, name: str, content: str, variables: List[str] = None,
-                        metadata: Dict[str, Any] = None) -> PromptTemplate:
+
+    def create_template(self, name: str, content: str, variables: list[str] = None,
+                        metadata: dict[str, Any] = None) -> PromptTemplate:
         template_id = hashlib.sha256(f"{name}{content}{time.time()}".encode()).hexdigest()[:12]
         template = PromptTemplate(
             template_id=template_id,
@@ -96,27 +96,27 @@ class ReinforcementOptimizationLoop:
             metadata=metadata or {}
         )
         return self.register_template(template)
-    
-    def optimize(self, template_id: str, test_cases: List[Dict[str, Any]],
-                 strategy: Optional[OptimizationStrategy] = None) -> OptimizationResult:
+
+    def optimize(self, template_id: str, test_cases: list[dict[str, Any]],
+                 strategy: OptimizationStrategy | None = None) -> OptimizationResult:
         start_time = time.time()
         strategy = strategy or self.strategy
-        
+
         with self._lock:
             template = self._templates.get(template_id)
             if not template:
                 raise ValueError(f"Template {template_id} not found")
-        
+
         if not self._evaluator:
             raise RuntimeError("No evaluator set. Call set_evaluator() first.")
-        
+
         # Initial evaluation
         initial_scores = []
         for test_case in test_cases:
             output = self._render_template(template, test_case)
             score, metrics, feedback = self._evaluator(output, test_case)
             initial_scores.append(score)
-            
+
             eval_result = EvaluationResult(
                 evaluation_id=str(uuid.uuid4())[:8],
                 template_id=template_id,
@@ -128,26 +128,26 @@ class ReinforcementOptimizationLoop:
             )
             with self._lock:
                 self._evaluations[template_id].append(eval_result)
-        
+
         initial_avg = sum(initial_scores) / len(initial_scores) if initial_scores else 0.0
         best_score = initial_avg
         best_template = template
         history = []
-        
+
         for iteration in range(self.max_iterations):
             # Generate candidate templates
             candidates = self._generate_candidates(best_template, history[-5:] if history else [])
-            
+
             iteration_best_score = best_score
             iteration_best_template = best_template
-            
+
             for candidate in candidates:
                 scores = []
                 for test_case in test_cases:
                     output = self._render_template(candidate, test_case)
                     score, metrics, feedback = self._evaluator(output, test_case)
                     scores.append(score)
-                    
+
                     eval_result = EvaluationResult(
                         evaluation_id=str(uuid.uuid4())[:8],
                         template_id=candidate.template_id,
@@ -160,22 +160,22 @@ class ReinforcementOptimizationLoop:
                     history.append(eval_result)
                     with self._lock:
                         self._evaluations[candidate.template_id].append(eval_result)
-                
+
                 avg_score = sum(scores) / len(scores) if scores else 0.0
                 if avg_score > iteration_best_score:
                     iteration_best_score = avg_score
                     iteration_best_template = candidate
-            
+
             # Check convergence
             improvement = iteration_best_score - best_score
             if improvement < self.convergence_threshold:
                 break
-            
+
             best_score = iteration_best_score
             best_template = iteration_best_template
-        
+
         duration = time.time() - start_time
-        
+
         result = OptimizationResult(
             optimization_id=str(uuid.uuid4())[:8],
             template_id=template_id,
@@ -188,28 +188,28 @@ class ReinforcementOptimizationLoop:
             converged=improvement < self.convergence_threshold,
             duration=duration
         )
-        
+
         with self._lock:
             self._optimization_history.append(result)
             # Update the original template with improvements
             if best_template.template_id != template_id:
                 best_template.parent_id = template_id
                 self._templates[best_template.template_id] = best_template
-        
+
         return result
-    
-    def _render_template(self, template: PromptTemplate, variables: Dict[str, Any]) -> str:
+
+    def _render_template(self, template: PromptTemplate, variables: dict[str, Any]) -> str:
         content = template.content
         for var in template.variables:
             placeholder = f"{{{var}}}"
             value = variables.get(var, "")
             content = content.replace(placeholder, str(value))
         return content
-    
-    def _generate_candidates(self, base_template: PromptTemplate, 
-                            recent_history: List[EvaluationResult]) -> List[PromptTemplate]:
+
+    def _generate_candidates(self, base_template: PromptTemplate,
+                            recent_history: list[EvaluationResult]) -> list[PromptTemplate]:
         candidates = []
-        
+
         if self._mutator:
             for eval_result in recent_history:
                 try:
@@ -222,10 +222,10 @@ class ReinforcementOptimizationLoop:
             candidates.extend(self._mutate_temperature(base_template))
             candidates.extend(self._mutate_structure(base_template))
             candidates.extend(self._mutate_instructions(base_template))
-        
+
         return candidates[:5]  # Limit candidates per iteration
-    
-    def _mutate_temperature(self, template: PromptTemplate) -> List[PromptTemplate]:
+
+    def _mutate_temperature(self, template: PromptTemplate) -> list[PromptTemplate]:
         # Add temperature/creativity instructions
         mutations = []
         temps = ["low", "medium", "high"]
@@ -241,10 +241,10 @@ class ReinforcementOptimizationLoop:
             )
             mutations.append(mut)
         return mutations
-    
-    def _mutate_structure(self, template: PromptTemplate) -> List[PromptTemplate]:
+
+    def _mutate_structure(self, template: PromptTemplate) -> list[PromptTemplate]:
         mutations = []
-        
+
         # Add chain-of-thought
         cot_content = f"{template.content}\n\nThink step by step before answering."
         mut = PromptTemplate(
@@ -256,7 +256,7 @@ class ReinforcementOptimizationLoop:
             parent_id=template.template_id
         )
         mutations.append(mut)
-        
+
         # Add few-shot placeholder
         fs_content = f"{template.content}\n\nExamples:\n{{examples}}"
         mut = PromptTemplate(
@@ -268,12 +268,12 @@ class ReinforcementOptimizationLoop:
             parent_id=template.template_id
         )
         mutations.append(mut)
-        
+
         return mutations
-    
-    def _mutate_instructions(self, template: PromptTemplate) -> List[PromptTemplate]:
+
+    def _mutate_instructions(self, template: PromptTemplate) -> list[PromptTemplate]:
         mutations = []
-        
+
         instruction_variants = [
             "Be concise and precise.",
             "Provide detailed reasoning.",
@@ -281,7 +281,7 @@ class ReinforcementOptimizationLoop:
             "Consider edge cases and error handling.",
             "Use best practices and design patterns.",
         ]
-        
+
         for instr in instruction_variants:
             new_content = f"{template.content}\n\n{instr}"
             mut = PromptTemplate(
@@ -293,31 +293,31 @@ class ReinforcementOptimizationLoop:
                 parent_id=template.template_id
             )
             mutations.append(mut)
-        
+
         return mutations
-    
-    def get_template(self, template_id: str) -> Optional[PromptTemplate]:
+
+    def get_template(self, template_id: str) -> PromptTemplate | None:
         with self._lock:
             return self._templates.get(template_id)
-    
-    def get_evaluations(self, template_id: str) -> List[EvaluationResult]:
+
+    def get_evaluations(self, template_id: str) -> list[EvaluationResult]:
         with self._lock:
             return list(self._evaluations.get(template_id, []))
-    
-    def get_optimization_history(self, limit: int = 10) -> List[OptimizationResult]:
+
+    def get_optimization_history(self, limit: int = 10) -> list[OptimizationResult]:
         with self._lock:
             return self._optimization_history[-limit:]
-    
-    def get_best_template(self, template_id: str) -> Optional[PromptTemplate]:
+
+    def get_best_template(self, template_id: str) -> PromptTemplate | None:
         with self._lock:
             template = self._templates.get(template_id)
             if not template:
                 return None
-            
+
             # Find best child
             best = template
             best_score = -1.0
-            
+
             for t in self._templates.values():
                 if t.parent_id == template_id or t.template_id == template_id:
                     evals = self._evaluations.get(t.template_id, [])
@@ -326,11 +326,12 @@ class ReinforcementOptimizationLoop:
                         if avg_score > best_score:
                             best_score = avg_score
                             best = t
-            
+
             return best
 
 
-_optimization_loop: Optional[ReinforcementOptimizationLoop] = None
+_optimization_loop: ReinforcementOptimizationLoop | None = None
+
 
 def get_optimization_loop() -> ReinforcementOptimizationLoop:
     global _optimization_loop

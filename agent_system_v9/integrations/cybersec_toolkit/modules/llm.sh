@@ -1,0 +1,60 @@
+#!/bin/bash
+# shellcheck disable=SC2034  # Arrays are consumed by scripts that source this module
+# Module: LLM Security
+# LLM red teaming, prompt injection, jailbreak testing, AI vulnerability scanning
+
+PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-latest}"
+
+LLM_PACKAGES=()
+
+LLM_PIPX=(
+    garak cai-framework pyrit
+    cisco-ai-mcp-scanner cisco-ai-skill-scanner nemoguardrails
+)
+
+LLM_GIT=(
+    "FuzzyAI=https://github.com/cyberark/FuzzyAI.git"
+    "pallms=https://github.com/mik0w/pallms.git"
+    "Vigil=https://github.com/deadbits/vigil-llm.git"
+    "shannon=https://github.com/KeygraphHQ/shannon.git"
+    "pentagi=https://github.com/vxcontrol/pentagi.git"
+    "PurpleLlama=https://github.com/meta-llama/PurpleLlama.git"
+)
+
+LLM_GIT_NAMES=(FuzzyAI pallms Vigil shannon pentagi PurpleLlama)
+
+install_module_llm() {
+    [[ ${#LLM_PACKAGES[@]} -gt 0 ]] && install_apt_batch "LLM - Packages" "${LLM_PACKAGES[@]}"
+    install_pipx_batch "LLM - Python" "${LLM_PIPX[@]}"
+    install_git_batch "LLM - Git" "${LLM_GIT[@]}"
+
+    # Docker: PentAGI autonomous pentesting (optional)
+    if [[ "${ENABLE_DOCKER:-false}" == "true" ]]; then
+        docker_pull "vxcontrol/pentagi:latest" "PentAGI" || true
+    fi
+
+    # promptfoo — LLM red teaming & testing (npm package)
+    if [[ "${SKIP_SOURCE:-false}" != "true" ]]; then
+        if command_exists promptfoo; then
+            local _pf_ver; _pf_ver=$(promptfoo --version 2>/dev/null || true)
+            log_success "promptfoo already installed${_pf_ver:+ ($_pf_ver)}"
+            _track_already_present "promptfoo" "npm"
+        elif ensure_node; then
+            _start_spinner "Installing promptfoo via npm..."
+            if npm install -g "promptfoo@${PROMPTFOO_VERSION}" >> "$LOG_FILE" 2>&1; then
+                _stop_spinner
+                local _pf_path; _pf_path=$(command -v promptfoo 2>/dev/null || true)
+                local _pf_ver; _pf_ver=$(promptfoo --version 2>/dev/null || echo "$PROMPTFOO_VERSION")
+                log_success "promptfoo installed${_pf_path:+ ($_pf_ver → $_pf_path)}"
+                track_version "promptfoo" "npm" "$_pf_ver"
+            else
+                _stop_spinner
+                log_error "Failed npm: promptfoo"
+                TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+            fi
+        else
+            log_error "Node.js/npm not available — cannot install promptfoo"
+            TOTAL_TOOL_FAILURES=$((TOTAL_TOOL_FAILURES + 1))
+        fi
+    fi
+}

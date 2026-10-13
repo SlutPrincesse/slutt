@@ -1,0 +1,53 @@
+#!/bin/bash
+# shellcheck disable=SC2034  # Arrays are consumed by scripts that source this module
+# Module: Networking
+# Port scanning, packet capture, tunneling, pivoting, MITM, protocol analysis
+
+NET_PACKAGES=(
+    nmap masscan netdiscover tcpdump hping3 arp-scan
+    iftop iptraf-ng whois dnsutils traceroute
+    netcat-openbsd socat p0f ncrack sslscan nbtscan
+    onesixtyone snmp smbclient iodine redsocks stunnel4 zmap
+    wireshark-common tshark sslsplit
+    tor proxychains4 macchanger
+    fping ngrep dns2tcp tcpflow tcpreplay
+    netsniff-ng arping
+    ettercap-text-only sslstrip
+)
+
+NET_PIPX=(sshuttle smbmap mitmproxy)
+
+NET_GO=(
+    "github.com/jpillora/chisel@latest"
+)
+
+NET_GIT=(
+    "bettercap=https://github.com/bettercap/bettercap.git"
+    "dnscat2=https://github.com/iagox86/dnscat2.git"
+    "nipe=https://github.com/htrgouvea/nipe.git"
+    "PRET=https://github.com/RUB-NDS/PRET.git"
+    "pwnat=https://github.com/samyk/pwnat.git"
+    "dnschef=https://github.com/iphelix/dnschef.git"
+    "yersinia=https://github.com/tomac/yersinia.git"
+)
+
+NET_CARGO=(rustscan)
+NET_GO_BINS=(chisel)
+NET_GIT_NAMES=(bettercap dnscat2 nipe PRET pwnat dnschef yersinia)
+
+install_module_networking() {
+    install_apt_batch "Networking - Packages" "${NET_PACKAGES[@]}"
+    install_pipx_batch "Networking - Python" "${NET_PIPX[@]}"
+    install_go_batch "Networking - Go" "${NET_GO[@]}"
+    install_git_batch "Networking - Git" "${NET_GIT[@]}"
+
+    install_binary_releases "${BINARY_RELEASES_NETWORKING[@]}"
+
+    # RustScan (Rust-based port scanner)
+    install_cargo_batch "Networking - Rust" "${NET_CARGO[@]}" || true
+
+    # Wireshark non-interactive config (Debian/Ubuntu — not Termux)
+    if [[ "$PKG_MANAGER" == "apt" ]]; then
+        echo "wireshark-common wireshark-common/install-setuid boolean false" | debconf-set-selections 2>/dev/null || true
+    fi
+}

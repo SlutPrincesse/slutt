@@ -1,9 +1,9 @@
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from collections import defaultdict
+from typing import Any
 
 
 class OntologyRelationType(Enum):
@@ -25,11 +25,11 @@ class OntologyConcept:
     label: str
     description: str = ""
     concept_type: str = "Class"
-    properties: Dict[str, Any] = field(default_factory=dict)
-    parents: List[str] = field(default_factory=list)
-    children: List[str] = field(default_factory=list)
-    equivalents: List[str] = field(default_factory=list)
-    disjoint: List[str] = field(default_factory=list)
+    properties: dict[str, Any] = field(default_factory=dict)
+    parents: list[str] = field(default_factory=list)
+    children: list[str] = field(default_factory=list)
+    equivalents: list[str] = field(default_factory=list)
+    disjoint: list[str] = field(default_factory=list)
     source: str = ""
     confidence: float = 1.0
     version: int = 1
@@ -45,11 +45,11 @@ class OntologyConcept:
 
 class OntologyUpdater:
     def __init__(self):
-        self.concepts: Dict[str, OntologyConcept] = {}
-        self._uri_index: Dict[str, str] = {}
-        self._label_index: Dict[str, str] = {}
-        self._type_index: Dict[str, Set[str]] = defaultdict(set)
-        self._relations: Dict[str, List[tuple]] = defaultdict(list)
+        self.concepts: dict[str, OntologyConcept] = {}
+        self._uri_index: dict[str, str] = {}
+        self._label_index: dict[str, str] = {}
+        self._type_index: dict[str, set[str]] = defaultdict(set)
+        self._relations: dict[str, list[tuple]] = defaultdict(list)
 
     def add_concept(self, concept: OntologyConcept) -> str:
         self.concepts[concept.id] = concept
@@ -58,25 +58,25 @@ class OntologyUpdater:
         self._type_index[concept.concept_type].add(concept.id)
         return concept.id
 
-    def get_concept(self, concept_id: str) -> Optional[OntologyConcept]:
+    def get_concept(self, concept_id: str) -> OntologyConcept | None:
         return self.concepts.get(concept_id)
 
-    def get_concept_by_uri(self, uri: str) -> Optional[OntologyConcept]:
+    def get_concept_by_uri(self, uri: str) -> OntologyConcept | None:
         cid = self._uri_index.get(uri)
         return self.concepts.get(cid) if cid else None
 
-    def get_concept_by_label(self, label: str) -> Optional[OntologyConcept]:
+    def get_concept_by_label(self, label: str) -> OntologyConcept | None:
         cid = self._label_index.get(label.lower())
         return self.concepts.get(cid) if cid else None
 
-    def get_concepts_by_type(self, concept_type: str) -> List[OntologyConcept]:
+    def get_concepts_by_type(self, concept_type: str) -> list[OntologyConcept]:
         return [self.concepts[cid] for cid in self._type_index.get(concept_type, set()) if cid in self.concepts]
 
     def add_relation(self, source_id: str, target_id: str, relation_type: OntologyRelationType):
         if source_id in self.concepts and target_id in self.concepts:
             self._relations[source_id].append((target_id, relation_type))
             self.concepts[source_id].updated_at = datetime.utcnow().isoformat()
-            
+
             if relation_type == OntologyRelationType.SUBCLASS_OF:
                 self.concepts[source_id].parents.append(target_id)
                 self.concepts[target_id].children.append(source_id)
@@ -87,13 +87,13 @@ class OntologyUpdater:
                 self.concepts[source_id].disjoint.append(target_id)
                 self.concepts[target_id].disjoint.append(source_id)
 
-    def get_relations(self, concept_id: str) -> List[tuple]:
+    def get_relations(self, concept_id: str) -> list[tuple]:
         return self._relations.get(concept_id, [])
 
-    def get_hierarchy(self, concept_id: str, direction: str = "both") -> Dict[str, List[str]]:
+    def get_hierarchy(self, concept_id: str, direction: str = "both") -> dict[str, list[str]]:
         result = {"parents": [], "children": []}
-        
-        def collect_parents(cid: str, visited: Set[str]):
+
+        def collect_parents(cid: str, visited: set[str]):
             if cid in visited:
                 return
             visited.add(cid)
@@ -102,8 +102,8 @@ class OntologyUpdater:
                 for parent in concept.parents:
                     result["parents"].append(parent)
                     collect_parents(parent, visited)
-        
-        def collect_children(cid: str, visited: Set[str]):
+
+        def collect_children(cid: str, visited: set[str]):
             if cid in visited:
                 return
             visited.add(cid)
@@ -112,24 +112,24 @@ class OntologyUpdater:
                 for child in concept.children:
                     result["children"].append(child)
                     collect_children(child, visited)
-        
+
         if direction in ("both", "up"):
             collect_parents(concept_id, set())
         if direction in ("both", "down"):
             collect_children(concept_id, set())
-        
+
         return result
 
-    def update_from_observations(self, observations: List[Dict[str, Any]]) -> List[OntologyConcept]:
+    def update_from_observations(self, observations: list[dict[str, Any]]) -> list[OntologyConcept]:
         new_concepts = []
-        
+
         for obs in observations:
             label = obs.get("label", "")
             concept_type = obs.get("type", "Class")
             description = obs.get("description", "")
             properties = obs.get("properties", {})
             relations = obs.get("relations", [])
-            
+
             existing = self.get_concept_by_label(label)
             if existing:
                 existing.description = description
@@ -150,7 +150,7 @@ class OntologyUpdater:
                 )
                 self.add_concept(concept)
                 new_concepts.append(concept)
-            
+
             for rel in relations:
                 target_label = rel.get("target", "")
                 rel_type = OntologyRelationType(rel.get("type", "related_to"))
@@ -161,7 +161,7 @@ class OntologyUpdater:
                     new_c = self.get_concept_by_label(label)
                     if new_c:
                         self.add_relation(new_c.id, target.id, rel_type)
-        
+
         return new_concepts
 
     def merge_ontology(self, other: "OntologyUpdater", prefix: str = "") -> int:
@@ -169,7 +169,7 @@ class OntologyUpdater:
         for concept in other.concepts.values():
             new_label = f"{prefix}{concept.label}" if prefix else concept.label
             existing = self.get_concept_by_label(new_label)
-            
+
             if existing:
                 existing.properties.update(concept.properties)
                 existing.description = concept.description or existing.description
@@ -188,7 +188,7 @@ class OntologyUpdater:
                 )
                 self.add_concept(new_concept)
                 merged += 1
-        
+
         for source_id, relations in other._relations.items():
             source_concept = other.concepts.get(source_id)
             if not source_concept:
@@ -197,7 +197,7 @@ class OntologyUpdater:
             new_source = self.get_concept_by_label(new_source_label)
             if not new_source:
                 continue
-            
+
             for target_id, rel_type in relations:
                 target_concept = other.concepts.get(target_id)
                 if not target_concept:
@@ -206,7 +206,7 @@ class OntologyUpdater:
                 new_target = self.get_concept_by_label(new_target_label)
                 if new_target:
                     self.add_relation(new_source.id, new_target.id, rel_type)
-        
+
         return merged
 
     def export_owl(self) -> str:
@@ -217,29 +217,29 @@ class OntologyUpdater:
             "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
             "",
         ]
-        
+
         for concept in self.concepts.values():
             lines.append(f":{concept.label.replace(' ', '_')} a owl:{concept.concept_type} ;")
             lines.append(f'    rdfs:label "{concept.label}" ;')
             if concept.description:
                 lines.append(f'    rdfs:comment "{concept.description}" ;')
-            
+
             for parent in concept.parents:
                 parent_concept = self.concepts.get(parent)
                 if parent_concept:
                     lines.append(f"    rdfs:subClassOf :{parent_concept.label.replace(' ', '_')} ;")
-            
+
             for equiv in concept.equivalents:
                 equiv_concept = self.concepts.get(equiv)
                 if equiv_concept:
                     lines.append(f"    owl:equivalentClass :{equiv_concept.label.replace(' ', '_')} ;")
-            
+
             lines[-1] = lines[-1].rstrip(" ;") + " ."
             lines.append("")
-        
+
         return "\n".join(lines)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "total_concepts": len(self.concepts),
             "by_type": {k: len(v) for k, v in self._type_index.items()},

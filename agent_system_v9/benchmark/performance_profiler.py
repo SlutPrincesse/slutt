@@ -1,19 +1,20 @@
 """
 Performance Profiler - Runtime performance profiling
 """
-import time
 import asyncio
-import threading
+import cProfile
 import functools
 import hashlib
-import cProfile
-import pstats
 import io
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+import pstats
+import threading
+import time
+from collections import defaultdict
+from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from contextlib import contextmanager
+from typing import Any
 
 
 class ProfilingMode(Enum):
@@ -32,9 +33,9 @@ class ProfileResult:
     min_time: float
     max_time: float
     std_dev: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "function_name": self.function_name,
             "call_count": self.call_count,
@@ -52,15 +53,15 @@ class ProfileSession:
     session_id: str
     mode: ProfilingMode
     start_time: float
-    end_time: Optional[float] = None
-    results: List[ProfileResult] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    end_time: float | None = None
+    results: list[ProfileResult] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class FunctionProfiler:
     def __init__(self):
-        self.profiles: Dict[str, List[float]] = defaultdict(list)
-        self.call_counts: Dict[str, int] = defaultdict(int)
+        self.profiles: dict[str, list[float]] = defaultdict(list)
+        self.call_counts: dict[str, int] = defaultdict(int)
         self._lock = threading.Lock()
 
     def profile(self, func: Callable) -> Callable:
@@ -89,7 +90,7 @@ class FunctionProfiler:
                     self.call_counts[func.__name__] += 1
         return wrapper
 
-    def get_results(self) -> List[ProfileResult]:
+    def get_results(self) -> list[ProfileResult]:
         with self._lock:
             results = []
             for func_name, times in self.profiles.items():
@@ -105,7 +106,7 @@ class FunctionProfiler:
                     ))
             return results
 
-    def _std_dev(self, values: List[float]) -> float:
+    def _std_dev(self, values: list[float]) -> float:
         if len(values) < 2:
             return 0.0
         mean = sum(values) / len(values)
@@ -137,7 +138,7 @@ class CProfileProfiler:
         stats.print_stats(50)
         return s.getvalue()
 
-    def get_results(self) -> List[ProfileResult]:
+    def get_results(self) -> list[ProfileResult]:
         results = []
         stats = pstats.Stats(self.profiler)
         for func, (cc, nc, tt, ct, callers) in stats.stats.items():
@@ -159,7 +160,7 @@ class CProfileProfiler:
 
 class MemoryProfiler:
     def __init__(self):
-        self.snapshots: List[Dict[str, Any]] = []
+        self.snapshots: list[dict[str, Any]] = []
         self._running = False
 
     def start(self):
@@ -178,7 +179,7 @@ class MemoryProfiler:
         except ImportError:
             pass
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         try:
             import tracemalloc
             snapshot = tracemalloc.take_snapshot()
@@ -194,13 +195,13 @@ class MemoryProfiler:
         except ImportError:
             return {}
 
-    def get_results(self) -> List[Dict[str, Any]]:
+    def get_results(self) -> list[dict[str, Any]]:
         return self.snapshots
 
 
 class AsyncProfiler:
     def __init__(self):
-        self.tasks: Dict[str, Dict] = {}
+        self.tasks: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
     async def profile(self, coro: Awaitable, name: str = None) -> Any:
@@ -208,7 +209,7 @@ class AsyncProfiler:
         start = time.perf_counter()
         task = asyncio.create_task(coro)
         self.tasks[name] = {"task": task, "start": start, "name": name}
-        
+
         try:
             result = await task
             elapsed = time.perf_counter() - start
@@ -221,7 +222,7 @@ class AsyncProfiler:
             self.tasks[name]["error"] = str(e)
             raise
 
-    def get_results(self) -> List[ProfileResult]:
+    def get_results(self) -> list[ProfileResult]:
         results = []
         for name, info in self.tasks.items():
             if "elapsed" in info:
@@ -244,32 +245,32 @@ class PerformanceProfiler:
         self.cprofile_profiler = CProfileProfiler()
         self.memory_profiler = MemoryProfiler()
         self.async_profiler = AsyncProfiler()
-        self.sessions: List[ProfileSession] = []
-        self._current_session: Optional[ProfileSession] = None
+        self.sessions: list[ProfileSession] = []
+        self._current_session: ProfileSession | None = None
 
     @contextmanager
-    def session(self, mode: ProfilingMode = ProfilingMode.FUNCTION, metadata: Dict = None):
+    def session(self, mode: ProfilingMode = ProfilingMode.FUNCTION, metadata: dict = None):
         session = ProfileSession(
             session_id=hashlib.md5(f"{time.time()}".encode()).hexdigest()[:12],
             mode=mode,
             start_time=time.time(),
             metadata=metadata or {},
         )
-        
+
         if mode == ProfilingMode.FUNCTION:
             self.function_profiler.reset()
         elif mode == ProfilingMode.LINE:
             self.cprofile_profiler.start()
         elif mode == ProfilingMode.MEMORY:
             self.memory_profiler.start()
-        
+
         self._current_session = session
-        
+
         try:
             yield session
         finally:
             session.end_time = time.time()
-            
+
             if mode == ProfilingMode.FUNCTION:
                 session.results = self.function_profiler.get_results()
             elif mode == ProfilingMode.LINE:
@@ -280,7 +281,7 @@ class PerformanceProfiler:
                 session.results = self.memory_profiler.get_results()
             elif mode == ProfilingMode.ASYNC:
                 session.results = self.async_profiler.get_results()
-            
+
             self.sessions.append(session)
             self._current_session = None
 
@@ -293,19 +294,19 @@ class PerformanceProfiler:
     async def run_async(self, coro: Awaitable, name: str = None) -> Any:
         return await self.async_profiler.profile(coro, name)
 
-    def get_session(self, session_id: str) -> Optional[ProfileSession]:
+    def get_session(self, session_id: str) -> ProfileSession | None:
         for s in self.sessions:
             if s.session_id == session_id:
                 return s
         return None
 
-    def get_all_results(self) -> List[ProfileResult]:
+    def get_all_results(self) -> list[ProfileResult]:
         all_results = []
         for session in self.sessions:
             all_results.extend(session.results)
         return all_results
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         all_results = self.get_all_results()
         return {
             "total_functions": len(set(r.function_name for r in all_results)),
@@ -330,18 +331,18 @@ class ProfilerContext:
 def profile(mode: ProfilingMode = ProfilingMode.FUNCTION):
     def decorator(func: Callable) -> Callable:
         profiler = PerformanceProfiler()
-        
+
         if asyncio.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
                 with profiler.session(mode):
                     return await func(*args, **kwargs)
             return async_wrapper
-        else:
-            @functools.wraps(func)
-            def sync_wrapper(*args, **kwargs):
-                with profiler.session(mode):
-                    return func(*args, **kwargs)
-            return sync_wrapper
-    
+
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            with profiler.session(mode):
+                return func(*args, **kwargs)
+        return sync_wrapper
+
     return decorator

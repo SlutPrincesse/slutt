@@ -2,16 +2,14 @@
 Deferred Queue - Queue management for offline/deferred operations
 """
 import asyncio
-import hashlib
 import json
+import sqlite3
 import time
 import uuid
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from collections import defaultdict
-import sqlite3
+from typing import Any
 
 
 class QueueStatus(Enum):
@@ -38,14 +36,14 @@ class QueueItem:
     priority: Priority = Priority.NORMAL
     status: QueueStatus = QueueStatus.PENDING
     created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
+    started_at: float | None = None
+    completed_at: float | None = None
     retry_count: int = 0
     max_retries: int = 3
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "item_id": self.item_id,
             "queue_name": self.queue_name,
@@ -62,7 +60,7 @@ class QueueItem:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'QueueItem':
+    def from_dict(cls, data: dict[str, Any]) -> 'QueueItem':
         return cls(
             item_id=data["item_id"],
             queue_name=data["queue_name"],
@@ -96,13 +94,13 @@ class DeferredQueue:
         self.name = name
         self.config = config or QueueConfig()
         self.config.db_path = self.config.db_path.replace(".db", f"_{name}.db")
-        
+
         self.memory_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=self.config.max_size)
-        self.processing: Dict[str, QueueItem] = {}
+        self.processing: dict[str, QueueItem] = {}
         self._lock = asyncio.Lock()
         self._running = False
-        self._worker_task: Optional[asyncio.Task] = None
-        self._handler: Optional[Callable] = None
+        self._worker_task: asyncio.Task | None = None
+        self._handler: Callable | None = None
         self.stats = {
             "enqueued": 0,
             "dequeued": 0,
@@ -111,7 +109,7 @@ class DeferredQueue:
             "retried": 0,
             "dead_letter": 0,
         }
-        
+
         if self.config.persist:
             self._init_db()
 
@@ -146,7 +144,7 @@ class DeferredQueue:
         payload: Any,
         priority: Priority = Priority.NORMAL,
         max_retries: int = None,
-        metadata: Dict = None,
+        metadata: dict = None,
     ) -> str:
         item_id = str(uuid.uuid4())
         item = QueueItem(
@@ -157,13 +155,13 @@ class DeferredQueue:
             max_retries=max_retries or self.config.max_retries,
             metadata=metadata or {},
         )
-        
+
         if self.config.persist:
             await self._persist_item(item)
-        
+
         await self.memory_queue.put((-priority.value, time.time(), item))
         self.stats["enqueued"] += 1
-        
+
         return item_id
 
     async def _persist_item(self, item: QueueItem):
@@ -195,19 +193,19 @@ class DeferredQueue:
         conn.commit()
         conn.close()
 
-    async def dequeue(self, timeout: float = None) -> Optional[QueueItem]:
+    async def dequeue(self, timeout: float = None) -> QueueItem | None:
         try:
             if timeout:
                 _, _, item = await asyncio.wait_for(self.memory_queue.get(), timeout=timeout)
             else:
                 _, _, item = await self.memory_queue.get()
-            
+
             async with self._lock:
                 item.status = QueueStatus.PROCESSING
                 item.started_at = time.time()
                 self.processing[item.item_id] = item
                 await self._update_item(item)
-            
+
             self.stats["dequeued"] += 1
             return item
         except asyncio.TimeoutError:
@@ -220,14 +218,14 @@ class DeferredQueue:
             if item.item_id in self.processing:
                 del self.processing[item.item_id]
             await self._update_item(item)
-        
+
         self.stats["completed"] += 1
 
     async def fail(self, item: QueueItem, error: str):
         async with self._lock:
             item.error = error
             item.retry_count += 1
-            
+
             if item.retry_count >= item.max_retries:
                 if self.config.dead_letter_after_retries:
                     item.status = QueueStatus.DEAD_LETTER
@@ -238,12 +236,12 @@ class DeferredQueue:
             else:
                 item.status = QueueStatus.RETRYING
                 self.stats["retried"] += 1
-            
+
             if item.item_id in self.processing:
                 del self.processing[item.item_id]
-            
+
             await self._update_item(item)
-            
+
             if item.status == QueueStatus.RETRYING:
                 await self._schedule_retry(item)
 
@@ -252,20 +250,20 @@ class DeferredQueue:
             self.config.retry_delay * (self.config.retry_backoff ** (item.retry_count - 1)),
             self.config.max_retry_delay,
         )
-        
+
         async def retry():
             await asyncio.sleep(delay)
             item.status = QueueStatus.PENDING
             item.started_at = None
             await self._update_item(item)
             await self.memory_queue.put((-item.priority.value, time.time(), item))
-        
+
         asyncio.create_task(retry())
 
     async def start_worker(self, concurrency: int = 1):
         if not self._handler:
             raise ValueError("No handler registered")
-        
+
         self._running = True
         self._worker_task = asyncio.create_task(self._worker_loop(concurrency))
 
@@ -280,13 +278,13 @@ class DeferredQueue:
 
     async def _worker_loop(self, concurrency: int):
         semaphore = asyncio.Semaphore(concurrency)
-        
+
         async def process_item():
             async with semaphore:
                 item = await self.dequeue()
                 if not item:
                     return
-                
+
                 try:
                     if asyncio.iscoroutinefunction(self._handler):
                         await self._handler(item.payload)
@@ -295,22 +293,22 @@ class DeferredQueue:
                     await self.complete(item)
                 except Exception as e:
                     await self.fail(item, str(e))
-        
+
         while self._running:
             tasks = [asyncio.create_task(process_item()) for _ in range(concurrency)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def get_item(self, item_id: str) -> Optional[QueueItem]:
+    async def get_item(self, item_id: str) -> QueueItem | None:
         async with self._lock:
             if item_id in self.processing:
                 return self.processing[item_id]
-        
+
         if self.config.persist:
             conn = sqlite3.connect(self.config.db_path)
             cursor = conn.execute("SELECT * FROM queue WHERE item_id = ?", (item_id,))
             row = cursor.fetchone()
             conn.close()
-            
+
             if row:
                 return self._row_to_item(row)
         return None
@@ -331,7 +329,7 @@ class DeferredQueue:
             metadata=json.loads(row[11]) if row[11] else {},
         )
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         async with self._lock:
             pending = self.memory_queue.qsize()
             return {
@@ -349,7 +347,7 @@ class DeferredQueue:
                 except asyncio.QueueEmpty:
                     break
             self.processing.clear()
-        
+
         if self.config.persist:
             conn = sqlite3.connect(self.config.db_path)
             conn.execute("DELETE FROM queue")
@@ -359,12 +357,12 @@ class DeferredQueue:
     async def replay_dead_letter(self) -> int:
         if not self.config.persist:
             return 0
-        
+
         conn = sqlite3.connect(self.config.db_path)
         cursor = conn.execute("SELECT * FROM queue WHERE status = ?", (QueueStatus.DEAD_LETTER.value,))
         rows = cursor.fetchall()
         conn.close()
-        
+
         count = 0
         for row in rows:
             item = self._row_to_item(row)
@@ -374,7 +372,7 @@ class DeferredQueue:
             await self.memory_queue.put((-item.priority.value, time.time(), item))
             await self._update_item(item)
             count += 1
-        
+
         return count
 
 
@@ -382,26 +380,26 @@ class BatchQueue(DeferredQueue):
     def __init__(self, name: str, batch_size: int = 100, config: QueueConfig = None):
         super().__init__(name, config)
         self.batch_size = batch_size
-        self._batch: List[QueueItem] = []
+        self._batch: list[QueueItem] = []
         self._batch_lock = asyncio.Lock()
 
     async def enqueue(self, payload: Any, priority: Priority = Priority.NORMAL, **kwargs) -> str:
         item_id = await super().enqueue(payload, priority, **kwargs)
-        
+
         async with self._batch_lock:
             self._batch.append(await self.get_item(item_id))
             if len(self._batch) >= self.batch_size:
                 await self._flush_batch()
-        
+
         return item_id
 
     async def _flush_batch(self):
         if not self._batch:
             return
-        
+
         batch = self._batch[:]
         self._batch.clear()
-        
+
         if self._handler and hasattr(self._handler, 'handle_batch'):
             try:
                 if asyncio.iscoroutinefunction(self._handler.handle_batch):
@@ -433,13 +431,13 @@ class DelayedQueue(DeferredQueue):
             priority=priority,
             metadata=kwargs.get("metadata", {}),
         )
-        
+
         async def delayed_enqueue():
             await asyncio.sleep(delay)
             await self.memory_queue.put((-priority.value, time.time(), item))
             if self.config.persist:
                 await self._persist_item(item)
             self.stats["enqueued"] += 1
-        
+
         asyncio.create_task(delayed_enqueue())
         return item_id

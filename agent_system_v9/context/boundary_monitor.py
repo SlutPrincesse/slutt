@@ -1,8 +1,8 @@
-import asyncio
-from typing import Any, Dict, List, Optional, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 
 class BoundaryAlertType(Enum):
@@ -21,7 +21,7 @@ class BoundaryAlert:
     current_value: float
     threshold: float
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BoundaryMonitor:
@@ -36,11 +36,11 @@ class BoundaryMonitor:
         self.warning_threshold = warning_threshold
         self.critical_threshold = critical_threshold
         self.max_heads = max_heads
-        
+
         self.current_tokens = 0
         self.active_heads = 0
-        self.alerts: List[BoundaryAlert] = []
-        self._alert_handlers: List[Callable[[BoundaryAlert], Any]] = []
+        self.alerts: list[BoundaryAlert] = []
+        self._alert_handlers: list[Callable[[BoundaryAlert], Any]] = []
         self._monitoring = False
 
     def add_alert_handler(self, handler: Callable[[BoundaryAlert], Any]):
@@ -58,7 +58,7 @@ class BoundaryMonitor:
 
     def _check_token_boundary(self, old_tokens: int):
         utilization = self.current_tokens / self.max_context_tokens
-        
+
         if utilization >= self.critical_threshold and old_tokens / self.max_context_tokens < self.critical_threshold:
             self._emit_alert(BoundaryAlert(
                 id=f"critical_{datetime.utcnow().timestamp()}",
@@ -105,10 +105,10 @@ class BoundaryMonitor:
             except Exception:
                 pass
 
-    def get_recent_alerts(self, limit: int = 10) -> List[BoundaryAlert]:
+    def get_recent_alerts(self, limit: int = 10) -> list[BoundaryAlert]:
         return self.alerts[-limit:]
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "current_tokens": self.current_tokens,
             "max_tokens": self.max_context_tokens,

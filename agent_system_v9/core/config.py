@@ -1,28 +1,30 @@
 """
 Core System Configuration - Dynamic configuration management with environment variable support
 """
-from typing import Dict, Any, Optional, List, Union, Callable
-from dataclasses import dataclass, field, asdict
-import os
 import json
-import yaml
-from pathlib import Path
+import os
 import threading
+from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+import yaml
 
 
 @dataclass
 class SectionConfig:
     enabled: bool = True
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    dependencies: List[str] = field(default_factory=list)
-    resource_limits: Dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
+    dependencies: list[str] = field(default_factory=list)
+    resource_limits: dict[str, Any] = field(default_factory=dict)
 
 
 class SystemConfig:
     _instance: Optional['SystemConfig'] = None
     _lock = threading.RLock()
-    
+
     DEFAULTS = {
         "kernel": SectionConfig(
             enabled=True,
@@ -273,7 +275,7 @@ class SystemConfig:
             }
         )
     }
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
@@ -281,17 +283,17 @@ class SystemConfig:
                     cls._instance = super().__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self):
         if self._initialized:
             return
-        self._config: Dict[str, SectionConfig] = deepcopy(self.DEFAULTS)
+        self._config: dict[str, SectionConfig] = deepcopy(self.DEFAULTS)
         self._env_prefix = "AGENT_V9_"
-        self._config_files: List[Path] = []
-        self._watchers: List[Callable] = []
+        self._config_files: list[Path] = []
+        self._watchers: list[Callable] = []
         self._initialized = True
         self._load_from_env()
-    
+
     def _load_from_env(self):
         for key, value in os.environ.items():
             if key.startswith(self._env_prefix):
@@ -300,7 +302,7 @@ class SystemConfig:
                     section, param = parts[0], parts[1]
                     if section in self._config:
                         self._set_nested_param(section, param, self._parse_value(value))
-    
+
     def _parse_value(self, value: str) -> Any:
         try:
             return json.loads(value)
@@ -314,7 +316,7 @@ class SystemConfig:
                     return float(value)
                 except ValueError:
                     return value
-    
+
     def _set_nested_param(self, section: str, param: str, value: Any):
         if section in self._config:
             keys = param.split("_")
@@ -324,22 +326,22 @@ class SystemConfig:
                     target[key] = {}
                 target = target[key]
             target[keys[-1]] = value
-    
-    def load_file(self, path: Union[str, Path]) -> bool:
+
+    def load_file(self, path: str | Path) -> bool:
         path = Path(path)
         if not path.exists():
             return False
-        
+
         try:
             if path.suffix in (".yaml", ".yml"):
-                with open(path) as f:
+                with Path(path).open() as f:
                     data = yaml.safe_load(f)
             elif path.suffix == ".json":
-                with open(path) as f:
+                with Path(path).open() as f:
                     data = json.load(f)
             else:
                 return False
-            
+
             for section, section_data in data.items():
                 if section in self._config:
                     if isinstance(section_data, dict):
@@ -351,35 +353,35 @@ class SystemConfig:
                             self._config[section].dependencies = section_data["dependencies"]
                         if "resource_limits" in section_data:
                             self._config[section].resource_limits = section_data["resource_limits"]
-            
+
             self._config_files.append(path)
             self._notify_watchers()
             return True
         except Exception:
             return False
-    
-    def save_file(self, path: Union[str, Path]) -> bool:
+
+    def save_file(self, path: str | Path) -> bool:
         path = Path(path)
         try:
             data = {}
             for section, config in self._config.items():
                 data[section] = asdict(config)
-            
+
             if path.suffix in (".yaml", ".yml"):
-                with open(path, "w") as f:
+                with Path(path).open("w") as f:
                     yaml.dump(data, f, default_flow_style=False)
             elif path.suffix == ".json":
-                with open(path, "w") as f:
+                with Path(path).open("w") as f:
                     json.dump(data, f, indent=2)
             else:
                 return False
             return True
         except Exception:
             return False
-    
-    def get_section(self, section: str) -> Optional[SectionConfig]:
+
+    def get_section(self, section: str) -> SectionConfig | None:
         return self._config.get(section)
-    
+
     def get_param(self, section: str, param: str, default: Any = None) -> Any:
         section_config = self._config.get(section)
         if not section_config:
@@ -392,7 +394,7 @@ class SystemConfig:
             else:
                 return default
         return value
-    
+
     def set_param(self, section: str, param: str, value: Any):
         if section in self._config:
             keys = param.split(".")
@@ -403,30 +405,30 @@ class SystemConfig:
                 target = target[key]
             target[keys[-1]] = value
             self._notify_watchers()
-    
+
     def is_enabled(self, section: str) -> bool:
         return self._config.get(section, SectionConfig()).enabled
-    
+
     def enable_section(self, section: str):
         if section in self._config:
             self._config[section].enabled = True
             self._notify_watchers()
-    
+
     def disable_section(self, section: str):
         if section in self._config:
             self._config[section].enabled = False
             self._notify_watchers()
-    
-    def get_all(self) -> Dict[str, SectionConfig]:
+
+    def get_all(self) -> dict[str, SectionConfig]:
         return dict(self._config)
-    
+
     def add_watcher(self, callback: Callable):
         self._watchers.append(callback)
-    
+
     def remove_watcher(self, callback: Callable):
         if callback in self._watchers:
             self._watchers.remove(callback)
-    
+
     def _notify_watchers(self):
         for watcher in self._watchers:
             try:

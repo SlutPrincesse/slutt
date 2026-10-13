@@ -4,14 +4,17 @@ Maps Ablation CLI commands to V9 DynamicToolRegistry tools
 """
 import asyncio
 import json
-import subprocess
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any
 
-from agent_system_v9.tools.tool_registry import DynamicToolRegistry, ToolEntry, ToolParameter, ToolCategory, SandboxSpec
 from agent_system_v9.kernel.sandbox_isolator import SandboxIsolator
 from agent_system_v9.memory.query_engine import QueryEngine
+from agent_system_v9.tools.tool_registry import (
+    DynamicToolRegistry,
+    SandboxSpec,
+    ToolCategory,
+    ToolParameter,
+)
 
 
 @dataclass
@@ -19,7 +22,7 @@ class AblationCommand:
     name: str
     description: str
     subcommand: str
-    args_schema: Dict[str, Any]
+    args_schema: dict[str, Any]
     sandbox_spec: SandboxSpec
     output_parser: str = "json"
 
@@ -218,33 +221,33 @@ class AblationToolSynthesizer:
         return count
 
     def _register_command(self, cmd: AblationCommand):
-        async def ablation_wrapper(**kwargs) -> Dict[str, Any]:
+        async def ablation_wrapper(**kwargs) -> dict[str, Any]:
             binary_path = kwargs.get("binary_path") or kwargs.get("firmware_path") or kwargs.get("target_path") or kwargs.get("binary1")
             if not binary_path:
                 return {"error": "binary_path required", "success": False}
-            
+
             args = [cmd.subcommand]
-            
+
             for key, value in kwargs.items():
                 if key in ("binary_path", "firmware_path", "target_path", "binary1", "binary2"):
                     continue
                 if value is not None:
                     args.extend([f"--{key.replace('_', '-')}", str(value)])
-            
+
             args.append(binary_path)
             if "binary2" in kwargs:
                 args.append(kwargs["binary2"])
-            
+
             result = await self.sandbox.execute_tool(
                 tool_name=cmd.name,
                 func=self._run_ablation,
                 args={"args": args, "binary_path": binary_path},
                 spec=cmd.sandbox_spec.__dict__,
             )
-            
+
             if result.get("success"):
                 await self._ingest_findings(cmd.name, result.get("output", {}), binary_path)
-            
+
             return result
 
         params = [
@@ -270,7 +273,7 @@ class AblationToolSynthesizer:
             metadata={"subcommand": cmd.subcommand, "output_parser": cmd.output_parser},
         )
 
-    async def _run_ablation(self, args: List[str], binary_path: str) -> Dict[str, Any]:
+    async def _run_ablation(self, args: list[str], binary_path: str) -> dict[str, Any]:
         try:
             cmd = ["ablation"] + args
             proc = await asyncio.create_subprocess_exec(
@@ -279,7 +282,7 @@ class AblationToolSynthesizer:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await proc.communicate()
-            
+
             return {
                 "success": proc.returncode == 0,
                 "output": json.loads(stdout.decode()) if stdout else {},
@@ -289,14 +292,14 @@ class AblationToolSynthesizer:
         except Exception as e:
             return {"success": False, "error": str(e), "output": {}}
 
-    async def _ingest_findings(self, tool_name: str, output: Dict[str, Any], binary_path: str):
+    async def _ingest_findings(self, tool_name: str, output: dict[str, Any], binary_path: str):
         findings = self._parse_output(tool_name, output)
         if findings:
             self.query_engine.ingest_ablation_findings(findings, source=f"ablation_{tool_name}")
 
-    def _parse_output(self, tool_name: str, output: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_output(self, tool_name: str, output: dict[str, Any]) -> list[dict[str, Any]]:
         findings = []
-        
+
         if "taint" in tool_name and "taint_paths" in output:
             for path in output["taint_paths"]:
                 findings.append({
@@ -307,7 +310,7 @@ class AblationToolSynthesizer:
                     "confidence": path.get("confidence", 0.8),
                     "location": {"file": path.get("binary"), "address": path.get("address")},
                 })
-        
+
         elif "crypto" in tool_name and "findings" in output:
             for finding in output["findings"]:
                 findings.append({
@@ -317,7 +320,7 @@ class AblationToolSynthesizer:
                     "location": {"file": finding.get("file"), "address": finding.get("address")},
                     "confidence": finding.get("confidence", 0.9),
                 })
-        
+
         elif "search" in tool_name and "matches" in output:
             for match in output["matches"]:
                 findings.append({
@@ -327,7 +330,7 @@ class AblationToolSynthesizer:
                     "context": match.get("context", ""),
                     "confidence": 0.7,
                 })
-        
+
         elif "decompile" in tool_name and "functions" in output:
             for func in output["functions"]:
                 findings.append({
@@ -338,7 +341,7 @@ class AblationToolSynthesizer:
                     "location": {"file": func.get("binary"), "address": func.get("address")},
                     "confidence": 0.8,
                 })
-        
+
         return findings
 
 

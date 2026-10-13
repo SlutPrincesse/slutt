@@ -1,33 +1,33 @@
 """
 Anti-Slop Guardrails & Quality Enforcement (Section 28)
 """
-from .pre_commit_validator import (
-    PreCommitValidator,
-    ValidationResult,
-    ValidationSeverity,
-    CommitHookRunner,
-)
 from .comment_stripper import (
     CommentStripper,
     DocstringStripper,
     LicenseHeaderManager,
     StripResult,
 )
+from .noop_detector import (
+    DeadCodeAnalyzer,
+    NoOpDetector,
+    NoOpIssue,
+    NoOpReport,
+    NoOpType,
+    NoOpVisitor,
+)
+from .pre_commit_validator import (
+    CommitHookRunner,
+    PreCommitValidator,
+    ValidationResult,
+    ValidationSeverity,
+)
 from .typing_guard import (
-    TypingGuard,
+    TypeAnnotationGenerator,
     TypeHintLevel,
+    TypingGuard,
     TypingIssue,
     TypingReport,
     TypingVisitor,
-    TypeAnnotationGenerator,
-)
-from .noop_detector import (
-    NoOpDetector,
-    NoOpType,
-    NoOpIssue,
-    NoOpReport,
-    NoOpVisitor,
-    DeadCodeAnalyzer,
 )
 
 __all__ = [

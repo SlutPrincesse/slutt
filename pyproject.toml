@@ -181,12 +181,19 @@ ignore_missing_imports = true
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-indent-width = 4
-indent-style = "space"
+unsafe-fixes = false
+
+# Formatter
+[tool.ruff.format]
 quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
 skip-magic-trailing-comma = true
 
-# Select rules
+# Linter
+[tool.ruff.lint]
+preview = true
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -207,8 +214,6 @@ select = [
     "RET", # flake8-return
     "TID", # flake8-tidy-imports
 ]
-
-# Ignore rules
 ignore = [
     "E501",  # line too long (handled by formatter)
     "B008",  # do not perform function calls in argument defaults
@@ -217,28 +222,13 @@ ignore = [
     "SIM103", # use `return` instead of `else`
     "ARG001", # unused argument (common in callbacks)
     "ARG002", # unused argument (common in callbacks)
-    "PLW0212", # protected access (internal API)
     "TRY003",  # avoid specifying long messages outside exception class
     "NPY002",  # numpy dtype
 ]
-
-# Per-file ignores
 per-file-ignores = {
-    "agent_system_v9/__init__.py" = ["F401", "F403"],  # many exports
+    "agent_system_v9/__init__.py" = ["F401", "F403", "I001"],  # many exports, unsorted imports
     "agent_system_v9/core/config.py" = ["C901", "PLR0915"],  # large config class
 }
-
-# Formatter
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-line-ending = "lf"
-docstring-code-format = true
-
-# Linter
-[tool.ruff.lint]
-preview = true
-unsafe-fixes = false
 
 [tool.black]
 target-version = ["py310"]

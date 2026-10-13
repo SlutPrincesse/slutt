@@ -3,19 +3,17 @@ Polyglot AST Driver - Multi-language AST operations for workspace
 """
 import ast
 import hashlib
-import json
-import re
-import subprocess
-from typing import Dict, List, Optional, Any, Set, Union, Callable, Tuple
+import importlib.util
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import importlib.util
-
+from typing import Any, Optional
 
 try:
-    from tree_sitter import Language as TSLanguage, Parser as TSParser
+    from tree_sitter import Language as TSLanguage
+    from tree_sitter import Parser as TSParser
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
@@ -43,25 +41,25 @@ class TreeSitterConfig:
     language: Language
     lib_path: str
     language_name: str
-    queries: Dict[str, str] = field(default_factory=dict)
+    queries: dict[str, str] = field(default_factory=dict)
 
 
 class TreeSitterManager:
     _instance = None
-    _languages: Dict[Language, TSLanguage] = {}
-    _parsers: Dict[Language, TSParser] = {}
-    
+    _languages: dict[Language, TSLanguage] = {}
+    _parsers: dict[Language, TSParser] = {}
+
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-    
+
     def __init__(self):
         if not TREE_SITTER_AVAILABLE:
             return
         self._load_languages()
-    
+
     def _load_languages(self):
         language_configs = {
             Language.PYTHON: ("tree_sitter_python", "python"),
@@ -72,7 +70,7 @@ class TreeSitterManager:
             Language.JAVA: ("tree_sitter_java", "java"),
             Language.CPP: ("tree_sitter_cpp", "cpp"),
         }
-        
+
         for lang, (module_name, lang_name) in language_configs.items():
             try:
                 module = importlib.import_module(module_name)
@@ -83,18 +81,18 @@ class TreeSitterManager:
                 self._parsers[lang] = parser
             except ImportError:
                 pass
-    
-    def get_parser(self, language: Language) -> Optional[TSParser]:
+
+    def get_parser(self, language: Language) -> TSParser | None:
         return self._parsers.get(language)
-    
-    def get_language(self, language: Language) -> Optional[TSLanguage]:
+
+    def get_language(self, language: Language) -> TSLanguage | None:
         return self._languages.get(language)
-    
+
     def is_available(self, language: Language) -> bool:
         return language in self._parsers
-    
+
     @classmethod
-    def available_languages(cls) -> List[Language]:
+    def available_languages(cls) -> list[Language]:
         return list(cls._parsers.keys())
 
 
@@ -103,22 +101,22 @@ class ASTNode:
     node_id: str
     node_type: str
     language: Language
-    name: Optional[str] = None
-    value: Optional[Any] = None
+    name: str | None = None
+    value: Any | None = None
     file_path: str = ""
     line: int = 0
     column: int = 0
-    end_line: Optional[int] = None
-    end_column: Optional[int] = None
-    children: List['ASTNode'] = field(default_factory=list)
+    end_line: int | None = None
+    end_column: int | None = None
+    children: list['ASTNode'] = field(default_factory=list)
     parent: Optional['ASTNode'] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_child(self, child: 'ASTNode'):
         child.parent = self
         self.children.append(child)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "node_id": self.node_id,
             "node_type": self.node_type,
@@ -139,19 +137,19 @@ class ASTNode:
 class ParseResult:
     file_path: str
     language: Language
-    ast: Optional[ASTNode] = None
-    errors: List[str] = field(default_factory=list)
+    ast: ASTNode | None = None
+    errors: list[str] = field(default_factory=list)
     parse_time: float = 0.0
 
 
 class ASTParser:
     def __init__(self):
-        self.parsers: Dict[Language, Callable] = {}
+        self.parsers: dict[Language, Callable] = {}
         self._register_default_parsers()
 
     def _register_default_parsers(self):
         self.parsers[Language.PYTHON] = self._parse_python
-        
+
         if TREE_SITTER_AVAILABLE:
             ts_manager = TreeSitterManager.get_instance()
             for lang in [Language.JAVASCRIPT, Language.TYPESCRIPT, Language.RUST, Language.GO, Language.JAVA, Language.CPP]:
@@ -164,22 +162,22 @@ class ASTParser:
     def parse_file(self, file_path: str, language: Language = None) -> ParseResult:
         if language is None:
             language = self._detect_language(file_path)
-        
+
         start = time.time()
-        
+
         try:
             content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
         except Exception as e:
             return ParseResult(file_path, language, errors=[f"Read error: {e}"], parse_time=time.time() - start)
-        
+
         return self.parse_string(content, file_path, language)
 
     def parse_string(self, content: str, file_path: str, language: Language) -> ParseResult:
         start = time.time()
-        
+
         if language not in self.parsers:
             return ParseResult(file_path, language, errors=[f"No parser for {language}"], parse_time=time.time() - start)
-        
+
         try:
             ast_node = self.parsers[language](content, file_path)
             return ParseResult(file_path, language, ast=ast_node, parse_time=time.time() - start)
@@ -213,7 +211,7 @@ class ASTParser:
             ts_manager = TreeSitterManager.get_instance()
             if ts_manager.is_available(Language.PYTHON):
                 return self._parse_with_tree_sitter(content, file_path, Language.PYTHON)
-        
+
         try:
             tree = ast.parse(content)
         except SyntaxError as e:
@@ -225,7 +223,7 @@ class ASTParser:
                 value=str(e),
                 file_path=file_path,
             )
-        
+
         root = ASTNode(
             node_id=hashlib.md5(f"module:{file_path}".encode()).hexdigest()[:12],
             node_type="MODULE",
@@ -235,7 +233,7 @@ class ASTParser:
             line=1,
             column=0,
         )
-        
+
         self._convert_python_ast(tree, root, content, file_path)
         return root
 
@@ -244,10 +242,10 @@ class ASTParser:
         parser = ts_manager.get_parser(language)
         if not parser:
             return self._parse_python(content, file_path)
-        
+
         tree = parser.parse(bytes(content, 'utf8'))
         root_node = tree.root_node
-        
+
         root = ASTNode(
             node_id=hashlib.md5(f"module:{file_path}".encode()).hexdigest()[:12],
             node_type="MODULE",
@@ -257,7 +255,7 @@ class ASTParser:
             line=1,
             column=0,
         )
-        
+
         self._convert_tree_sitter_ast(root_node, root, content, file_path, language)
         return root
 
@@ -267,7 +265,7 @@ class ASTParser:
         start_col = ts_node.start_point[1]
         end_line = ts_node.end_point[0] + 1
         end_col = ts_node.end_point[1]
-        
+
         ast_node = ASTNode(
             node_id=hashlib.md5(f"{node_type}:{file_path}:{start_line}".encode()).hexdigest()[:12],
             node_type=node_type.upper(),
@@ -278,16 +276,16 @@ class ASTParser:
             end_line=end_line,
             end_column=end_col,
         )
-        
+
         if ts_node.child_count == 0:
             text = content[ts_node.start_byte:ts_node.end_byte]
             if text.strip():
                 ast_node.value = text
                 if node_type in ('identifier', 'function_name', 'class_name', 'variable_name'):
                     ast_node.name = text
-        
+
         parent.add_child(ast_node)
-        
+
         for child in ts_node.children:
             self._convert_tree_sitter_ast(child, ast_node, content, file_path, language)
 
@@ -303,7 +301,7 @@ class ASTParser:
             end_line=getattr(node, 'end_lineno', None),
             end_column=getattr(node, 'end_col_offset', None),
         )
-        
+
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             ast_node.name = node.name
         elif isinstance(node, ast.Name):
@@ -338,9 +336,9 @@ class ASTParser:
                     column=node.col_offset,
                 )
                 ast_node.add_child(child)
-        
+
         parent.add_child(ast_node)
-        
+
         for field_name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
                 self._convert_python_ast(value, ast_node, content, file_path)
@@ -386,7 +384,7 @@ class ASTParser:
 class PolyglotASTDriver:
     def __init__(self):
         self.parser = ASTParser()
-        self.ast_cache: Dict[str, ASTNode] = {}
+        self.ast_cache: dict[str, ASTNode] = {}
 
     def parse_file(self, file_path: str, language: Language = None) -> ParseResult:
         result = self.parser.parse_file(file_path, language)
@@ -394,20 +392,20 @@ class PolyglotASTDriver:
             self.ast_cache[file_path] = result.ast
         return result
 
-    def parse_directory(self, dir_path: str, extensions: List[str] = None) -> List[ParseResult]:
+    def parse_directory(self, dir_path: str, extensions: list[str] = None) -> list[ParseResult]:
         if extensions is None:
             extensions = ['.py', '.js', '.ts', '.java', '.go', '.rs', '.cpp', '.cs']
-        
+
         results = []
         for ext in extensions:
             for file_path in Path(dir_path).rglob(f'*{ext}'):
                 results.append(self.parse_file(str(file_path)))
         return results
 
-    def get_ast(self, file_path: str) -> Optional[ASTNode]:
+    def get_ast(self, file_path: str) -> ASTNode | None:
         return self.ast_cache.get(file_path)
 
-    def query_ast(self, file_path: str, query: Callable[[ASTNode], bool]) -> List[ASTNode]:
+    def query_ast(self, file_path: str, query: Callable[[ASTNode], bool]) -> list[ASTNode]:
         ast = self.get_ast(file_path)
         if not ast:
             result = self.parse_file(file_path)
@@ -415,32 +413,32 @@ class PolyglotASTDriver:
                 ast = result.ast
             else:
                 return []
-        
+
         results = []
         self._traverse(ast, query, results)
         return results
 
-    def _traverse(self, node: ASTNode, query: Callable, results: List[ASTNode]):
+    def _traverse(self, node: ASTNode, query: Callable, results: list[ASTNode]):
         if query(node):
             results.append(node)
         for child in node.children:
             self._traverse(child, query, results)
 
-    def find_functions(self, file_path: str) -> List[ASTNode]:
+    def find_functions(self, file_path: str) -> list[ASTNode]:
         return self.query_ast(file_path, lambda n: n.node_type == "FUNCTION")
 
-    def find_classes(self, file_path: str) -> List[ASTNode]:
+    def find_classes(self, file_path: str) -> list[ASTNode]:
         return self.query_ast(file_path, lambda n: n.node_type == "CLASS")
 
-    def find_imports(self, file_path: str) -> List[ASTNode]:
+    def find_imports(self, file_path: str) -> list[ASTNode]:
         return self.query_ast(file_path, lambda n: n.node_type == "IMPORT")
 
-    def find_calls(self, file_path: str, function_name: str = None) -> List[ASTNode]:
+    def find_calls(self, file_path: str, function_name: str = None) -> list[ASTNode]:
         if function_name:
             return self.query_ast(file_path, lambda n: n.node_type == "CALL" and n.name == function_name)
         return self.query_ast(file_path, lambda n: n.node_type == "CALL")
 
-    def get_dependencies(self, file_path: str) -> List[str]:
+    def get_dependencies(self, file_path: str) -> list[str]:
         imports = self.find_imports(file_path)
         deps = []
         for imp in imports:
@@ -450,24 +448,24 @@ class PolyglotASTDriver:
                 deps.append(imp.value)
         return deps
 
-    def get_call_graph(self, dir_path: str) -> Dict[str, List[str]]:
+    def get_call_graph(self, dir_path: str) -> dict[str, list[str]]:
         call_graph = defaultdict(list)
-        
+
         for file_path in Path(dir_path).rglob('*.py'):
             result = self.parse_file(str(file_path))
             if not result.ast:
                 continue
-            
+
             calls = self.query_ast(str(file_path), lambda n: n.node_type == "CALL")
             funcs = self.query_ast(str(file_path), lambda n: n.node_type == "FUNCTION")
-            
+
             current_func = None
             for call in calls:
                 if call.parent and call.parent.node_type == "FUNCTION":
                     current_func = call.parent.name
                     if call.name:
                         call_graph[f"{file_path}:{current_func}"].append(call.name)
-        
+
         return dict(call_graph)
 
 
@@ -475,14 +473,14 @@ class ASTTransformer:
     def __init__(self, driver: PolyglotASTDriver):
         self.driver = driver
 
-    def transform(self, file_path: str, transformer: Callable[[ASTNode], ASTNode]) -> Optional[ASTNode]:
+    def transform(self, file_path: str, transformer: Callable[[ASTNode], ASTNode]) -> ASTNode | None:
         ast = self.driver.get_ast(file_path)
         if not ast:
             result = self.driver.parse_file(file_path)
             if not result.ast:
                 return None
             ast = result.ast
-        
+
         return self._transform_node(ast, transformer)
 
     def _transform_node(self, node: ASTNode, transformer: Callable) -> ASTNode:
@@ -501,18 +499,18 @@ class ASTTransformer:
             if node.name == old_name and node.node_type in ("IDENTIFIER", "FUNCTION", "CLASS"):
                 node.name = new_name
             return node
-        
+
         new_ast = self.transform(file_path, transformer)
         if new_ast:
             self.driver.ast_cache[file_path] = new_ast
             return True
         return False
 
-    def extract_function(self, file_path: str, function_name: str) -> Optional[str]:
+    def extract_function(self, file_path: str, function_name: str) -> str | None:
         ast = self.driver.get_ast(file_path)
         if not ast:
             return None
-        
+
         for node in ast.children:
             if node.node_type == "FUNCTION" and node.name == function_name:
                 return self._node_to_code(node)
@@ -531,13 +529,13 @@ class ASTTransformer:
 class ASTIndexer:
     def __init__(self, driver: PolyglotASTDriver):
         self.driver = driver
-        self.index: Dict[str, List[Tuple[str, ASTNode]]] = defaultdict(list)
+        self.index: dict[str, list[tuple[str, ASTNode]]] = defaultdict(list)
 
     def index_file(self, file_path: str) -> int:
         result = self.driver.parse_file(file_path)
         if not result.ast:
             return 0
-        
+
         count = 0
         self._index_node(file_path, result.ast, count)
         return count
@@ -549,17 +547,17 @@ class ASTIndexer:
         for child in node.children:
             self._index_node(file_path, child, count)
 
-    def index_directory(self, dir_path: str, extensions: List[str] = None) -> int:
+    def index_directory(self, dir_path: str, extensions: list[str] = None) -> int:
         total = 0
         for ext in extensions or ['.py']:
             for file_path in Path(dir_path).rglob(f'*{ext}'):
                 total += self.index_file(str(file_path))
         return total
 
-    def lookup(self, name: str) -> List[Tuple[str, ASTNode]]:
+    def lookup(self, name: str) -> list[tuple[str, ASTNode]]:
         return self.index.get(name, [])
 
-    def find_definition(self, name: str, file_path: str = None) -> List[Tuple[str, ASTNode]]:
+    def find_definition(self, name: str, file_path: str = None) -> list[tuple[str, ASTNode]]:
         results = self.lookup(name)
         if file_path:
             results = [(fp, n) for fp, n in results if fp == file_path]

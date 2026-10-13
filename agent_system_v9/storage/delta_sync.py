@@ -1,15 +1,14 @@
 """
 Delta Sync - Efficient synchronization using deltas
 """
+import asyncio
 import hashlib
 import json
 import time
-import asyncio
-from typing import Dict, List, Optional, Any, Set, Tuple, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class DeltaType(Enum):
@@ -25,12 +24,12 @@ class Delta:
     delta_type: DeltaType
     base_version: str
     target_version: str
-    operations: List['DeltaOperation'] = field(default_factory=list)
+    operations: list['DeltaOperation'] = field(default_factory=list)
     checksum: str = ""
     created_at: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "delta_id": self.delta_id,
             "delta_type": self.delta_type.value,
@@ -43,7 +42,7 @@ class Delta:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Delta':
+    def from_dict(cls, data: dict[str, Any]) -> 'Delta':
         return cls(
             delta_id=data["delta_id"],
             delta_type=DeltaType(data["delta_type"]),
@@ -64,9 +63,9 @@ class DeltaOperation:
     new_value: Any = None
     offset: int = 0
     length: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "op_type": self.op_type,
             "path": self.path,
@@ -78,7 +77,7 @@ class DeltaOperation:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'DeltaOperation':
+    def from_dict(cls, data: dict[str, Any]) -> 'DeltaOperation':
         return cls(
             op_type=data["op_type"],
             path=data["path"],
@@ -95,8 +94,8 @@ class SyncState:
     version: str
     checksum: str
     last_synced: float = field(default_factory=time.time)
-    pending_deltas: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    pending_deltas: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class DeltaEncoder:
@@ -135,9 +134,9 @@ class DeltaGenerator:
         target_version: str = "",
     ) -> Delta:
         operations = self._diff(old_data, new_data, "")
-        
+
         delta_id = hashlib.sha256(f"{base_version}:{target_version}:{time.time()}".encode()).hexdigest()[:16]
-        
+
         if isinstance(old_data, bytes) and isinstance(new_data, bytes):
             delta_type = DeltaType.DIFF
             operations = self._binary_diff(old_data, new_data)
@@ -146,7 +145,7 @@ class DeltaGenerator:
             operations = []
         else:
             delta_type = DeltaType.INCREMENTAL
-        
+
         delta = Delta(
             delta_id=delta_id,
             delta_type=delta_type,
@@ -154,17 +153,17 @@ class DeltaGenerator:
             target_version=target_version,
             operations=operations,
         )
-        
+
         delta.checksum = self._compute_checksum(delta)
         return delta
 
-    def _diff(self, old: Any, new: Any, path: str) -> List[DeltaOperation]:
+    def _diff(self, old: Any, new: Any, path: str) -> list[DeltaOperation]:
         operations = []
-        
+
         if type(old) != type(new):
             operations.append(DeltaOperation("replace", path, old, new))
             return operations
-        
+
         if isinstance(old, dict):
             all_keys = set(old.keys()) | set(new.keys())
             for key in all_keys:
@@ -175,7 +174,7 @@ class DeltaGenerator:
                     operations.append(DeltaOperation("remove", new_path, old[key], None))
                 else:
                     operations.extend(self._diff(old[key], new[key], new_path))
-        
+
         elif isinstance(old, list):
             max_len = max(len(old), len(new))
             for i in range(max_len):
@@ -186,20 +185,20 @@ class DeltaGenerator:
                     operations.append(DeltaOperation("remove", new_path, old[i], None))
                 else:
                     operations.extend(self._diff(old[i], new[i], new_path))
-        
+
         elif old != new:
             operations.append(DeltaOperation("replace", path, old, new))
-        
+
         return operations
 
-    def _binary_diff(self, old: bytes, new: bytes) -> List[DeltaOperation]:
+    def _binary_diff(self, old: bytes, new: bytes) -> list[DeltaOperation]:
         operations = []
         old_len = len(old)
         new_len = len(new)
-        
+
         if old == new:
             return operations
-        
+
         i = 0
         while i < min(old_len, new_len):
             if old[i] != new[i]:
@@ -216,7 +215,7 @@ class DeltaGenerator:
                 ))
             else:
                 i += 1
-        
+
         if old_len > new_len:
             operations.append(DeltaOperation(
                 "remove_bytes",
@@ -235,7 +234,7 @@ class DeltaGenerator:
                 offset=old_len,
                 length=new_len - old_len,
             ))
-        
+
         return operations
 
     def _compute_checksum(self, delta: Delta) -> str:
@@ -253,10 +252,9 @@ class DeltaApplier:
     def apply(self, base_data: Any, delta: Delta) -> Any:
         if delta.delta_type == DeltaType.FULL:
             return delta.operations[0].new_value if delta.operations else base_data
-        elif delta.delta_type == DeltaType.DIFF and isinstance(base_data, bytes):
+        if delta.delta_type == DeltaType.DIFF and isinstance(base_data, bytes):
             return self._apply_binary(base_data, delta)
-        else:
-            return self._apply_json(base_data, delta)
+        return self._apply_json(base_data, delta)
 
     def _apply_json(self, base_data: Any, delta: Delta) -> Any:
         if isinstance(base_data, dict):
@@ -265,18 +263,18 @@ class DeltaApplier:
             result = list(base_data)
         else:
             result = base_data
-        
+
         for op in delta.operations:
             self._apply_operation(result, op)
-        
+
         return result
 
     def _apply_operation(self, data: Any, op: DeltaOperation):
         path_parts = op.path.split('.') if op.path else []
-        
+
         if not path_parts:
             return
-        
+
         current = data
         for i, part in enumerate(path_parts[:-1]):
             if part.endswith(']'):
@@ -285,7 +283,7 @@ class DeltaApplier:
                 current = current[idx]
             else:
                 current = current[part]
-        
+
         last_part = path_parts[-1]
         if last_part.endswith(']'):
             key = last_part[:-1].split('[')
@@ -296,17 +294,16 @@ class DeltaApplier:
                 current.pop(idx)
             elif op.op_type == "replace":
                 current[idx] = op.new_value
-        else:
-            if op.op_type == "add":
-                current[last_part] = op.new_value
-            elif op.op_type == "remove":
-                current.pop(last_part, None)
-            elif op.op_type == "replace":
-                current[last_part] = op.new_value
+        elif op.op_type == "add":
+            current[last_part] = op.new_value
+        elif op.op_type == "remove":
+            current.pop(last_part, None)
+        elif op.op_type == "replace":
+            current[last_part] = op.new_value
 
     def _apply_binary(self, base_data: bytes, delta: Delta) -> bytes:
         result = bytearray(base_data)
-        
+
         for op in sorted(delta.operations, key=lambda x: x.offset, reverse=True):
             if op.op_type == "replace_bytes":
                 start = op.offset
@@ -322,7 +319,7 @@ class DeltaApplier:
                 start = op.offset
                 if start <= len(result):
                     result[start:start] = op.new_value or b''
-        
+
         return bytes(result)
 
 
@@ -332,7 +329,7 @@ class SyncEngine:
         self.encoder = DeltaEncoder()
         self.generator = DeltaGenerator(self.encoder)
         self.applier = DeltaApplier()
-        self.sync_states: Dict[str, SyncState] = {}
+        self.sync_states: dict[str, SyncState] = {}
         self._lock = asyncio.Lock()
 
     async def sync(
@@ -340,10 +337,10 @@ class SyncEngine:
         key: str,
         local_data: Any,
         remote_version: str = None,
-    ) -> Tuple[Any, Optional[Delta]]:
+    ) -> tuple[Any, Delta | None]:
         async with self._lock:
             state = self.sync_states.get(key)
-            
+
             if state is None:
                 delta = self.generator.generate_delta(None, local_data, "", "1")
                 self.sync_states[key] = SyncState(
@@ -351,7 +348,7 @@ class SyncEngine:
                     checksum=delta.checksum,
                 )
                 return local_data, delta
-            
+
             if remote_version and remote_version != state.version:
                 delta = await self._fetch_delta(key, state.version, remote_version)
                 if delta:
@@ -359,23 +356,23 @@ class SyncEngine:
                     state.version = remote_version
                     state.checksum = delta.checksum
                     state.last_synced = time.time()
-            
+
             new_delta = self.generator.generate_delta(
                 state.checksum, local_data, state.version, str(int(state.version) + 1)
             )
-            
+
             if new_delta.operations:
                 state.version = new_delta.target_version
                 state.checksum = new_delta.checksum
                 state.last_synced = time.time()
                 return local_data, new_delta
-            
+
             return local_data, None
 
-    async def _fetch_delta(self, key: str, from_version: str, to_version: str) -> Optional[Delta]:
+    async def _fetch_delta(self, key: str, from_version: str, to_version: str) -> Delta | None:
         return None
 
-    def get_state(self, key: str) -> Optional[SyncState]:
+    def get_state(self, key: str) -> SyncState | None:
         return self.sync_states.get(key)
 
     def set_state(self, key: str, state: SyncState):
@@ -424,19 +421,19 @@ class AssetLifecycler:
         self.storage = storage
         self.max_versions = max_versions
         self.max_age = max_age
-        self.policies: Dict[str, Dict] = {}
+        self.policies: dict[str, dict] = {}
 
-    def set_policy(self, collection: str, policy: Dict):
+    def set_policy(self, collection: str, policy: dict):
         self.policies[collection] = policy
 
-    async def lifecycle(self, collection: str) -> Dict[str, int]:
+    async def lifecycle(self, collection: str) -> dict[str, int]:
         policy = self.policies.get(collection, {})
         max_versions = policy.get('max_versions', self.max_versions)
         max_age = policy.get('max_age', self.max_age)
-        
+
         deleted = 0
         archived = 0
-        
+
         return {"deleted": deleted, "archived": archived}
 
     async def prune_old_versions(self, key: str, keep: int = 5) -> int:
@@ -446,9 +443,9 @@ class AssetLifecycler:
 class BuildLedger:
     def __init__(self, storage: Any):
         self.storage = storage
-        self.entries: List[Dict[str, Any]] = []
+        self.entries: list[dict[str, Any]] = []
 
-    def record_build(self, build_info: Dict[str, Any]):
+    def record_build(self, build_info: dict[str, Any]):
         entry = {
             "build_id": hashlib.sha256(f"{build_info}:{time.time()}".encode()).hexdigest()[:16],
             "timestamp": time.time(),
@@ -458,11 +455,11 @@ class BuildLedger:
         if len(self.entries) > 10000:
             self.entries = self.entries[-10000:]
 
-    def get_build_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_build_history(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.entries[-limit:]
 
-    def get_latest_build(self) -> Optional[Dict[str, Any]]:
+    def get_latest_build(self) -> dict[str, Any] | None:
         return self.entries[-1] if self.entries else None
 
-    def query_builds(self, filter_fn: Callable) -> List[Dict[str, Any]]:
+    def query_builds(self, filter_fn: Callable) -> list[dict[str, Any]]:
         return [e for e in self.entries if filter_fn(e)]

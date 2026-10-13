@@ -2,13 +2,12 @@
 Polyglot AST Generator - Language-agnostic AST representation
 """
 import ast
-import json
 import hashlib
-from typing import Dict, List, Optional, Any, Set, Union, Callable
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any, Optional
 
 
 class Language(Enum):
@@ -74,10 +73,10 @@ class SourceLocation:
     file_path: str
     line: int
     column: int
-    end_line: Optional[int] = None
-    end_column: Optional[int] = None
+    end_line: int | None = None
+    end_column: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "file_path": self.file_path,
             "line": self.line,
@@ -92,21 +91,21 @@ class PolyglotNode:
     node_id: str
     node_type: NodeType
     language: Language
-    name: Optional[str] = None
-    value: Optional[Any] = None
-    location: Optional[SourceLocation] = None
-    children: List['PolyglotNode'] = field(default_factory=list)
+    name: str | None = None
+    value: Any | None = None
+    location: SourceLocation | None = None
+    children: list['PolyglotNode'] = field(default_factory=list)
     parent: Optional['PolyglotNode'] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    annotations: List[str] = field(default_factory=list)
-    type_annotation: Optional[str] = None
-    docstring: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    annotations: list[str] = field(default_factory=list)
+    type_annotation: str | None = None
+    docstring: str | None = None
 
     def add_child(self, child: 'PolyglotNode'):
         child.parent = self
         self.children.append(child)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "node_id": self.node_id,
             "node_type": self.node_type.value,
@@ -122,7 +121,7 @@ class PolyglotNode:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PolyglotNode':
+    def from_dict(cls, data: dict[str, Any]) -> 'PolyglotNode':
         node = cls(
             node_id=data["node_id"],
             node_type=NodeType(data["node_type"]),
@@ -143,7 +142,7 @@ class PolyglotNode:
 
 class PolyglotASTGenerator:
     def __init__(self):
-        self.parsers: Dict[Language, Callable] = {}
+        self.parsers: dict[Language, Callable] = {}
         self._register_default_parsers()
 
     def _register_default_parsers(self):
@@ -157,10 +156,10 @@ class PolyglotASTGenerator:
             raise ValueError(f"No parser for language: {language}")
         return self.parsers[language](code, file_path)
 
-    def parse_file(self, file_path: str, language: Optional[Language] = None) -> PolyglotNode:
+    def parse_file(self, file_path: str, language: Language | None = None) -> PolyglotNode:
         if language is None:
             language = self._detect_language(file_path)
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        with Path(file_path).open(encoding='utf-8', errors='ignore') as f:
             code = f.read()
         return self.parse(code, language, file_path)
 
@@ -338,16 +337,17 @@ class PolyglotASTGenerator:
 
 import time
 
+
 class ASTDiffer:
     def __init__(self, generator: PolyglotASTGenerator):
         self.generator = generator
 
-    def diff(self, old_code: str, new_code: str, language: Language, file_path: str = "<string>") -> Dict[str, Any]:
+    def diff(self, old_code: str, new_code: str, language: Language, file_path: str = "<string>") -> dict[str, Any]:
         old_ast = self.generator.parse(old_code, language, file_path)
         new_ast = self.generator.parse(new_code, language, file_path)
         return self._diff_nodes(old_ast, new_ast)
 
-    def _diff_nodes(self, old: PolyglotNode, new: PolyglotNode) -> Dict[str, Any]:
+    def _diff_nodes(self, old: PolyglotNode, new: PolyglotNode) -> dict[str, Any]:
         changes = {
             "added": [],
             "removed": [],

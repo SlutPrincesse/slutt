@@ -2,14 +2,14 @@
 DAG Scheduler - Directed Acyclic Graph task scheduler
 """
 import asyncio
-import uuid
 import time
-import threading
-from typing import Dict, List, Optional, Any, Set, Callable, Awaitable
+import uuid
+from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict, deque
-from heapq import heappush, heappop
+from heapq import heappop, heappush
+from typing import Any
 
 
 class TaskStatus(Enum):
@@ -35,18 +35,18 @@ class Task:
     name: str
     func: Callable
     args: tuple = field(default_factory=tuple)
-    kwargs: Dict[str, Any] = field(default_factory=dict)
-    dependencies: List[str] = field(default_factory=list)
+    kwargs: dict[str, Any] = field(default_factory=dict)
+    dependencies: list[str] = field(default_factory=list)
     priority: TaskPriority = TaskPriority.NORMAL
-    timeout: Optional[float] = None
+    timeout: float | None = None
     retries: int = 0
     max_retries: int = 3
     status: TaskStatus = TaskStatus.PENDING
     result: Any = None
-    error: Optional[str] = None
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    started_at: float | None = None
+    completed_at: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __lt__(self, other):
         return self.priority.value > other.priority.value
@@ -56,10 +56,10 @@ class Task:
 class DAG:
     dag_id: str
     name: str
-    tasks: Dict[str, Task] = field(default_factory=dict)
-    edges: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
-    reverse_edges: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    tasks: dict[str, Task] = field(default_factory=dict)
+    edges: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    reverse_edges: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_task(self, task: Task):
         self.tasks[task.task_id] = task
@@ -68,13 +68,13 @@ class DAG:
         self.edges[from_task].add(to_task)
         self.reverse_edges[to_task].add(from_task)
 
-    def get_dependencies(self, task_id: str) -> Set[str]:
+    def get_dependencies(self, task_id: str) -> set[str]:
         return self.reverse_edges.get(task_id, set())
 
-    def get_dependents(self, task_id: str) -> Set[str]:
+    def get_dependents(self, task_id: str) -> set[str]:
         return self.edges.get(task_id, set())
 
-    def topological_sort(self) -> List[str]:
+    def topological_sort(self) -> list[str]:
         in_degree = {task_id: len(self.get_dependencies(task_id)) for task_id in self.tasks}
         queue = deque([tid for tid, deg in in_degree.items() if deg == 0])
         result = []
@@ -89,10 +89,10 @@ class DAG:
 
         if len(result) != len(self.tasks):
             raise ValueError("DAG contains cycles")
-        
+
         return result
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         errors = []
         for task_id, task in self.tasks.items():
             for dep in task.dependencies:
@@ -111,14 +111,14 @@ class DAGScheduler:
         self.max_concurrent = max_concurrent
         self.default_timeout = default_timeout
         self.enable_priority = enable_priority
-        self.dags: Dict[str, DAG] = {}
-        self.running_tasks: Dict[str, asyncio.Task] = {}
-        self.completed_tasks: Dict[str, Task] = {}
+        self.dags: dict[str, DAG] = {}
+        self.running_tasks: dict[str, asyncio.Task] = {}
+        self.completed_tasks: dict[str, Task] = {}
         self._lock = asyncio.Lock()
         self._running = False
-        self._semaphore: Optional[asyncio.Semaphore] = None
-        self._task_queue: List[Task] = []
-        _callbacks: List[Callable] = []
+        self._semaphore: asyncio.Semaphore | None = None
+        self._task_queue: list[Task] = []
+        _callbacks: list[Callable] = []
 
     async def start(self):
         self._running = True
@@ -161,7 +161,7 @@ class DAGScheduler:
         async with self._semaphore:
             task.status = TaskStatus.RUNNING
             task.started_at = time.time()
-            
+
             try:
                 if asyncio.iscoroutinefunction(task.func):
                     if task.timeout:
@@ -173,7 +173,7 @@ class DAGScheduler:
                         task.result = await task.func(*task.args, **task.kwargs)
                 else:
                     task.result = task.func(*task.args, **task.kwargs)
-                
+
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = time.time()
             except asyncio.TimeoutError:
@@ -182,10 +182,10 @@ class DAGScheduler:
             except Exception as e:
                 task.error = str(e)
                 await self._handle_failure(task)
-            
+
             self.completed_tasks[task.task_id] = task
             await self._notify_callbacks(task)
-            
+
             dag = self._find_dag_for_task(task.task_id)
             if dag:
                 await self._check_dependents(dag, task)
@@ -212,7 +212,7 @@ class DAGScheduler:
                     dependent.status = TaskStatus.READY
                     heappush(self._task_queue, dependent)
 
-    def _find_dag_for_task(self, task_id: str) -> Optional[DAG]:
+    def _find_dag_for_task(self, task_id: str) -> DAG | None:
         for dag in self.dags.values():
             if task_id in dag.tasks:
                 return dag
@@ -231,7 +231,7 @@ class DAGScheduler:
             except Exception:
                 pass
 
-    def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
+    def get_task_status(self, task_id: str) -> TaskStatus | None:
         for dag in self.dags.values():
             if task_id in dag.tasks:
                 return dag.tasks[task_id].status
@@ -239,7 +239,7 @@ class DAGScheduler:
             return self.completed_tasks[task_id].status
         return None
 
-    def get_dag_status(self, dag_id: str) -> Dict[str, Any]:
+    def get_dag_status(self, dag_id: str) -> dict[str, Any]:
         dag = self.dags.get(dag_id)
         if not dag:
             return {}
@@ -259,7 +259,7 @@ class DAGScheduler:
             ),
         }
 
-    def get_results(self, dag_id: str) -> Dict[str, Any]:
+    def get_results(self, dag_id: str) -> dict[str, Any]:
         dag = self.dags.get(dag_id)
         if not dag:
             return {}
@@ -288,7 +288,7 @@ class DAGScheduler:
 class DynamicDAGBuilder:
     def __init__(self, scheduler: DAGScheduler):
         self.scheduler = scheduler
-        self.current_dag: Optional[DAG] = None
+        self.current_dag: DAG | None = None
 
     def new_dag(self, name: str) -> 'DynamicDAGBuilder':
         self.current_dag = DAG(dag_id=str(uuid.uuid4()), name=name)
@@ -299,15 +299,15 @@ class DynamicDAGBuilder:
         name: str,
         func: Callable,
         args: tuple = (),
-        kwargs: Dict = None,
-        dependencies: List[str] = None,
+        kwargs: dict = None,
+        dependencies: list[str] = None,
         priority: TaskPriority = TaskPriority.NORMAL,
         timeout: float = None,
         max_retries: int = 3,
     ) -> 'DynamicDAGBuilder':
         if not self.current_dag:
             raise ValueError("No DAG started")
-        
+
         task = Task(
             task_id=str(uuid.uuid4()),
             name=name,
@@ -319,12 +319,12 @@ class DynamicDAGBuilder:
             timeout=timeout,
             max_retries=max_retries,
         )
-        
+
         self.current_dag.add_task(task)
-        
+
         for dep_id in task.dependencies:
             self.current_dag.add_edge(dep_id, task.task_id)
-        
+
         return self
 
     def build(self) -> DAG:
@@ -342,15 +342,15 @@ class DynamicDAGBuilder:
 class WorkflowEngine:
     def __init__(self, scheduler: DAGScheduler):
         self.scheduler = scheduler
-        self.workflows: Dict[str, Dict] = {}
+        self.workflows: dict[str, dict] = {}
 
-    def define_workflow(self, name: str, steps: List[Dict]) -> str:
+    def define_workflow(self, name: str, steps: list[dict]) -> str:
         builder = DynamicDAGBuilder(self.scheduler).new_dag(name)
-        
+
         task_ids = {}
         for step in steps:
             task_ids[step["name"]] = str(uuid.uuid4())
-        
+
         for step in steps:
             task_id = task_ids[step["name"]]
             deps = [task_ids[dep] for dep in step.get("depends_on", [])]
@@ -364,9 +364,9 @@ class WorkflowEngine:
                 timeout=step.get("timeout"),
                 max_retries=step.get("max_retries", 3),
             )
-        
+
         return builder.build_and_submit()
 
-    def execute_workflow(self, workflow_id: str, inputs: Dict[str, Any] = None) -> Dict[str, Any]:
+    def execute_workflow(self, workflow_id: str, inputs: dict[str, Any] = None) -> dict[str, Any]:
         # Execute synchronously for simple cases
         pass

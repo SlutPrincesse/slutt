@@ -5,11 +5,12 @@ import asyncio
 import hashlib
 import time
 import uuid
-from typing import Dict, List, Optional, Any, Callable, Awaitable, Set
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from abc import ABC, abstractmethod
+from typing import Any
 
 
 class DeduplicationStrategy(Enum):
@@ -23,7 +24,7 @@ class DeduplicationStrategy(Enum):
 class ProcessingResult:
     success: bool
     result: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     processed_at: float = field(default_factory=time.time)
     deduplicated: bool = False
 
@@ -32,9 +33,9 @@ class ProcessingResult:
 class IdempotencyKey:
     key: str
     created_at: float = field(default_factory=time.time)
-    expires_at: Optional[float] = None
-    result: Optional[ProcessingResult] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    expires_at: float | None = None
+    result: ProcessingResult | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def is_expired(self) -> bool:
         if self.expires_at is None:
@@ -44,7 +45,7 @@ class IdempotencyKey:
 
 class DeduplicationStore(ABC):
     @abstractmethod
-    async def get(self, key: str) -> Optional[IdempotencyKey]:
+    async def get(self, key: str) -> IdempotencyKey | None:
         pass
 
     @abstractmethod
@@ -64,11 +65,11 @@ class InMemoryDeduplicationStore(DeduplicationStore):
     def __init__(self, max_size: int = 10000, default_ttl: float = 3600):
         self.max_size = max_size
         self.default_ttl = default_ttl
-        self.store: Dict[str, IdempotencyKey] = {}
+        self.store: dict[str, IdempotencyKey] = {}
         self._lock = asyncio.Lock()
-        self._access_order: List[str] = []
+        self._access_order: list[str] = []
 
-    async def get(self, key: str) -> Optional[IdempotencyKey]:
+    async def get(self, key: str) -> IdempotencyKey | None:
         async with self._lock:
             item = self.store.get(key)
             if item and item.is_expired():
@@ -86,10 +87,10 @@ class InMemoryDeduplicationStore(DeduplicationStore):
             if len(self.store) >= self.max_size and item.key not in self.store:
                 oldest = self._access_order.pop(0)
                 self.store.pop(oldest, None)
-            
+
             if item.expires_at is None:
                 item.expires_at = time.time() + self.default_ttl
-            
+
             self.store[item.key] = item
             if item.key in self._access_order:
                 self._access_order.remove(item.key)
@@ -129,7 +130,7 @@ class RedisDeduplicationStore(DeduplicationStore):
         except ImportError:
             raise RuntimeError("redis not installed")
 
-    async def get(self, key: str) -> Optional[IdempotencyKey]:
+    async def get(self, key: str) -> IdempotencyKey | None:
         if not self._redis:
             await self.connect()
         data = await self._redis.get(f"{self.prefix}{key}")
@@ -159,11 +160,11 @@ class IdempotentConsumer:
     def __init__(
         self,
         store: DeduplicationStore,
-        key_generator: Optional[Callable] = None,
+        key_generator: Callable | None = None,
     ):
         self.store = store
         self.key_generator = key_generator or self._default_key_generator
-        self._processing: Dict[str, asyncio.Future] = {}
+        self._processing: dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
 
     def _default_key_generator(self, message: Any) -> str:
@@ -178,7 +179,7 @@ class IdempotentConsumer:
         ttl: float = 3600,
     ) -> ProcessingResult:
         key = self.key_generator(message)
-        
+
         existing = await self.store.get(key)
         if existing and existing.result:
             return ProcessingResult(
@@ -244,12 +245,12 @@ class ExactlyOnceProcessor:
     def __init__(
         self,
         store: DeduplicationStore,
-        key_generator: Optional[Callable] = None,
+        key_generator: Callable | None = None,
     ):
         self.consumer = IdempotentConsumer(store, key_generator)
-        self._handlers: Dict[str, Callable] = {}
+        self._handlers: dict[str, Callable] = {}
         self._running = False
-        self._tasks: List[asyncio.Task] = []
+        self._tasks: list[asyncio.Task] = []
 
     def register_handler(self, topic: str, handler: Callable):
         self._handlers[topic] = handler
@@ -267,7 +268,7 @@ class ExactlyOnceProcessor:
         handler = self._handlers.get(topic)
         if not handler:
             return ProcessingResult(success=False, error=f"No handler for topic: {topic}")
-        
+
         return await self.consumer.process_with_retry(message, handler, **kwargs)
 
 
@@ -275,7 +276,7 @@ class MessageDeduplicator:
     def __init__(
         self,
         store: DeduplicationStore,
-        key_extractor: Optional[Callable] = None,
+        key_extractor: Callable | None = None,
     ):
         self.store = store
         self.key_extractor = key_extractor or (lambda m: m.get("id", str(uuid.uuid4())))
@@ -294,7 +295,7 @@ class MessageDeduplicator:
         )
         return await self.store.set(item)
 
-    async def filter_batch(self, messages: List[Any]) -> List[Any]:
+    async def filter_batch(self, messages: list[Any]) -> list[Any]:
         unique = []
         for msg in messages:
             if not await self.is_duplicate(msg):
@@ -310,7 +311,7 @@ class TransactionalOutbox:
     ):
         self.store = store
         self.publisher = publisher
-        self.outbox: Dict[str, Dict[str, Any]] = {}
+        self.outbox: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
     async def save(self, topic: str, message: Any, key: str = None) -> str:
@@ -352,18 +353,18 @@ class DistributedLock:
     def __init__(self, store: DeduplicationStore, lock_ttl: float = 30.0):
         self.store = store
         self.lock_ttl = lock_ttl
-        self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def acquire(self, resource: str, owner: str = None) -> bool:
         owner = owner or str(uuid.uuid4())
         key = f"lock:{resource}:{owner}"
-        
+
         item = IdempotencyKey(
             key=key,
             expires_at=time.time() + self.lock_ttl,
             metadata={"resource": resource, "owner": owner},
         )
-        
+
         return await self.store.set(item)
 
     async def release(self, resource: str, owner: str = None):
@@ -374,7 +375,7 @@ class DistributedLock:
     async def extend(self, resource: str, owner: str = None, additional_ttl: float = 30.0) -> bool:
         owner = owner or str(uuid.uuid4())
         key = f"lock:{resource}:{owner}"
-        
+
         existing = await self.store.get(key)
         if existing:
             existing.expires_at = time.time() + additional_ttl

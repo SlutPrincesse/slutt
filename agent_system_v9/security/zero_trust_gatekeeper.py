@@ -1,15 +1,15 @@
 """
 Zero-Trust Gatekeeper - Continuous security policy enforcement
 """
-import hashlib
-import time
+import json
+import pathlib
 import threading
-from typing import Dict, List, Optional, Any, Set, Callable
-from dataclasses import dataclass, field
-from enum import Enum
+import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
-import json
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 
 class PolicyDecision(Enum):
@@ -36,9 +36,9 @@ class ExecutionContext:
     session_id: str
     resource_type: ResourceType
     resource_path: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
-    caller_stack: List[str] = field(default_factory=list)
+    caller_stack: list[str] = field(default_factory=list)
     trust_score: float = 1.0
 
 
@@ -46,13 +46,13 @@ class ExecutionContext:
 class PolicyRule:
     rule_id: str
     name: str
-    resource_types: Set[ResourceType]
-    conditions: Dict[str, Any]
+    resource_types: set[ResourceType]
+    conditions: dict[str, Any]
     decision: PolicyDecision
     priority: int = 0
-    requires_approval_from: List[str] = field(default_factory=list)
-    expires_at: Optional[float] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    requires_approval_from: list[str] = field(default_factory=list)
+    expires_at: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def matches(self, context: ExecutionContext) -> bool:
         if context.resource_type not in self.resource_types:
@@ -70,33 +70,33 @@ class PolicyRule:
 class PolicyDecisionRecord:
     context: ExecutionContext
     decision: PolicyDecision
-    matched_rules: List[PolicyRule]
-    approved_by: Optional[str] = None
-    approval_timestamp: Optional[float] = None
+    matched_rules: list[PolicyRule]
+    approved_by: str | None = None
+    approval_timestamp: float | None = None
     timestamp: float = field(default_factory=time.time)
 
 
 class ApprovalCallback(ABC):
     @abstractmethod
-    def request_approval(self, context: ExecutionContext, rules: List[PolicyRule]) -> PolicyDecision:
+    def request_approval(self, context: ExecutionContext, rules: list[PolicyRule]) -> PolicyDecision:
         pass
 
 
 class DefaultApprovalCallback(ApprovalCallback):
     def __init__(self, auto_approve: bool = False):
         self.auto_approve = auto_approve
-        self.pending_approvals: Dict[str, PolicyDecision] = {}
+        self.pending_approvals: dict[str, PolicyDecision] = {}
 
-    def request_approval(self, context: ExecutionContext, rules: List[PolicyRule]) -> PolicyDecision:
+    def request_approval(self, context: ExecutionContext, rules: list[PolicyRule]) -> PolicyDecision:
         if self.auto_approve:
             return PolicyDecision.ALLOW
         return PolicyDecision.DENY
 
 
 class AuditLogger:
-    def __init__(self, log_path: Optional[str] = None):
+    def __init__(self, log_path: str | None = None):
         self.log_path = log_path
-        self.records: List[PolicyDecisionRecord] = []
+        self.records: list[PolicyDecisionRecord] = []
         self._lock = threading.Lock()
 
     def log(self, record: PolicyDecisionRecord):
@@ -107,7 +107,7 @@ class AuditLogger:
 
     def _write_to_file(self, record: PolicyDecisionRecord):
         try:
-            with open(self.log_path, 'a') as f:
+            with pathlib.Path(self.log_path).open('a') as f:
                 f.write(json.dumps({
                     "timestamp": record.timestamp,
                     "actor_id": record.context.actor_id,
@@ -121,7 +121,7 @@ class AuditLogger:
         except Exception:
             pass
 
-    def get_recent(self, limit: int = 100) -> List[PolicyDecisionRecord]:
+    def get_recent(self, limit: int = 100) -> list[PolicyDecisionRecord]:
         with self._lock:
             return self.records[-limit:]
 
@@ -139,7 +139,7 @@ class MetricsCollector:
         with self._lock:
             return self.counters.get(key, 0)
 
-    def get_all(self) -> Dict[str, int]:
+    def get_all(self) -> dict[str, int]:
         with self._lock:
             return dict(self.counters)
 
@@ -147,7 +147,7 @@ class MetricsCollector:
 class PolicyBuilder:
     def __init__(self, gatekeeper: 'ZeroTrustGatekeeper'):
         self.gatekeeper = gatekeeper
-        self.current_rule: Optional[PolicyRule] = None
+        self.current_rule: PolicyRule | None = None
 
     def new_rule(self, rule_id: str, name: str) -> 'PolicyBuilder':
         self.current_rule = PolicyRule(
@@ -179,7 +179,7 @@ class PolicyBuilder:
             self.current_rule.decision = PolicyDecision.DENY
         return self
 
-    def require_approval(self, approvers: List[str] = None) -> 'PolicyBuilder':
+    def require_approval(self, approvers: list[str] = None) -> 'PolicyBuilder':
         if self.current_rule:
             self.current_rule.decision = PolicyDecision.REQUIRE_APPROVAL
             self.current_rule.requires_approval_from = approvers or []
@@ -212,11 +212,11 @@ class PolicyBuilder:
 class ZeroTrustGatekeeper:
     def __init__(
         self,
-        approval_callback: Optional[ApprovalCallback] = None,
-        audit_log_path: Optional[str] = None,
+        approval_callback: ApprovalCallback | None = None,
+        audit_log_path: str | None = None,
         default_decision: PolicyDecision = PolicyDecision.DENY,
     ):
-        self.rules: List[PolicyRule] = []
+        self.rules: list[PolicyRule] = []
         self.approval_callback = approval_callback or DefaultApprovalCallback()
         self.audit_logger = AuditLogger(audit_log_path)
         self.metrics = MetricsCollector()
@@ -226,31 +226,31 @@ class ZeroTrustGatekeeper:
 
     def _initialize_default_policies(self):
         builder = PolicyBuilder(self)
-        
+
         builder.new_rule("default-file-read", "Default File Read") \
             .for_resources(ResourceType.FILE_READ) \
             .allow() \
             .with_priority(-100) \
             .build()
-        
+
         builder.new_rule("default-file-write", "Default File Write") \
             .for_resources(ResourceType.FILE_WRITE) \
             .require_approval() \
             .with_priority(-100) \
             .build()
-        
+
         builder.new_rule("default-network-outbound", "Default Network Outbound") \
             .for_resources(ResourceType.NETWORK_OUTBOUND) \
             .require_approval() \
             .with_priority(-100) \
             .build()
-        
+
         builder.new_rule("default-process-exec", "Default Process Execution") \
             .for_resources(ResourceType.PROCESS_EXEC) \
             .deny() \
             .with_priority(-100) \
             .build()
-        
+
         builder.new_rule("default-secret-access", "Default Secret Access") \
             .for_resources(ResourceType.SECRET_ACCESS) \
             .deny() \
@@ -283,7 +283,7 @@ class ZeroTrustGatekeeper:
             highest_priority = max(r.priority for r in matched_rules)
             top_rules = [r for r in matched_rules if r.priority == highest_priority]
             decisions = [r.decision for r in top_rules]
-            
+
             if PolicyDecision.DENY in decisions:
                 decision = PolicyDecision.DENY
             elif PolicyDecision.QUARANTINE in decisions:
@@ -298,7 +298,7 @@ class ZeroTrustGatekeeper:
             for r in matched_rules:
                 if r.decision == PolicyDecision.REQUIRE_APPROVAL:
                     approvers.update(r.requires_approval_from)
-            
+
             if approvers:
                 decision = self.approval_callback.request_approval(context, matched_rules)
 
@@ -307,11 +307,11 @@ class ZeroTrustGatekeeper:
             decision=decision,
             matched_rules=matched_rules,
         )
-        
+
         self.audit_logger.log(record)
         self.metrics.increment(f"decision.{decision.value}")
         self.metrics.increment("total_checks")
-        
+
         return record
 
     def authorize(
@@ -335,12 +335,12 @@ class ZeroTrustGatekeeper:
     def get_policy_builder(self) -> PolicyBuilder:
         return PolicyBuilder(self)
 
-    def get_audit_log(self, limit: int = 100) -> List[PolicyDecisionRecord]:
+    def get_audit_log(self, limit: int = 100) -> list[PolicyDecisionRecord]:
         return self.audit_logger.get_recent(limit)
 
-    def get_metrics(self) -> Dict[str, int]:
+    def get_metrics(self) -> dict[str, int]:
         return self.metrics.get_all()
 
-    def list_rules(self) -> List[PolicyRule]:
+    def list_rules(self) -> list[PolicyRule]:
         with self._lock:
             return list(self.rules)

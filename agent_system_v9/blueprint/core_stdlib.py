@@ -2,12 +2,10 @@
 Core StdLib - Language-agnostic standard library definitions
 """
 import json
-import hashlib
-from typing import Dict, List, Optional, Any, Set, Union, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class StdLibCategory(Enum):
@@ -48,15 +46,15 @@ class StdLibFunction:
     category: StdLibCategory
     signature: str
     description: str
-    parameters: List[Dict[str, Any]] = field(default_factory=list)
+    parameters: list[dict[str, Any]] = field(default_factory=list)
     return_type: str = "any"
-    exceptions: List[str] = field(default_factory=list)
-    examples: List[str] = field(default_factory=list)
+    exceptions: list[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
     since_version: str = ""
     deprecated: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "category": self.category.value,
@@ -72,7 +70,7 @@ class StdLibFunction:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'StdLibFunction':
+    def from_dict(cls, data: dict[str, Any]) -> 'StdLibFunction':
         return cls(
             name=data["name"],
             category=StdLibCategory(data["category"]),
@@ -93,14 +91,14 @@ class StdLibModule:
     name: str
     language: Language
     category: StdLibCategory
-    functions: List[StdLibFunction] = field(default_factory=list)
-    constants: Dict[str, Any] = field(default_factory=dict)
-    classes: List[Dict[str, Any]] = field(default_factory=list)
+    functions: list[StdLibFunction] = field(default_factory=list)
+    constants: dict[str, Any] = field(default_factory=dict)
+    classes: list[dict[str, Any]] = field(default_factory=list)
     version: str = ""
     description: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "language": self.language.value,
@@ -114,7 +112,7 @@ class StdLibModule:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'StdLibModule':
+    def from_dict(cls, data: dict[str, Any]) -> 'StdLibModule':
         return cls(
             name=data["name"],
             language=Language(data["language"]),
@@ -131,12 +129,12 @@ class StdLibModule:
 @dataclass
 class StdLibMapping:
     canonical_name: str
-    language_mappings: Dict[Language, str] = field(default_factory=dict)
+    language_mappings: dict[Language, str] = field(default_factory=dict)
     category: StdLibCategory = StdLibCategory.CORE
     description: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "canonical_name": self.canonical_name,
             "language_mappings": {k.value: v for k, v in self.language_mappings.items()},
@@ -146,7 +144,7 @@ class StdLibMapping:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'StdLibMapping':
+    def from_dict(cls, data: dict[str, Any]) -> 'StdLibMapping':
         return cls(
             canonical_name=data["canonical_name"],
             language_mappings={Language(k): v for k, v in data.get("language_mappings", {}).items()},
@@ -158,8 +156,8 @@ class StdLibMapping:
 
 class CoreStdLib:
     def __init__(self):
-        self.modules: Dict[str, StdLibModule] = {}
-        self.mappings: Dict[str, StdLibMapping] = {}
+        self.modules: dict[str, StdLibModule] = {}
+        self.mappings: dict[str, StdLibMapping] = {}
         self._init_core_mappings()
         self._init_python_stdlib()
 
@@ -179,7 +177,7 @@ class CoreStdLib:
                 Language.SWIFT: "print",
                 Language.KOTLIN: "println",
             }, StdLibCategory.CORE, "Output to stdout"),
-            
+
             StdLibMapping("read_file", {
                 Language.PYTHON: "open().read()",
                 Language.JAVASCRIPT: "fs.readFileSync",
@@ -194,7 +192,7 @@ class CoreStdLib:
                 Language.SWIFT: "String(contentsOfFile:)",
                 Language.KOTLIN: "File.readText",
             }, StdLibCategory.IO, "Read entire file as string"),
-            
+
             StdLibMapping("write_file", {
                 Language.PYTHON: "open().write()",
                 Language.JAVASCRIPT: "fs.writeFileSync",
@@ -209,7 +207,7 @@ class CoreStdLib:
                 Language.SWIFT: "write(toFile:)",
                 Language.KOTLIN: "File.writeText",
             }, StdLibCategory.IO, "Write string to file"),
-            
+
             StdLibMapping("http_get", {
                 Language.PYTHON: "requests.get",
                 Language.JAVASCRIPT: "fetch",
@@ -224,7 +222,7 @@ class CoreStdLib:
                 Language.SWIFT: "URLSession.dataTask",
                 Language.KOTLIN: "HttpClient.get",
             }, StdLibCategory.NETWORK, "HTTP GET request"),
-            
+
             StdLibMapping("json_parse", {
                 Language.PYTHON: "json.loads",
                 Language.JAVASCRIPT: "JSON.parse",
@@ -239,7 +237,7 @@ class CoreStdLib:
                 Language.SWIFT: "JSONSerialization.jsonObject",
                 Language.KOTLIN: "JSON.parse / kotlinx.serialization",
             }, StdLibCategory.SERIALIZATION, "Parse JSON string"),
-            
+
             StdLibMapping("json_stringify", {
                 Language.PYTHON: "json.dumps",
                 Language.JAVASCRIPT: "JSON.stringify",
@@ -254,7 +252,7 @@ class CoreStdLib:
                 Language.SWIFT: "JSONSerialization.data",
                 Language.KOTLIN: "JSON.stringify / kotlinx.serialization",
             }, StdLibCategory.SERIALIZATION, "Serialize to JSON string"),
-            
+
             StdLibMapping("hash_sha256", {
                 Language.PYTHON: "hashlib.sha256",
                 Language.JAVASCRIPT: "crypto.subtle.digest",
@@ -269,7 +267,7 @@ class CoreStdLib:
                 Language.SWIFT: "CryptoKit.SHA256",
                 Language.KOTLIN: "MessageDigest.getInstance('SHA-256')",
             }, StdLibCategory.CRYPTO, "SHA-256 hash"),
-            
+
             StdLibMapping("uuid_generate", {
                 Language.PYTHON: "uuid.uuid4",
                 Language.JAVASCRIPT: "crypto.randomUUID",
@@ -284,7 +282,7 @@ class CoreStdLib:
                 Language.SWIFT: "UUID().uuidString",
                 Language.KOTLIN: "UUID.randomUUID",
             }, StdLibCategory.CORE, "Generate UUID v4"),
-            
+
             StdLibMapping("sleep", {
                 Language.PYTHON: "time.sleep",
                 Language.JAVASCRIPT: "setTimeout / await new Promise",
@@ -299,7 +297,7 @@ class CoreStdLib:
                 Language.SWIFT: "Thread.sleep / Task.sleep",
                 Language.KOTLIN: "Thread.sleep / delay",
             }, StdLibCategory.CONCURRENCY, "Sleep current thread"),
-            
+
             StdLibMapping("now_timestamp", {
                 Language.PYTHON: "time.time()",
                 Language.JAVASCRIPT: "Date.now()",
@@ -333,27 +331,27 @@ class CoreStdLib:
                 StdLibFunction("environ", StdLibCategory.OS, "os.environ", "Environment variables"),
                 StdLibFunction("getpid", StdLibCategory.OS, "os.getpid()", "Get process ID"),
             ]),
-            
+
             "json": StdLibModule("json", Language.PYTHON, StdLibCategory.SERIALIZATION, [
                 StdLibFunction("loads", StdLibCategory.SERIALIZATION, "json.loads(s)", "Parse JSON string"),
                 StdLibFunction("dumps", StdLibCategory.SERIALIZATION, "json.dumps(obj)", "Serialize to JSON"),
                 StdLibFunction("load", StdLibCategory.SERIALIZATION, "json.load(fp)", "Load JSON from file"),
                 StdLibFunction("dump", StdLibCategory.SERIALIZATION, "json.dump(obj, fp)", "Write JSON to file"),
             ]),
-            
+
             "hashlib": StdLibModule("hashlib", Language.PYTHON, StdLibCategory.CRYPTO, [
                 StdLibFunction("sha256", StdLibCategory.CRYPTO, "hashlib.sha256(data).hexdigest()", "SHA-256 hash"),
                 StdLibFunction("md5", StdLibCategory.CRYPTO, "hashlib.md5(data).hexdigest()", "MD5 hash (deprecated)"),
                 StdLibFunction("sha512", StdLibCategory.CRYPTO, "hashlib.sha512(data).hexdigest()", "SHA-512 hash"),
                 StdLibFunction("pbkdf2_hmac", StdLibCategory.CRYPTO, "hashlib.pbkdf2_hmac(...)", "PBKDF2 key derivation"),
             ]),
-            
+
             "uuid": StdLibModule("uuid", Language.PYTHON, StdLibCategory.CORE, [
                 StdLibFunction("uuid4", StdLibCategory.CORE, "uuid.uuid4()", "Random UUID"),
                 StdLibFunction("uuid1", StdLibCategory.CORE, "uuid.uuid1()", "Time-based UUID"),
                 StdLibFunction("uuid5", StdLibCategory.CORE, "uuid.uuid5(namespace, name)", "Name-based UUID"),
             ]),
-            
+
             "datetime": StdLibModule("datetime", Language.PYTHON, StdLibCategory.TIME, [
                 StdLibFunction("now", StdLibCategory.TIME, "datetime.now()", "Current datetime"),
                 StdLibFunction("utcnow", StdLibCategory.TIME, "datetime.utcnow()", "Current UTC datetime"),
@@ -361,7 +359,7 @@ class CoreStdLib:
                 StdLibFunction("strftime", StdLibCategory.TIME, "dt.strftime(format)", "Format datetime"),
                 StdLibFunction("strptime", StdLibCategory.TIME, "datetime.strptime(s, fmt)", "Parse datetime"),
             ]),
-            
+
             "threading": StdLibModule("threading", Language.PYTHON, StdLibCategory.CONCURRENCY, [
                 StdLibFunction("Thread", StdLibCategory.CONCURRENCY, "threading.Thread(target=fn)", "Create thread"),
                 StdLibFunction("Lock", StdLibCategory.CONCURRENCY, "threading.Lock()", "Mutex lock"),
@@ -369,13 +367,13 @@ class CoreStdLib:
                 StdLibFunction("Event", StdLibCategory.CONCURRENCY, "threading.Event()", "Thread event"),
                 StdLibFunction("Condition", StdLibCategory.CONCURRENCY, "threading.Condition()", "Condition variable"),
             ]),
-            
+
             "subprocess": StdLibModule("subprocess", Language.PYTHON, StdLibCategory.OS, [
                 StdLibFunction("run", StdLibCategory.OS, "subprocess.run(cmd, capture_output=True)", "Run command"),
                 StdLibFunction("Popen", StdLibCategory.OS, "subprocess.Popen(cmd)", "Spawn process"),
                 StdLibFunction("check_output", StdLibCategory.OS, "subprocess.check_output(cmd)", "Get command output"),
             ]),
-            
+
             "pathlib": StdLibModule("pathlib", Language.PYTHON, StdLibCategory.IO, [
                 StdLibFunction("Path", StdLibCategory.IO, "Path(path)", "Path object"),
                 StdLibFunction("read_text", StdLibCategory.IO, "Path.read_text()", "Read file as text"),
@@ -384,7 +382,7 @@ class CoreStdLib:
                 StdLibFunction("glob", StdLibCategory.IO, "Path.glob(pattern)", "Glob pattern match"),
                 StdLibFunction("rglob", StdLibCategory.IO, "Path.rglob(pattern)", "Recursive glob"),
             ]),
-            
+
             "re": StdLibModule("re", Language.PYTHON, StdLibCategory.TEXT, [
                 StdLibFunction("search", StdLibCategory.TEXT, "re.search(pattern, string)", "Search pattern"),
                 StdLibFunction("match", StdLibCategory.TEXT, "re.match(pattern, string)", "Match at start"),
@@ -392,7 +390,7 @@ class CoreStdLib:
                 StdLibFunction("sub", StdLibCategory.TEXT, "re.sub(pattern, repl, string)", "Substitute"),
                 StdLibFunction("compile", StdLibCategory.TEXT, "re.compile(pattern)", "Compile pattern"),
             ]),
-            
+
             "collections": StdLibModule("collections", Language.PYTHON, StdLibCategory.COLLECTIONS, [
                 StdLibFunction("defaultdict", StdLibCategory.COLLECTIONS, "defaultdict(factory)", "Dict with default"),
                 StdLibFunction("Counter", StdLibCategory.COLLECTIONS, "Counter(iterable)", "Count elements"),
@@ -412,49 +410,49 @@ class CoreStdLib:
     def register_mapping(self, mapping: StdLibMapping):
         self.mappings[mapping.canonical_name] = mapping
 
-    def get_module(self, language: Language, name: str) -> Optional[StdLibModule]:
+    def get_module(self, language: Language, name: str) -> StdLibModule | None:
         return self.modules.get(f"{language.value}:{name}")
 
-    def get_mapping(self, canonical_name: str) -> Optional[StdLibMapping]:
+    def get_mapping(self, canonical_name: str) -> StdLibMapping | None:
         return self.mappings.get(canonical_name)
 
-    def translate(self, canonical_name: str, target_language: Language) -> Optional[str]:
+    def translate(self, canonical_name: str, target_language: Language) -> str | None:
         mapping = self.mappings.get(canonical_name)
         if mapping:
             return mapping.language_mappings.get(target_language)
         return None
 
-    def find_equivalent(self, language: Language, function_name: str) -> List[StdLibMapping]:
+    def find_equivalent(self, language: Language, function_name: str) -> list[StdLibMapping]:
         results = []
         for mapping in self.mappings.values():
             if mapping.language_mappings.get(language) == function_name:
                 results.append(mapping)
         return results
 
-    def get_all_mappings(self) -> List[StdLibMapping]:
+    def get_all_mappings(self) -> list[StdLibMapping]:
         return list(self.mappings.values())
 
-    def get_modules_by_language(self, language: Language) -> List[StdLibModule]:
+    def get_modules_by_language(self, language: Language) -> list[StdLibModule]:
         return [m for k, m in self.modules.items() if k.startswith(f"{language.value}:")]
 
-    def get_modules_by_category(self, category: StdLibCategory) -> List[StdLibModule]:
+    def get_modules_by_category(self, category: StdLibCategory) -> list[StdLibModule]:
         return [m for m in self.modules.values() if m.category == category]
 
     def generate_documentation(self, language: Language, output_path: str):
         modules = self.get_modules_by_language(language)
-        
+
         lines = [
             f"# {language.value.title()} Standard Library Reference",
             "",
             f"Generated on {__import__('datetime').datetime.now().isoformat()}",
             "",
         ]
-        
+
         for module in modules:
             lines.append(f"## {module.name}")
             lines.append(f"{module.description}")
             lines.append("")
-            
+
             for func in module.functions:
                 lines.append(f"### {func.name}")
                 lines.append(f"**Signature:** `{func.signature}`")
@@ -470,7 +468,7 @@ class CoreStdLib:
                     for ex in func.examples:
                         lines.append(f"```python\n{ex}\n```")
                 lines.append("")
-        
+
         Path(output_path).write_text('\n'.join(lines))
 
     def export_mappings(self, path: str):
@@ -496,10 +494,10 @@ class CrossLanguageComparator:
     def __init__(self, stdlib: CoreStdLib):
         self.stdlib = stdlib
 
-    def compare_coverage(self, languages: List[Language]) -> Dict[str, Any]:
+    def compare_coverage(self, languages: list[Language]) -> dict[str, Any]:
         all_functions = set()
         lang_functions = {}
-        
+
         for lang in languages:
             funcs = set()
             for module in self.stdlib.get_modules_by_language(lang):
@@ -507,32 +505,32 @@ class CrossLanguageComparator:
                     funcs.add(func.name)
             lang_functions[lang] = funcs
             all_functions.update(funcs)
-        
+
         coverage = {}
         for func in all_functions:
             coverage[func] = {lang: func in lang_functions[lang] for lang in languages}
-        
+
         return {
             "total_functions": len(all_functions),
             "by_language": {lang.value: len(funcs) for lang, funcs in lang_functions.items()},
             "coverage_matrix": coverage,
         }
 
-    def find_gaps(self, target_language: Language, reference_language: Language) -> List[str]:
+    def find_gaps(self, target_language: Language, reference_language: Language) -> list[str]:
         target_funcs = set()
         ref_funcs = set()
-        
+
         for module in self.stdlib.get_modules_by_language(target_language):
             for func in module.functions:
                 target_funcs.add(func.name)
-        
+
         for module in self.stdlib.get_modules_by_language(reference_language):
             for func in module.functions:
                 ref_funcs.add(func.name)
-        
+
         return list(ref_funcs - target_funcs)
 
-    def suggest_implementations(self, target_language: Language, gaps: List[str]) -> Dict[str, str]:
+    def suggest_implementations(self, target_language: Language, gaps: list[str]) -> dict[str, str]:
         suggestions = {}
         for gap in gaps:
             equivalents = self.stdlib.find_equivalent(target_language, gap)

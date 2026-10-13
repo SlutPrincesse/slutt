@@ -3,9 +3,10 @@ PII & Key Redactor - Regex filter auto-redacting secrets, API keys, and sensitiv
 """
 import re
 import threading
-from typing import Dict, List, Optional, Any, Callable, Pattern, Set
 from dataclasses import dataclass, field
 from enum import Enum
+from re import Pattern
+from typing import Any
 
 
 class RedactionType(Enum):
@@ -31,17 +32,17 @@ class RedactionRule:
     pattern: Pattern
     redaction_type: RedactionType
     replacement: str = "[REDACTED]"
-    groups: List[int] = field(default_factory=lambda: [0])
+    groups: list[int] = field(default_factory=lambda: [0])
     enabled: bool = True
     description: str = ""
 
 
 class PIIKeyRedactor:
     def __init__(self):
-        self._rules: Dict[str, RedactionRule] = {}
+        self._rules: dict[str, RedactionRule] = {}
         self._lock = threading.RLock()
         self._register_default_rules()
-    
+
     def _register_default_rules(self):
         # API Keys
         self.add_rule(RedactionRule(
@@ -52,7 +53,7 @@ class PIIKeyRedactor:
             replacement="[API_KEY]",
             groups=[2]
         ))
-        
+
         self.add_rule(RedactionRule(
             rule_id="api_key_bearer",
             name="Bearer Token",
@@ -61,7 +62,7 @@ class PIIKeyRedactor:
             replacement="[BEARER_TOKEN]",
             groups=[1]
         ))
-        
+
         # OpenAI
         self.add_rule(RedactionRule(
             rule_id="openai_key",
@@ -71,7 +72,7 @@ class PIIKeyRedactor:
             replacement="[OPENAI_KEY]",
             groups=[0]
         ))
-        
+
         # Anthropic
         self.add_rule(RedactionRule(
             rule_id="anthropic_key",
@@ -81,7 +82,7 @@ class PIIKeyRedactor:
             replacement="[ANTHROPIC_KEY]",
             groups=[0]
         ))
-        
+
         # AWS
         self.add_rule(RedactionRule(
             rule_id="aws_access_key",
@@ -91,7 +92,7 @@ class PIIKeyRedactor:
             replacement="[AWS_ACCESS_KEY]",
             groups=[0]
         ))
-        
+
         self.add_rule(RedactionRule(
             rule_id="aws_secret_key",
             name="AWS Secret Key",
@@ -100,7 +101,7 @@ class PIIKeyRedactor:
             replacement="[AWS_SECRET_KEY]",
             groups=[1]
         ))
-        
+
         # GitHub
         self.add_rule(RedactionRule(
             rule_id="github_token",
@@ -110,7 +111,7 @@ class PIIKeyRedactor:
             replacement="[GITHUB_TOKEN]",
             groups=[0]
         ))
-        
+
         # Generic secrets
         self.add_rule(RedactionRule(
             rule_id="generic_secret",
@@ -120,7 +121,7 @@ class PIIKeyRedactor:
             replacement="[SECRET]",
             groups=[2]
         ))
-        
+
         # Private keys
         self.add_rule(RedactionRule(
             rule_id="private_key",
@@ -130,7 +131,7 @@ class PIIKeyRedactor:
             replacement="[PRIVATE_KEY]",
             groups=[0]
         ))
-        
+
         # JWT
         self.add_rule(RedactionRule(
             rule_id="jwt",
@@ -140,7 +141,7 @@ class PIIKeyRedactor:
             replacement="[JWT]",
             groups=[0]
         ))
-        
+
         # Database URLs
         self.add_rule(RedactionRule(
             rule_id="database_url",
@@ -150,7 +151,7 @@ class PIIKeyRedactor:
             replacement="[DATABASE_URL]",
             groups=[0]
         ))
-        
+
         # Email
         self.add_rule(RedactionRule(
             rule_id="email",
@@ -160,7 +161,7 @@ class PIIKeyRedactor:
             replacement="[EMAIL]",
             groups=[0]
         ))
-        
+
         # Phone numbers
         self.add_rule(RedactionRule(
             rule_id="phone_us",
@@ -170,7 +171,7 @@ class PIIKeyRedactor:
             replacement="[PHONE]",
             groups=[0]
         ))
-        
+
         # SSN
         self.add_rule(RedactionRule(
             rule_id="ssn",
@@ -180,7 +181,7 @@ class PIIKeyRedactor:
             replacement="[SSN]",
             groups=[0]
         ))
-        
+
         # Credit Card
         self.add_rule(RedactionRule(
             rule_id="credit_card",
@@ -190,7 +191,7 @@ class PIIKeyRedactor:
             replacement="[CREDIT_CARD]",
             groups=[0]
         ))
-        
+
         # IP Address
         self.add_rule(RedactionRule(
             rule_id="ipv4",
@@ -200,7 +201,7 @@ class PIIKeyRedactor:
             replacement="[IP_ADDRESS]",
             groups=[0]
         ))
-        
+
         # IPv6
         self.add_rule(RedactionRule(
             rule_id="ipv6",
@@ -210,55 +211,55 @@ class PIIKeyRedactor:
             replacement="[IP_ADDRESS]",
             groups=[0]
         ))
-    
+
     def add_rule(self, rule: RedactionRule):
         with self._lock:
             self._rules[rule.rule_id] = rule
-    
+
     def remove_rule(self, rule_id: str) -> bool:
         with self._lock:
             if rule_id in self._rules:
                 del self._rules[rule_id]
                 return True
         return False
-    
+
     def enable_rule(self, rule_id: str) -> bool:
         with self._lock:
             if rule_id in self._rules:
                 self._rules[rule_id].enabled = True
                 return True
         return False
-    
+
     def disable_rule(self, rule_id: str) -> bool:
         with self._lock:
             if rule_id in self._rules:
                 self._rules[rule_id].enabled = False
                 return True
         return False
-    
-    def redact(self, text: str, rule_ids: List[str] = None) -> str:
+
+    def redact(self, text: str, rule_ids: list[str] = None) -> str:
         if not text:
             return text
-        
+
         with self._lock:
             rules = list(self._rules.values())
-        
+
         if rule_ids:
             rules = [r for r in rules if r.rule_id in rule_ids]
-        
+
         rules = [r for r in rules if r.enabled]
-        
+
         result = text
         for rule in rules:
             result = rule.pattern.sub(rule.replacement, result)
-        
+
         return result
-    
-    def redact_lines(self, lines: List[str], rule_ids: List[str] = None) -> List[str]:
+
+    def redact_lines(self, lines: list[str], rule_ids: list[str] = None) -> list[str]:
         return [self.redact(line, rule_ids) for line in lines]
-    
-    def redact_dict(self, data: Dict[str, Any], rule_ids: List[str] = None,
-                    redact_keys: bool = True, redact_values: bool = True) -> Dict[str, Any]:
+
+    def redact_dict(self, data: dict[str, Any], rule_ids: list[str] = None,
+                    redact_keys: bool = True, redact_values: bool = True) -> dict[str, Any]:
         result = {}
         for key, value in data.items():
             new_key = self.redact(key, rule_ids) if redact_keys else key
@@ -272,18 +273,18 @@ class PIIKeyRedactor:
                 new_value = value
             result[new_key] = new_value
         return result
-    
-    def find_matches(self, text: str, rule_ids: List[str] = None) -> List[Dict[str, Any]]:
+
+    def find_matches(self, text: str, rule_ids: list[str] = None) -> list[dict[str, Any]]:
         matches = []
-        
+
         with self._lock:
             rules = list(self._rules.values())
-        
+
         if rule_ids:
             rules = [r for r in rules if r.rule_id in rule_ids]
-        
+
         rules = [r for r in rules if r.enabled]
-        
+
         for rule in rules:
             for match in rule.pattern.finditer(text):
                 for group_idx in rule.groups:
@@ -298,21 +299,21 @@ class PIIKeyRedactor:
                             "end": match.end(group_idx),
                             "full_match": match.group(0)
                         })
-        
+
         return matches
-    
-    def get_rules(self) -> List[RedactionRule]:
+
+    def get_rules(self) -> list[RedactionRule]:
         with self._lock:
             return list(self._rules.values())
-    
-    def get_enabled_rules(self) -> List[RedactionRule]:
+
+    def get_enabled_rules(self) -> list[RedactionRule]:
         with self._lock:
             return [r for r in self._rules.values() if r.enabled]
-    
+
     def create_custom_rule(self, rule_id: str, name: str, pattern: str,
                           redaction_type: RedactionType = RedactionType.CUSTOM,
                           replacement: str = "[REDACTED]",
-                          groups: List[int] = None,
+                          groups: list[int] = None,
                           flags: int = 0) -> RedactionRule:
         rule = RedactionRule(
             rule_id=rule_id,
@@ -326,7 +327,8 @@ class PIIKeyRedactor:
         return rule
 
 
-_redactor: Optional[PIIKeyRedactor] = None
+_redactor: PIIKeyRedactor | None = None
+
 
 def get_redactor() -> PIIKeyRedactor:
     global _redactor

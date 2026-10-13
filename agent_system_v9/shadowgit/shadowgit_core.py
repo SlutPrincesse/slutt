@@ -1,18 +1,13 @@
 """
 ShadowGit Core - Git operations for shadow repositories
 """
-import asyncio
 import hashlib
-import os
 import json
 import time
-import shutil
-from typing import Dict, List, Optional, Any, Set, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
-import subprocess
+from typing import Any
 
 
 class ShadowGitStatus(Enum):
@@ -32,7 +27,7 @@ class ShadowFile:
     stage: int = 0
     status: ShadowGitStatus = ShadowGitStatus.CLEAN
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "path": self.path,
             "hash": self.hash,
@@ -49,11 +44,11 @@ class ShadowCommit:
     message: str
     author: str
     timestamp: float
-    parent_ids: List[str] = field(default_factory=list)
+    parent_ids: list[str] = field(default_factory=list)
     tree_hash: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "commit_id": self.commit_id,
             "message": self.message,
@@ -91,39 +86,39 @@ class ShadowGit:
         self.index_path = self.repo_path / "index"
         self.head_path = self.repo_path / "HEAD"
         self.config_path = self.repo_path / "config"
-        
+
         self._initialized = False
-        self._index: Dict[str, ShadowFile] = {}
-        self._branches: Dict[str, ShadowBranch] = {}
-        self._commits: Dict[str, ShadowCommit] = {}
+        self._index: dict[str, ShadowFile] = {}
+        self._branches: dict[str, ShadowBranch] = {}
+        self._commits: dict[str, ShadowCommit] = {}
 
     async def init(self, bare: bool = False) -> bool:
         if self.repo_path.exists():
             return await self._load()
-        
+
         self.repo_path.mkdir(parents=True, exist_ok=True)
         self.objects_path.mkdir(parents=True, exist_ok=True)
         self.refs_path.mkdir(parents=True, exist_ok=True)
         (self.refs_path / "heads").mkdir(parents=True, exist_ok=True)
         (self.refs_path / "tags").mkdir(parents=True, exist_ok=True)
-        
+
         self._index = {}
         self._branches = {"main": ShadowBranch(name="main", commit_id="")}
-        
+
         await self._save_index()
         await self._save_refs()
-        
+
         self._initialized = True
         return True
 
     async def _load(self) -> bool:
         if not self.repo_path.exists():
             return False
-        
+
         if self.index_path.exists():
             data = json.loads(self.index_path.read_text())
             self._index = {k: ShadowFile(**v) for k, v in data.items()}
-        
+
         if self.refs_path.exists():
             for ref_file in (self.refs_path / "heads").glob("*"):
                 if ref_file.is_file():
@@ -131,7 +126,7 @@ class ShadowGit:
                     self._branches[ref_file.name] = ShadowBranch(
                         name=ref_file.name, commit_id=commit_id
                     )
-        
+
         self._initialized = True
         return True
 
@@ -150,13 +145,13 @@ class ShadowGit:
     def _hash_file(self, file_path: Path) -> str:
         return self._hash_content(file_path.read_bytes())
 
-    async def add(self, paths: List[str]) -> List[str]:
+    async def add(self, paths: list[str]) -> list[str]:
         added = []
         for path_str in paths:
             path = Path(path_str)
             if not path.exists():
                 continue
-            
+
             if path.is_dir():
                 for p in path.rglob('*'):
                     if p.is_file():
@@ -165,7 +160,7 @@ class ShadowGit:
             else:
                 await self._add_file(path)
                 added.append(str(path))
-        
+
         await self._save_index()
         return added
 
@@ -173,12 +168,12 @@ class ShadowGit:
         rel_path = path.relative_to(self.repo_path.parent) if path.is_relative_to(self.repo_path.parent) else path
         content = path.read_bytes()
         file_hash = self._hash_content(content)
-        
+
         obj_dir = self.objects_path / file_hash[:2]
         obj_dir.mkdir(exist_ok=True)
         obj_file = obj_dir / file_hash[2:]
         obj_file.write_bytes(content)
-        
+
         stat = path.stat()
         self._index[str(rel_path)] = ShadowFile(
             path=str(rel_path),
@@ -190,12 +185,12 @@ class ShadowGit:
 
     async def commit(self, message: str, author: str = "ShadowGit") -> str:
         tree_hash = await self._write_tree()
-        
+
         parent_ids = []
         head_commit = await self._get_head_commit()
         if head_commit:
             parent_ids.append(head_commit.commit_id)
-        
+
         commit = ShadowCommit(
             commit_id=hashlib.sha256(f"{message}:{time.time()}:{tree_hash}".encode()).hexdigest()[:12],
             message=message,
@@ -204,44 +199,44 @@ class ShadowGit:
             parent_ids=parent_ids,
             tree_hash=tree_hash,
         )
-        
+
         commit_data = json.dumps(commit.to_dict(), indent=2)
         commit_hash = self._hash_content(commit_data.encode())
-        
+
         obj_dir = self.objects_path / commit_hash[:2]
         obj_dir.mkdir(exist_ok=True)
         obj_file = obj_dir / commit_hash[2:]
         obj_file.write_text(commit_data)
-        
+
         self._commits[commit.commit_id] = commit
-        
+
         current_branch = await self._get_current_branch()
         if current_branch and current_branch in self._branches:
             self._branches[current_branch].commit_id = commit.commit_id
             await self._save_refs()
-        
+
         for path in self._index:
             self._index[path].status = ShadowGitStatus.CLEAN
         await self._save_index()
-        
+
         return commit.commit_id
 
     async def _write_tree(self) -> str:
         tree_entries = []
         for path, file_info in sorted(self._index.items()):
             tree_entries.append(f"{file_info.mode} {file_info.hash} {path}")
-        
+
         tree_content = "\n".join(tree_entries).encode()
         return self._hash_content(tree_content)
 
-    async def _get_head_commit(self) -> Optional[ShadowCommit]:
+    async def _get_head_commit(self) -> ShadowCommit | None:
         current_branch = await self._get_current_branch()
         if current_branch and current_branch in self._branches:
             commit_id = self._branches[current_branch].commit_id
             return self._commits.get(commit_id)
         return None
 
-    async def _get_current_branch(self) -> Optional[str]:
+    async def _get_current_branch(self) -> str | None:
         if self.head_path.exists():
             content = self.head_path.read_text().strip()
             if content.startswith("ref: refs/heads/"):
@@ -254,7 +249,7 @@ class ShadowGit:
             await self._checkout_commit(branch.commit_id)
             self.head_path.write_text(f"ref: refs/heads/{target}")
             return True
-        
+
         if create:
             current_branch = await self._get_current_branch()
             if current_branch and current_branch in self._branches:
@@ -263,7 +258,7 @@ class ShadowGit:
                 await self._save_refs()
                 self.head_path.write_text(f"ref: refs/heads/{target}")
                 return True
-        
+
         return False
 
     async def _checkout_commit(self, commit_id: str):
@@ -275,7 +270,7 @@ class ShadowGit:
                 data = json.loads(obj_file.read_text())
                 commit = ShadowCommit(**data)
                 self._commits[commit_id] = commit
-        
+
         if commit and commit.tree_hash:
             await self._restore_tree(commit.tree_hash)
 
@@ -284,10 +279,10 @@ class ShadowGit:
         obj_file = obj_dir / tree_hash[2:]
         if not obj_file.exists():
             return
-        
+
         tree_content = obj_file.read_text()
         self._index = {}
-        
+
         for line in tree_content.strip().split('\n'):
             if not line:
                 continue
@@ -300,7 +295,7 @@ class ShadowGit:
                     dest = self.repo_path.parent / path
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(content)
-                    
+
                     stat = dest.stat()
                     self._index[path] = ShadowFile(
                         path=path,
@@ -309,12 +304,12 @@ class ShadowGit:
                         mode=mode,
                         status=ShadowGitStatus.CLEAN,
                     )
-        
+
         await self._save_index()
 
-    async def status(self) -> Dict[str, ShadowGitStatus]:
+    async def status(self) -> dict[str, ShadowGitStatus]:
         result = {}
-        
+
         for path_str, file_info in self._index.items():
             path = self.repo_path.parent / path_str
             if path.exists():
@@ -325,30 +320,30 @@ class ShadowGit:
                     result[path_str] = file_info.status
             else:
                 result[path_str] = ShadowGitStatus.UNTRACKED
-        
+
         for path in (self.repo_path.parent).rglob('*'):
             if path.is_file():
                 rel = path.relative_to(self.repo_path.parent)
                 rel_str = str(rel)
                 if rel_str not in self._index and not self._is_ignored(rel_str):
                     result[rel_str] = ShadowGitStatus.UNTRACKED
-        
+
         return result
 
     def _is_ignored(self, path: str) -> bool:
         ignore_patterns = ['.shadowgit', '__pycache__', '.git', 'node_modules', '.venv']
         return any(pattern in path for pattern in ignore_patterns)
 
-    async def diff(self, path: str = None) -> List[ShadowDiff]:
+    async def diff(self, path: str = None) -> list[ShadowDiff]:
         diffs = []
-        
+
         paths_to_check = [path] if path else list(self._index.keys())
-        
+
         for path_str in paths_to_check:
             file_info = self._index.get(path_str)
             if not file_info:
                 continue
-            
+
             full_path = self.repo_path.parent / path_str
             if not full_path.exists():
                 diffs.append(ShadowDiff(
@@ -359,12 +354,12 @@ class ShadowGit:
                     change_type="deleted",
                 ))
                 continue
-            
+
             current_hash = self._hash_file(full_path)
             if current_hash != file_info.hash:
                 old_content = self._get_object_content(file_info.hash)
                 new_content = full_path.read_text()
-                
+
                 diff_content = self._generate_diff(old_content, new_content, path_str)
                 diffs.append(ShadowDiff(
                     old_path=path_str,
@@ -374,7 +369,7 @@ class ShadowGit:
                     change_type="modified",
                     diff_content=diff_content,
                 ))
-        
+
         return diffs
 
     def _get_object_content(self, obj_hash: str) -> str:
@@ -390,7 +385,7 @@ class ShadowGit:
         diff = difflib.unified_diff(old_lines, new_lines, fromfile=f"a/{path}", tofile=f"b/{path}")
         return ''.join(diff)
 
-    async def log(self, limit: int = 10) -> List[ShadowCommit]:
+    async def log(self, limit: int = 10) -> list[ShadowCommit]:
         commits = []
         current_branch = await self._get_current_branch()
         if current_branch and current_branch in self._branches:
@@ -404,13 +399,13 @@ class ShadowGit:
                         data = json.loads(obj_file.read_text())
                         commit = ShadowCommit(**data)
                         self._commits[commit_id] = commit
-                
+
                 if commit:
                     commits.append(commit)
                     commit_id = commit.parent_ids[0] if commit.parent_ids else None
                 else:
                     break
-        
+
         return commits
 
     async def branch(self, name: str, commit_id: str = None) -> bool:
@@ -420,34 +415,34 @@ class ShadowGit:
                 commit_id = self._branches[current_branch].commit_id
             else:
                 return False
-        
+
         self._branches[name] = ShadowBranch(name=name, commit_id=commit_id)
         await self._save_refs()
         return True
 
     async def merge(self, source_branch: str, target_branch: str = None) -> bool:
         target_branch = target_branch or (await self._get_current_branch())
-        
+
         if source_branch not in self._branches or target_branch not in self._branches:
             return False
-        
+
         source_commit = self._branches[source_branch].commit_id
         target_commit = self._branches[target_branch].commit_id
-        
+
         if source_commit == target_commit:
             return True
-        
+
         self._branches[target_branch].commit_id = source_commit
         await self._save_refs()
         await self._checkout_commit(source_commit)
-        
+
         return True
 
 
 class ShadowGitRemote:
     def __init__(self, shadow_git: ShadowGit):
         self.shadow_git = shadow_git
-        self.remotes: Dict[str, str] = {}
+        self.remotes: dict[str, str] = {}
 
     def add_remote(self, name: str, url: str):
         self.remotes[name] = url

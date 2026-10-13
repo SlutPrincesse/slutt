@@ -1,9 +1,9 @@
-import asyncio
 import hashlib
-from typing import Any, Dict, List, Optional, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 
 class InvalidationTrigger(Enum):
@@ -21,11 +21,11 @@ class InvalidationRule:
     id: str
     name: str
     trigger: InvalidationTrigger
-    condition: Callable[[Dict[str, Any]], bool]
-    action: Callable[[Dict[str, Any]], Any]
+    condition: Callable[[dict[str, Any]], bool]
+    action: Callable[[dict[str, Any]], Any]
     priority: int = 50
     enabled: bool = True
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.id:
@@ -35,11 +35,11 @@ class InvalidationRule:
 class CacheInvalidator:
     def __init__(self, max_cache_size: int = 1000):
         self.max_cache_size = max_cache_size
-        self.rules: List[InvalidationRule] = []
-        self._cache: Dict[str, Any] = OrderedDict()
-        self._access_times: Dict[str, datetime] = {}
-        self._token_counts: Dict[str, int] = {}
-        self._relevance_scores: Dict[str, float] = {}
+        self.rules: list[InvalidationRule] = []
+        self._cache: dict[str, Any] = OrderedDict()
+        self._access_times: dict[str, datetime] = {}
+        self._token_counts: dict[str, int] = {}
+        self._relevance_scores: dict[str, float] = {}
 
     def add_rule(self, rule: InvalidationRule):
         self.rules.append(rule)
@@ -55,13 +55,13 @@ class CacheInvalidator:
     def put(self, key: str, value: Any, tokens: int = 0, relevance: float = 1.0):
         if len(self._cache) >= self.max_cache_size:
             self._evict_lru()
-        
+
         self._cache[key] = value
         self._access_times[key] = datetime.utcnow()
         self._token_counts[key] = tokens
         self._relevance_scores[key] = relevance
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         if key in self._cache:
             self._access_times[key] = datetime.utcnow()
             return self._cache[key]
@@ -76,7 +76,7 @@ class CacheInvalidator:
             return True
         return False
 
-    def invalidate_by_trigger(self, trigger: InvalidationTrigger, context: Dict[str, Any]) -> List[str]:
+    def invalidate_by_trigger(self, trigger: InvalidationTrigger, context: dict[str, Any]) -> list[str]:
         invalidated = []
         for rule in self.rules:
             if rule.enabled and rule.trigger == trigger:
@@ -100,7 +100,7 @@ class CacheInvalidator:
         oldest = min(self._access_times.items(), key=lambda x: x[1])[0]
         self.invalidate(oldest)
 
-    def invalidate_low_relevance(self, threshold: float = 0.3) -> List[str]:
+    def invalidate_low_relevance(self, threshold: float = 0.3) -> list[str]:
         invalidated = []
         for key, score in list(self._relevance_scores.items()):
             if score < threshold:
@@ -108,11 +108,11 @@ class CacheInvalidator:
                 invalidated.append(key)
         return invalidated
 
-    def invalidate_by_tokens(self, max_tokens: int) -> List[str]:
+    def invalidate_by_tokens(self, max_tokens: int) -> list[str]:
         total_tokens = sum(self._token_counts.values())
         if total_tokens <= max_tokens:
             return []
-        
+
         sorted_keys = sorted(self._token_counts.items(), key=lambda x: x[1], reverse=True)
         invalidated = []
         for key, tokens in sorted_keys:
@@ -123,7 +123,7 @@ class CacheInvalidator:
             invalidated.append(key)
         return invalidated
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         return {
             "size": len(self._cache),
             "max_size": self.max_cache_size,

@@ -1,0 +1,48 @@
+#!/bin/bash
+# shellcheck disable=SC2034  # Arrays are consumed by scripts that source this module
+# Module: Blue Team / Defensive Security
+# IDS/IPS, SIEM, log analysis, file integrity, threat intelligence,
+# incident response platforms, endpoint visibility, malware analysis,
+# AV engines, YARA rules
+
+BLUETEAM_PACKAGES=(suricata fail2ban aide auditd apparmor-utils ufw tiger darkstat chaosreader sentrypeer lynis rkhunter chkrootkit yara clamav inetsim)
+
+BLUETEAM_PIPX=(sigma-cli bandit quark-engine)
+
+BLUETEAM_CARGO=(yara-x-cli)
+
+BLUETEAM_GIT=(
+    "sigma-rules=https://github.com/SigmaHQ/sigma.git"
+    "maltrail=https://github.com/stamparm/maltrail.git"
+    "MISP-docker=https://github.com/MISP/misp-docker.git"
+    "wazuh-docker=https://github.com/wazuh/wazuh-docker.git"
+    "atomic-red-team=https://github.com/redcanaryco/atomic-red-team.git"
+)
+
+BLUETEAM_GIT_NAMES=(sigma-rules maltrail MISP-docker wazuh-docker atomic-red-team)
+
+install_module_blueteam() {
+    install_apt_batch "Blue Team - Packages" "${BLUETEAM_PACKAGES[@]}"
+    install_pipx_batch "Blue Team - Python" "${BLUETEAM_PIPX[@]}"
+    install_cargo_batch "Blue Team - Cargo" "${BLUETEAM_CARGO[@]}"
+
+    # yara-x-cli installs its binary as 'yr' — symlink to PATH
+    local _yr_bin; _yr_bin="$(_builder_home)/.cargo/bin/yr"
+    if [[ -f "$_yr_bin" ]] && [[ ! -f "$PIPX_BIN_DIR/yr" ]]; then
+        ln -sf "$_yr_bin" "$PIPX_BIN_DIR/yr" 2>/dev/null || true
+    fi
+
+    install_git_batch "Blue Team - Git" "${BLUETEAM_GIT[@]}"
+
+    # Binary releases (Velociraptor, Laurel, FLOSS, Capa, Loki, Hayabusa)
+    install_binary_releases "${BINARY_RELEASES_BLUETEAM[@]}"
+
+    # Docker: IR platforms (only if enabled)
+    if [[ "${ENABLE_DOCKER:-false}" == "true" ]]; then
+        log_info "Installing Blue Team Docker platforms..."
+        docker_pull "strangebee/thehive:latest" "TheHive" || true
+        docker_pull "thehiveproject/cortex:latest" "Cortex" || true
+        docker_pull "zeek/zeek:latest" "Zeek" || true
+        docker_pull "wagga40/zircolite:latest" "Zircolite" || true
+    fi
+}

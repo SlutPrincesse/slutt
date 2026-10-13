@@ -4,8 +4,9 @@ Core Plugin Manager - Capability plugin system for AGENT_SYSTEM_V9
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any
 
 
 @dataclass
@@ -15,10 +16,10 @@ class PluginMetadata:
     version: str
     description: str
     entry_point: str
-    capabilities: List[str] = field(default_factory=list)
-    dependencies: List[str] = field(default_factory=list)
-    config_schema: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    capabilities: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    config_schema: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     priority: int = 0
 
 
@@ -59,7 +60,7 @@ class _PluginInfo:
 class PluginManager:
     """Singleton plugin manager for capability plugins."""
 
-    _instance: Optional["PluginManager"] = None
+    _instance: PluginManager | None = None
     _lock = threading.Lock()
 
     def __new__(cls):
@@ -73,13 +74,13 @@ class PluginManager:
     def __init__(self):
         if self._initialized:
             return
-        self._plugins: Dict[str, _PluginInfo] = {}
-        self._capability_index: Dict[str, List[str]] = {}
-        self._dependency_graph: Dict[str, List[str]] = {}
+        self._plugins: dict[str, _PluginInfo] = {}
+        self._capability_index: dict[str, list[str]] = {}
+        self._dependency_graph: dict[str, list[str]] = {}
         self._initialized = True
 
     @classmethod
-    def get_instance(cls) -> "PluginManager":
+    def get_instance(cls) -> PluginManager:
         return cls()
 
     def register_plugin(
@@ -104,7 +105,7 @@ class PluginManager:
 
         return plugin_id
 
-    def load_plugin(self, plugin_id: str, context: Optional[PluginContext] = None) -> Any:
+    def load_plugin(self, plugin_id: str, context: PluginContext | None = None) -> Any:
         """Load and instantiate a plugin."""
         if plugin_id not in self._plugins:
             raise KeyError(f"Plugin {plugin_id} not registered")
@@ -117,7 +118,7 @@ class PluginManager:
         self._load_dependencies(plugin_id)
 
         if context is None:
-            from agent_system_v9 import config, registry, event_bus
+            from agent_system_v9 import config, event_bus, registry
             context = PluginContext(
                 config=config,
                 registry=registry,
@@ -163,12 +164,12 @@ class PluginManager:
         if plugin_id in self._plugins:
             self._plugins[plugin_id].state = PluginState.DISABLED
 
-    def get_plugin(self, plugin_id: str) -> Optional[Any]:
+    def get_plugin(self, plugin_id: str) -> Any | None:
         """Get plugin instance."""
         info = self._plugins.get(plugin_id)
         return info.instance if info else None
 
-    def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+    def get_plugin_info(self, plugin_id: str) -> dict[str, Any] | None:
         """Get plugin metadata and state."""
         info = self._plugins.get(plugin_id)
         if not info:
@@ -179,11 +180,11 @@ class PluginManager:
             "instance": info.instance,
         }
 
-    def get_by_capability(self, capability: str) -> List[str]:
+    def get_by_capability(self, capability: str) -> list[str]:
         """Get plugin IDs by capability."""
         return self._capability_index.get(capability, [])
 
-    def get_all(self) -> Dict[str, Dict[str, Any]]:
+    def get_all(self) -> dict[str, dict[str, Any]]:
         """Get all plugins info."""
         return {
             pid: {
@@ -193,7 +194,7 @@ class PluginManager:
             for pid, info in self._plugins.items()
         }
 
-    def health_check(self) -> Dict[str, bool]:
+    def health_check(self) -> dict[str, bool]:
         """Run health check on all active plugins."""
         results = {}
         for pid, info in self._plugins.items():

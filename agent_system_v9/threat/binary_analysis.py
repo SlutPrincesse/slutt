@@ -2,19 +2,16 @@
 Binary Analysis & Disassembly Integration - Debugger and disassembler hooks
 """
 import asyncio
-import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
 import tempfile
-import time
-from typing import Dict, List, Optional, Any, Callable, Set, Tuple
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections import defaultdict
+from typing import Any
 
 
 class BinaryFormat(Enum):
@@ -52,12 +49,12 @@ class BinaryInfo:
     bits: int
     endian: str
     entry_point: int
-    sections: List[Dict] = field(default_factory=list)
-    symbols: List[Dict] = field(default_factory=list)
-    imports: List[str] = field(default_factory=list)
-    exports: List[str] = field(default_factory=list)
-    strings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    sections: list[dict] = field(default_factory=list)
+    symbols: list[dict] = field(default_factory=list)
+    imports: list[str] = field(default_factory=list)
+    exports: list[str] = field(default_factory=list)
+    strings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -65,21 +62,21 @@ class FunctionInfo:
     address: int
     name: str
     size: int
-    blocks: List[int] = field(default_factory=list)
-    calls: List[int] = field(default_factory=list)
-    called_by: List[int] = field(default_factory=list)
-    instructions: List[Dict] = field(default_factory=list)
+    blocks: list[int] = field(default_factory=list)
+    calls: list[int] = field(default_factory=list)
+    called_by: list[int] = field(default_factory=list)
+    instructions: list[dict] = field(default_factory=list)
     stack_frame_size: int = 0
     calling_convention: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class CFGNode:
     address: int
-    instructions: List[Dict] = field(default_factory=list)
-    successors: List[int] = field(default_factory=list)
-    predecessors: List[int] = field(default_factory=list)
+    instructions: list[dict] = field(default_factory=list)
+    successors: list[int] = field(default_factory=list)
+    predecessors: list[int] = field(default_factory=list)
     is_entry: bool = False
     is_exit: bool = False
 
@@ -87,15 +84,15 @@ class CFGNode:
 @dataclass
 class ControlFlowGraph:
     function_address: int
-    nodes: Dict[int, CFGNode] = field(default_factory=dict)
-    edges: List[Tuple[int, int]] = field(default_factory=list)
+    nodes: dict[int, CFGNode] = field(default_factory=dict)
+    edges: list[tuple[int, int]] = field(default_factory=list)
 
 
 class BinaryAnalyzer:
     def __init__(self):
-        self.tools: Dict[AnalysisTool, str] = {}
+        self.tools: dict[AnalysisTool, str] = {}
         self._detect_tools()
-        self.cache: Dict[str, BinaryInfo] = {}
+        self.cache: dict[str, BinaryInfo] = {}
 
     def _detect_tools(self):
         tool_paths = {
@@ -107,7 +104,7 @@ class BinaryAnalyzer:
             AnalysisTool.STRINGS: ["strings"],
             AnalysisTool.READER: ["readelf"],
         }
-        
+
         for tool, paths in tool_paths.items():
             for path in paths:
                 if shutil.which(path):
@@ -117,26 +114,26 @@ class BinaryAnalyzer:
     def is_tool_available(self, tool: AnalysisTool) -> bool:
         return tool in self.tools
 
-    async def analyze_binary(self, file_path: str, tools: List[AnalysisTool] = None) -> BinaryInfo:
+    async def analyze_binary(self, file_path: str, tools: list[AnalysisTool] = None) -> BinaryInfo:
         if file_path in self.cache:
             return self.cache[file_path]
-        
+
         tools = tools or [AnalysisTool.OBJDUMP, AnalysisTool.READER, AnalysisTool.STRINGS, AnalysisTool.NM]
-        
+
         info = BinaryInfo(file_path=file_path, format=BinaryFormat.UNKNOWN, architecture=Architecture.UNKNOWN, bits=0, endian="", entry_point=0)
-        
+
         if AnalysisTool.OBJDUMP in tools and self.is_tool_available(AnalysisTool.OBJDUMP):
             await self._analyze_with_objdump(file_path, info)
-        
+
         if AnalysisTool.READER in tools and self.is_tool_available(AnalysisTool.READER):
             await self._analyze_with_readelf(file_path, info)
-        
+
         if AnalysisTool.STRINGS in tools and self.is_tool_available(AnalysisTool.STRINGS):
             await self._extract_strings(file_path, info)
-        
+
         if AnalysisTool.NM in tools and self.is_tool_available(AnalysisTool.NM):
             await self._extract_symbols(file_path, info)
-        
+
         self._detect_format_and_arch(info)
         self.cache[file_path] = info
         return info
@@ -145,10 +142,10 @@ class BinaryAnalyzer:
         try:
             result = await self._run_command([self.tools[AnalysisTool.OBJDUMP], "-f", file_path])
             self._parse_objdump_file_info(result.stdout, info)
-            
+
             result = await self._run_command([self.tools[AnalysisTool.OBJDUMP], "-h", file_path])
             self._parse_objdump_sections(result.stdout, info)
-            
+
             result = await self._run_command([self.tools[AnalysisTool.OBJDUMP], "-d", file_path])
             self._parse_objdump_disassembly(result.stdout, info)
         except Exception as e:
@@ -158,10 +155,10 @@ class BinaryAnalyzer:
         try:
             result = await self._run_command([self.tools[AnalysisTool.READER], "-h", file_path])
             self._parse_readelf_header(result.stdout, info)
-            
+
             result = await self._run_command([self.tools[AnalysisTool.READER], "-s", file_path])
             self._parse_readelf_symbols(result.stdout, info)
-            
+
             result = await self._run_command([self.tools[AnalysisTool.READER], "-d", file_path])
             self._parse_readelf_dynamic(result.stdout, info)
         except Exception as e:
@@ -189,7 +186,7 @@ class BinaryAnalyzer:
         except Exception as e:
             info.metadata["nm_error"] = str(e)
 
-    async def _run_command(self, cmd: List[str]) -> subprocess.CompletedProcess:
+    async def _run_command(self, cmd: list[str]) -> subprocess.CompletedProcess:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -248,7 +245,7 @@ class BinaryAnalyzer:
                 name = match.group(2)
                 current_func = FunctionInfo(address=addr, name=name)
                 continue
-            
+
             if current_func:
                 inst_match = re.match(r'\s+([0-9a-f]+):\s+([0-9a-f\s]+)\s+(\w+)', line)
                 if inst_match:
@@ -308,7 +305,7 @@ class BinaryAnalyzer:
 
     def _detect_format_and_arch(self, info: BinaryInfo):
         if info.format == BinaryFormat.UNKNOWN:
-            with open(info.file_path, 'rb') as f:
+            with Path(info.file_path).open('rb') as f:
                 magic = f.read(16)
             if magic.startswith(b'\x7fELF'):
                 info.format = BinaryFormat.ELF
@@ -324,10 +321,10 @@ class GhidraAnalyzer:
         self.project_dir = project_dir or tempfile.mkdtemp(prefix="ghidra_")
         self.project_name = "analysis"
 
-    async def analyze(self, binary_path: str, script_path: str = None) -> Dict[str, Any]:
+    async def analyze(self, binary_path: str, script_path: str = None) -> dict[str, Any]:
         if script_path is None:
             script_path = self._generate_default_script()
-        
+
         cmd = [
             self.ghidra_path,
             self.project_dir,
@@ -336,19 +333,19 @@ class GhidraAnalyzer:
             "-postScript", script_path,
             "-deleteProject",
         ]
-        
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        
+
         output_file = Path(self.project_dir) / f"{Path(binary_path).stem}_analysis.json"
         if output_file.exists():
-            with open(output_file) as f:
+            with Path(output_file).open() as f:
                 return json.load(f)
-        
+
         return {"stdout": stdout.decode(), "stderr": stderr.decode()}
 
     def _generate_default_script(self) -> str:
@@ -387,7 +384,7 @@ class Radare2Analyzer:
     def __init__(self, r2_path: str = None):
         self.r2_path = r2_path or shutil.which("r2") or shutil.which("radare2")
 
-    async def analyze(self, binary_path: str, commands: List[str] = None) -> Dict[str, Any]:
+    async def analyze(self, binary_path: str, commands: list[str] = None) -> dict[str, Any]:
         commands = commands or [
             "aaa",  # analyze all
             "aflj",  # list functions as JSON
@@ -395,20 +392,20 @@ class Radare2Analyzer:
             "agj",   # CFG as JSON
             "ij",    # binary info as JSON
         ]
-        
+
         cmd_str = ";".join(commands)
         cmd = [self.r2_path, "-q", "-c", cmd_str, binary_path]
-        
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        
+
         output = stdout.decode()
         results = {}
-        
+
         for line in output.split('\n'):
             if line.startswith('{') or line.startswith('['):
                 try:
@@ -421,21 +418,21 @@ class Radare2Analyzer:
                         results["info"] = data
                 except json.JSONDecodeError:
                     pass
-        
+
         return results
 
     async def get_function_cfg(self, binary_path: str, func_address: int) -> ControlFlowGraph:
         cmd = [self.r2_path, "-q", "-c", f"s {func_address}; agj", binary_path]
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE)
         stdout, _ = await proc.communicate()
-        
+
         try:
             data = json.loads(stdout.decode())
             return self._parse_r2_cfg(data, func_address)
         except Exception:
             return ControlFlowGraph(function_address=func_address)
 
-    def _parse_r2_cfg(self, data: List, func_address: int) -> ControlFlowGraph:
+    def _parse_r2_cfg(self, data: list, func_address: int) -> ControlFlowGraph:
         cfg = ControlFlowGraph(function_address=func_address)
         for block in data:
             if isinstance(block, dict):
@@ -452,9 +449,9 @@ class Radare2Analyzer:
 class GDBController:
     def __init__(self, gdb_path: str = None):
         self.gdb_path = gdb_path or shutil.which("gdb")
-        self.process: Optional[asyncio.subprocess.Process] = None
+        self.process: asyncio.subprocess.Process | None = None
 
-    async def start(self, binary_path: str, args: List[str] = None):
+    async def start(self, binary_path: str, args: list[str] = None):
         self.process = await asyncio.create_subprocess_exec(
             self.gdb_path, "-q", "-ex", "set confirm off", "-ex", f"file {binary_path}",
             stdin=asyncio.subprocess.PIPE,
@@ -473,7 +470,7 @@ class GDBController:
     async def set_breakpoint(self, address: int) -> str:
         return await self.send_command(f"break *{hex(address)}")
 
-    async def run(self, args: List[str] = None) -> str:
+    async def run(self, args: list[str] = None) -> str:
         arg_str = " ".join(args) if args else ""
         return await self.send_command(f"run {arg_str}")
 
@@ -509,11 +506,11 @@ class BinaryASTMapper:
     def __init__(self, analyzer: BinaryAnalyzer):
         self.analyzer = analyzer
 
-    async def map_to_ast(self, binary_path: str) -> List[Dict]:
+    async def map_to_ast(self, binary_path: str) -> list[dict]:
         info = await self.analyzer.analyze_binary(binary_path)
-        
+
         ast_nodes = []
-        
+
         for func in info.metadata.get("functions", []):
             node = {
                 "type": "FUNCTION",
@@ -528,7 +525,7 @@ class BinaryASTMapper:
                 }
             }
             ast_nodes.append(node)
-        
+
         for section in info.sections:
             node = {
                 "type": "SECTION",
@@ -538,21 +535,21 @@ class BinaryASTMapper:
                 "flags": section.get("flags", ""),
             }
             ast_nodes.append(node)
-        
+
         return ast_nodes
 
-    def find_vulnerabilities(self, binary_path: str) -> List[Dict]:
+    def find_vulnerabilities(self, binary_path: str) -> list[dict]:
         info = self.analyzer.cache.get(binary_path)
         if not info:
             return []
-        
+
         vulns = []
-        
+
         dangerous_functions = {
             "strcpy", "strcat", "sprintf", "gets", "scanf", "printf",
             "memcpy", "memmove", "strncpy", "strncat", "snprintf",
         }
-        
+
         for sym in info.symbols:
             name = sym.get("name", "")
             if any(danger in name.lower() for danger in dangerous_functions):
@@ -563,7 +560,7 @@ class BinaryASTMapper:
                     "severity": "MEDIUM",
                     "description": f"Potentially dangerous function: {name}",
                 })
-        
+
         for string in info.strings:
             if any(pattern in string.lower() for pattern in ["password", "secret", "key", "token", "api"]):
                 vulns.append({
@@ -572,7 +569,7 @@ class BinaryASTMapper:
                     "severity": "HIGH",
                     "description": "Potential hardcoded secret in binary",
                 })
-        
+
         return vulns
 
 
@@ -588,45 +585,45 @@ class PackerDetector:
             "MPRESS": [b"MPRESS1", b"MPRESS2"],
         }
 
-    async def detect(self, binary_path: str) -> List[str]:
+    async def detect(self, binary_path: str) -> list[str]:
         detected = []
-        
-        with open(binary_path, 'rb') as f:
+
+        with Path(binary_path).open('rb') as f:
             content = f.read()
-        
+
         for packer, sigs in self.signatures.items():
             for sig in sigs:
                 if sig in content:
                     detected.append(packer)
                     break
-        
+
         info = await self.analyzer.analyze_binary(binary_path)
-        
+
         for section in info.sections:
             name = section.get("name", "").lower()
             if "upx" in name or "packed" in name:
                 if "UPX" not in detected:
                     detected.append("UPX")
-        
+
         entropy = self._calculate_entropy(content)
         if entropy > 7.5:
             detected.append("HIGH_ENTROPY_PACKED")
-        
+
         return detected
 
     def _calculate_entropy(self, data: bytes) -> float:
         if not data:
             return 0.0
-        
+
         freq = defaultdict(int)
         for byte in data:
             freq[byte] += 1
-        
+
         entropy = 0.0
         for count in freq.values():
             p = count / len(data)
             entropy -= p * (p.bit_length() - 1)
-        
+
         return entropy
 
 
@@ -643,11 +640,11 @@ class AntiDebugDetector:
             "process_check": ["FindWindow", "EnumWindows", "GetWindowThreadProcessId"],
         }
 
-    async def detect(self, binary_path: str) -> List[Dict]:
+    async def detect(self, binary_path: str) -> list[dict]:
         detected = []
-        
+
         info = await self.analyzer.analyze_binary(binary_path)
-        
+
         for string in info.strings:
             for technique, patterns in self.techniques.items():
                 for pattern in patterns:
@@ -657,7 +654,7 @@ class AntiDebugDetector:
                             "indicator": pattern,
                             "context": string[:200],
                         })
-        
+
         for func in info.metadata.get("functions", []):
             for inst in func.get("instructions", []):
                 mnemonic = inst.get("mnemonic", "").upper()
@@ -667,7 +664,7 @@ class AntiDebugDetector:
                         "indicator": "0xCC / INT 3",
                         "address": inst.get("address", 0),
                     })
-        
+
         return detected
 
 
@@ -681,9 +678,9 @@ class BinaryAnalysisOrchestrator:
         self.packer_detector = PackerDetector(self.analyzer)
         self.anti_debug = AntiDebugDetector(self.analyzer)
 
-    async def full_analysis(self, binary_path: str) -> Dict[str, Any]:
+    async def full_analysis(self, binary_path: str) -> dict[str, Any]:
         info = await self.analyzer.analyze_binary(binary_path)
-        
+
         results = {
             "binary_info": {
                 "file": info.file_path,
@@ -703,30 +700,30 @@ class BinaryAnalysisOrchestrator:
             "vulnerabilities": self.mapper.find_vulnerabilities(binary_path),
             "ast_mapping": await self.mapper.map_to_ast(binary_path),
         }
-        
+
         if self.analyzer.is_tool_available(AnalysisTool.RADARE2):
             try:
                 r2_results = await self.radare2.analyze(binary_path)
                 results["radare2"] = r2_results
             except Exception as e:
                 results["radare2_error"] = str(e)
-        
+
         return results
 
-    async def dynamic_analysis(self, binary_path: str, args: List[str] = None) -> Dict[str, Any]:
+    async def dynamic_analysis(self, binary_path: str, args: list[str] = None) -> dict[str, Any]:
         await self.gdb.start(binary_path, args)
-        
+
         results = {"registers": {}, "memory": {}, "trace": []}
-        
+
         try:
             await self.gdb.run(args)
             await asyncio.sleep(1)
-            
+
             for reg in ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "eflags"]:
                 results["registers"][reg] = await self.gdb.read_register(reg)
-            
+
             await self.gdb.close()
         except Exception as e:
             results["error"] = str(e)
-        
+
         return results

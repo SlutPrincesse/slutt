@@ -1,12 +1,13 @@
 """
 Reactive Ambient Shader Pipeline - Updates visual background themes based on CPU load, latency, and status
 """
+import math
 import threading
 import time
-import math
-from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class ShaderTheme(Enum):
@@ -37,17 +38,17 @@ class AmbientShaderPipeline:
         self._config = ShaderConfig()
         self._lock = threading.RLock()
         self._running = False
-        self._update_thread: Optional[threading.Thread] = None
-        self._metrics: Dict[str, float] = {}
-        self._theme_rules: Dict[ShaderTheme, Callable[[Dict[str, float]], bool]] = {}
-        self._callbacks: Dict[str, List[Callable]] = {
+        self._update_thread: threading.Thread | None = None
+        self._metrics: dict[str, float] = {}
+        self._theme_rules: dict[ShaderTheme, Callable[[dict[str, float]], bool]] = {}
+        self._callbacks: dict[str, list[Callable]] = {
             "theme_changed": [],
             "config_updated": [],
             "metrics_updated": []
         }
-        
+
         self._register_default_rules()
-    
+
     def _register_default_rules(self):
         self._theme_rules[ShaderTheme.ERROR] = lambda m: m.get("error_rate", 0) > 0.1
         self._theme_rules[ShaderTheme.HIGH_LOAD] = lambda m: m.get("cpu_percent", 0) > 80
@@ -55,35 +56,35 @@ class AmbientShaderPipeline:
         self._theme_rules[ShaderTheme.SUCCESS] = lambda m: m.get("success_rate", 0) > 0.9 and m.get("cpu_percent", 0) < 30
         self._theme_rules[ShaderTheme.ACTIVE] = lambda m: m.get("active_tasks", 0) > 0
         self._theme_rules[ShaderTheme.IDLE] = lambda m: m.get("active_tasks", 0) == 0
-    
+
     def start(self):
         if self._running:
             return
         self._running = True
         self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
         self._update_thread.start()
-    
+
     def stop(self):
         self._running = False
         if self._update_thread:
             self._update_thread.join(timeout=2.0)
-    
-    def update_metrics(self, metrics: Dict[str, float]):
+
+    def update_metrics(self, metrics: dict[str, float]):
         with self._lock:
             self._metrics.update(metrics)
-        
+
         self._notify_metrics_updated(metrics)
         self._evaluate_theme()
-    
+
     def _update_loop(self):
         while self._running:
             time.sleep(self.update_interval)
             self._evaluate_theme()
             self._animate()
-    
+
     def _evaluate_theme(self):
         new_theme = self._config.theme
-        
+
         # Check rules in priority order
         priority = [
             ShaderTheme.ERROR,
@@ -93,10 +94,10 @@ class AmbientShaderPipeline:
             ShaderTheme.ACTIVE,
             ShaderTheme.IDLE
         ]
-        
+
         with self._lock:
             metrics = self._metrics.copy()
-        
+
         for theme in priority:
             if theme in self._theme_rules:
                 try:
@@ -105,10 +106,10 @@ class AmbientShaderPipeline:
                         break
                 except Exception:
                     pass
-        
+
         if new_theme != self._config.theme:
             self.set_theme(new_theme)
-    
+
     def _animate(self):
         with self._lock:
             if self._config.pulse_enabled:
@@ -116,12 +117,12 @@ class AmbientShaderPipeline:
                 t = time.time() * self._config.animation_speed
                 pulse = (math.sin(t) + 1) / 2  # 0 to 1
                 self._config.intensity = 0.3 + 0.4 * pulse
-    
+
     def set_theme(self, theme: ShaderTheme):
         with self._lock:
             old_theme = self._config.theme
             self._config.theme = theme
-            
+
             # Apply theme-specific config
             theme_configs = {
                 ShaderTheme.IDLE: {"color_primary": "#004422", "intensity": 0.2, "animation_speed": 0.5},
@@ -131,21 +132,21 @@ class AmbientShaderPipeline:
                 ShaderTheme.WARNING: {"color_primary": "#ffaa00", "intensity": 0.7, "animation_speed": 1.5},
                 ShaderTheme.SUCCESS: {"color_primary": "#00ff44", "intensity": 0.5, "animation_speed": 0.8},
             }
-            
+
             if theme in theme_configs:
                 for key, value in theme_configs[theme].items():
                     setattr(self._config, key, value)
-        
+
         self._notify_theme_changed(old_theme, theme)
         self._notify_config_updated()
-    
+
     def set_config(self, **kwargs):
         with self._lock:
             for key, value in kwargs.items():
                 if hasattr(self._config, key):
                     setattr(self._config, key, value)
         self._notify_config_updated()
-    
+
     def get_config(self) -> ShaderConfig:
         with self._lock:
             return ShaderConfig(
@@ -159,8 +160,8 @@ class AmbientShaderPipeline:
                 blur_radius=self._config.blur_radius,
                 pulse_enabled=self._config.pulse_enabled
             )
-    
-    def get_shader_uniforms(self) -> Dict[str, Any]:
+
+    def get_shader_uniforms(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "u_time": time.time(),
@@ -172,41 +173,42 @@ class AmbientShaderPipeline:
                 "u_blur_radius": self._config.blur_radius,
                 "u_theme": self._config.theme.value
             }
-    
-    def _hex_to_rgb(self, hex_color: str) -> List[float]:
+
+    def _hex_to_rgb(self, hex_color: str) -> list[float]:
         hex_color = hex_color.lstrip('#')
-        return [int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4)]
-    
+        return [int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+
     def register_callback(self, event: str, callback: Callable):
         if event in self._callbacks:
             self._callbacks[event].append(callback)
-    
+
     def _notify_theme_changed(self, old: ShaderTheme, new: ShaderTheme):
         for cb in self._callbacks["theme_changed"]:
             try:
                 cb(old, new)
             except Exception:
                 pass
-    
+
     def _notify_config_updated(self):
         for cb in self._callbacks["config_updated"]:
             try:
                 cb(self.get_config())
             except Exception:
                 pass
-    
-    def _notify_metrics_updated(self, metrics: Dict):
+
+    def _notify_metrics_updated(self, metrics: dict):
         for cb in self._callbacks["metrics_updated"]:
             try:
                 cb(metrics)
             except Exception:
                 pass
-    
-    def add_theme_rule(self, theme: ShaderTheme, rule: Callable[[Dict[str, float]], bool]):
+
+    def add_theme_rule(self, theme: ShaderTheme, rule: Callable[[dict[str, float]], bool]):
         self._theme_rules[theme] = rule
 
 
-_shader_pipeline: Optional[AmbientShaderPipeline] = None
+_shader_pipeline: AmbientShaderPipeline | None = None
+
 
 def get_shader_pipeline() -> AmbientShaderPipeline:
     global _shader_pipeline
