@@ -1,5 +1,5 @@
 """
-ShadowGit Core - Git operations for shadow repositories
+ShadowGit Core - Git operations for shadow repositories with LMDB persistence
 """
 import hashlib
 import json
@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 class ShadowGitStatus(Enum):
@@ -37,6 +37,17 @@ class ShadowFile:
             "status": self.status.value,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'ShadowFile':
+        return cls(
+            path=data["path"],
+            hash=data["hash"],
+            size=data["size"],
+            mode=data["mode"],
+            stage=data.get("stage", 0),
+            status=ShadowGitStatus(data.get("status", "clean")),
+        )
+
 
 @dataclass
 class ShadowCommit:
@@ -59,6 +70,18 @@ class ShadowCommit:
             "metadata": self.metadata,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'ShadowCommit':
+        return cls(
+            commit_id=data["commit_id"],
+            message=data["message"],
+            author=data["author"],
+            timestamp=data["timestamp"],
+            parent_ids=data.get("parent_ids", []),
+            tree_hash=data.get("tree_hash", ""),
+            metadata=data.get("metadata", {}),
+        )
+
 
 @dataclass
 class ShadowBranch:
@@ -79,7 +102,13 @@ class ShadowDiff:
 
 
 class ShadowGit:
-    def __init__(self, repo_path: str = ".shadowgit"):
+    def __init__(
+        self,
+        repo_path: str = ".shadowgit",
+        use_lmdb: bool = False,
+        lmdb_path: str = None,
+        lmdb_map_size: int = 1_000_000_000,
+    ):
         self.repo_path = Path(repo_path).resolve()
         self.objects_path = self.repo_path / "objects"
         self.refs_path = self.repo_path / "refs"
@@ -91,8 +120,19 @@ class ShadowGit:
         self._index: dict[str, ShadowFile] = {}
         self._branches: dict[str, ShadowBranch] = {}
         self._commits: dict[str, ShadowCommit] = {}
+        self._current_branch = "main"
+
+        # LMDB persistence
+        self._use_lmdb = use_lmdb
+        self._lmdb_path = lmdb_path or str(self.repo_path / "lmdb")
+        self._lmdb_map_size = lmdb_map_size
+        self._lmdb_env = None
+        self._lmdb_dbs: dict[str, Any] = {}
 
     async def init(self, bare: bool = False) -> bool:
+        if self._use_lmdb:
+            return await self._init_lmdb()
+
         if self.repo_path.exists():
             return await self._load()
 
@@ -111,13 +151,140 @@ class ShadowGit:
         self._initialized = True
         return True
 
+    async def _init_lmdb(self) -> bool:
+        """Initialize with LMDB backend."""
+        try:
+            import lmdb
+        except ImportError:
+            raise RuntimeError("LMDB not available. Install with: pip install lmdb")
+
+        import os
+        os.makedirs(self._lmdb_path, exist_ok=True)
+
+        self._lmdb_env = lmdb.open(
+            self._lmdb_path,
+            map_size=self._lmdb_map_size,
+            max_dbs=20
+        )
+
+        # Create databases for different data types
+        with self._lmdb_env.begin(write=True) as txn:
+            self._lmdb_dbs["index"] = self._lmdb_env.open_db(b"index", txn=txn, create=True)
+            self._lmdb_dbs["branches"] = self._lmdb_env.open_db(b"branches", txn=txn, create=True)
+            self._lmdb_dbs["commits"] = self._lmdb_env.open_db(b"commits", txn=txn, create=True)
+            self._lmdb_dbs["objects"] = self._lmdb_env.open_db(b"objects", txn=txn, create=True)
+            self._lmdb_dbs["refs"] = self._lmdb_env.open_db(b"refs", txn=txn, create=True)
+            self._lmdb_dbs["head"] = self._lmdb_env.open_db(b"head", txn=txn, create=True)
+
+        # Load existing data if any
+        await self._load_lmdb()
+
+        self._initialized = True
+        return True
+
+    async def _load_lmdb(self):
+        """Load data from LMDB."""
+        if not self._lmdb_env:
+            return
+
+        # Load index
+        with self._lmdb_env.begin(db=self._lmdb_dbs["index"]) as txn:
+            cursor = txn.cursor()
+            for key, value in cursor:
+                file_data = json.loads(value.decode())
+                self._index[key.decode()] = ShadowFile.from_dict(file_data)
+
+        # Load branches
+        with self._lmdb_env.begin(db=self._lmdb_dbs["branches"]) as txn:
+            cursor = txn.cursor()
+            for key, value in cursor:
+                branch_data = json.loads(value.decode())
+                self._branches[key.decode()] = ShadowBranch(**branch_data)
+
+        # Load commits
+        with self._lmdb_env.begin(db=self._lmdb_dbs["commits"]) as txn:
+            cursor = txn.cursor()
+            for key, value in cursor:
+                commit_data = json.loads(value.decode())
+                self._commits[key.decode()] = ShadowCommit.from_dict(commit_data)
+
+        # Load HEAD
+        with self._lmdb_env.begin(db=self._lmdb_dbs["head"]) as txn:
+            head_data = txn.get(b"current")
+            if head_data:
+                self._current_branch = head_data.decode()
+            else:
+                self._current_branch = "main"
+
+    def _get_lmdb_db(self, name: str):
+        """Get LMDB database by name."""
+        return self._lmdb_dbs.get(name)
+
+    def _save_lmdb_index(self):
+        """Save index to LMDB."""
+        if not self._lmdb_env:
+            return
+        with self._lmdb_env.begin(db=self._lmdb_dbs["index"], write=True) as txn:
+            # Clear existing
+            cursor = txn.cursor()
+            for key, _ in cursor:
+                txn.delete(key)
+            # Write new
+            for path, file_info in self._index.items():
+                txn.put(path.encode(), json.dumps(file_info.to_dict()).encode())
+
+    def _save_lmdb_refs(self):
+        """Save branches/refs to LMDB."""
+        if not self._lmdb_env:
+            return
+        with self._lmdb_env.begin(db=self._lmdb_dbs["branches"], write=True) as txn:
+            for name, branch in self._branches.items():
+                txn.put(name.encode(), json.dumps({
+                    "name": branch.name,
+                    "commit_id": branch.commit_id,
+                    "is_remote": branch.is_remote,
+                    "upstream": branch.upstream,
+                }).encode())
+        with self._lmdb_env.begin(db=self._lmdb_dbs["head"], write=True) as txn:
+            txn.put(b"current", self._current_branch.encode())
+
+    def _save_lmdb_commit(self, commit: ShadowCommit):
+        """Save commit to LMDB."""
+        if not self._lmdb_env:
+            return
+        with self._lmdb_env.begin(db=self._lmdb_dbs["commits"], write=True) as txn:
+            txn.put(commit.commit_id.encode(), json.dumps(commit.to_dict()).encode())
+
+    def _save_lmdb_object(self, obj_hash: str, content: bytes):
+        """Save object to LMDB."""
+        if not self._lmdb_env:
+            return
+        with self._lmdb_env.begin(db=self._lmdb_dbs["objects"], write=True) as txn:
+            txn.put(obj_hash.encode(), content)
+
+    def _get_lmdb_object(self, obj_hash: str) -> bytes | None:
+        """Get object from LMDB."""
+        if not self._lmdb_env:
+            return None
+        with self._lmdb_env.begin(db=self._lmdb_dbs["objects"]) as txn:
+            return txn.get(obj_hash.encode())
+
+    async def close(self):
+        """Close LMDB environment."""
+        if self._lmdb_env:
+            self._lmdb_env.close()
+            self._lmdb_env = None
+
     async def _load(self) -> bool:
+        if self._use_lmdb:
+            return True  # Already loaded in _init_lmdb
+
         if not self.repo_path.exists():
             return False
 
         if self.index_path.exists():
             data = json.loads(self.index_path.read_text())
-            self._index = {k: ShadowFile(**v) for k, v in data.items()}
+            self._index = {k: ShadowFile.from_dict(v) for k, v in data.items()}
 
         if self.refs_path.exists():
             for ref_file in (self.refs_path / "heads").glob("*"):
@@ -131,13 +298,19 @@ class ShadowGit:
         return True
 
     async def _save_index(self):
-        data = {k: v.to_dict() for k, v in self._index.items()}
-        self.index_path.write_text(json.dumps(data, indent=2))
+        if self._use_lmdb:
+            self._save_lmdb_index()
+        else:
+            data = {k: v.to_dict() for k, v in self._index.items()}
+            self.index_path.write_text(json.dumps(data, indent=2))
 
     async def _save_refs(self):
-        for name, branch in self._branches.items():
-            ref_file = self.refs_path / "heads" / name
-            ref_file.write_text(branch.commit_id)
+        if self._use_lmdb:
+            self._save_lmdb_refs()
+        else:
+            for name, branch in self._branches.items():
+                ref_file = self.refs_path / "heads" / name
+                ref_file.write_text(branch.commit_id)
 
     def _hash_content(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
@@ -169,10 +342,13 @@ class ShadowGit:
         content = path.read_bytes()
         file_hash = self._hash_content(content)
 
-        obj_dir = self.objects_path / file_hash[:2]
-        obj_dir.mkdir(exist_ok=True)
-        obj_file = obj_dir / file_hash[2:]
-        obj_file.write_bytes(content)
+        if self._use_lmdb:
+            self._save_lmdb_object(file_hash, content)
+        else:
+            obj_dir = self.objects_path / file_hash[:2]
+            obj_dir.mkdir(exist_ok=True)
+            obj_file = obj_dir / file_hash[2:]
+            obj_file.write_bytes(content)
 
         stat = path.stat()
         self._index[str(rel_path)] = ShadowFile(
@@ -203,10 +379,14 @@ class ShadowGit:
         commit_data = json.dumps(commit.to_dict(), indent=2)
         commit_hash = self._hash_content(commit_data.encode())
 
-        obj_dir = self.objects_path / commit_hash[:2]
-        obj_dir.mkdir(exist_ok=True)
-        obj_file = obj_dir / commit_hash[2:]
-        obj_file.write_text(commit_data)
+        if self._use_lmdb:
+            self._save_lmdb_object(commit_hash, commit_data.encode())
+            self._save_lmdb_commit(commit)
+        else:
+            obj_dir = self.objects_path / commit_hash[:2]
+            obj_dir.mkdir(exist_ok=True)
+            obj_file = obj_dir / commit_hash[2:]
+            obj_file.write_text(commit_data)
 
         self._commits[commit.commit_id] = commit
 
@@ -237,6 +417,9 @@ class ShadowGit:
         return None
 
     async def _get_current_branch(self) -> str | None:
+        if self._use_lmdb:
+            return self._current_branch
+
         if self.head_path.exists():
             content = self.head_path.read_text().strip()
             if content.startswith("ref: refs/heads/"):
@@ -247,7 +430,12 @@ class ShadowGit:
         if target in self._branches:
             branch = self._branches[target]
             await self._checkout_commit(branch.commit_id)
-            self.head_path.write_text(f"ref: refs/heads/{target}")
+            self._current_branch = target
+            if not self._use_lmdb:
+                self.head_path.write_text(f"ref: refs/heads/{target}")
+            else:
+                with self._lmdb_env.begin(db=self._lmdb_dbs["head"], write=True) as txn:
+                    txn.put(b"current", target.encode())
             return True
 
         if create:
@@ -256,7 +444,12 @@ class ShadowGit:
                 commit_id = self._branches[current_branch].commit_id
                 self._branches[target] = ShadowBranch(name=target, commit_id=commit_id)
                 await self._save_refs()
-                self.head_path.write_text(f"ref: refs/heads/{target}")
+                self._current_branch = target
+                if not self._use_lmdb:
+                    self.head_path.write_text(f"ref: refs/heads/{target}")
+                else:
+                    with self._lmdb_env.begin(db=self._lmdb_dbs["head"], write=True) as txn:
+                        txn.put(b"current", target.encode())
                 return True
 
         return False
@@ -264,23 +457,38 @@ class ShadowGit:
     async def _checkout_commit(self, commit_id: str):
         commit = self._commits.get(commit_id)
         if not commit:
-            obj_dir = self.objects_path / commit_id[:2]
-            obj_file = obj_dir / commit_id[2:]
-            if obj_file.exists():
-                data = json.loads(obj_file.read_text())
-                commit = ShadowCommit(**data)
-                self._commits[commit_id] = commit
+            if self._use_lmdb:
+                commit_data = self._get_lmdb_object(commit_id)
+                if commit_data:
+                    commit = ShadowCommit.from_dict(json.loads(commit_data.decode()))
+                    self._commits[commit_id] = commit
+            else:
+                obj_dir = self.objects_path / commit_id[:2]
+                obj_file = obj_dir / commit_id[2:]
+                if obj_file.exists():
+                    data = json.loads(obj_file.read_text())
+                    commit = ShadowCommit(**data)
+                    self._commits[commit_id] = commit
 
         if commit and commit.tree_hash:
             await self._restore_tree(commit.tree_hash)
 
     async def _restore_tree(self, tree_hash: str):
-        obj_dir = self.objects_path / tree_hash[:2]
-        obj_file = obj_dir / tree_hash[2:]
-        if not obj_file.exists():
+        tree_content = None
+        if self._use_lmdb:
+            tree_data = self._get_lmdb_object(tree_hash)
+            if tree_data:
+                tree_content = tree_data.decode()
+        else:
+            obj_dir = self.objects_path / tree_hash[:2]
+            obj_file = obj_dir / tree_hash[2:]
+            if not obj_file.exists():
+                return
+            tree_content = obj_file.read_text()
+
+        if not tree_content:
             return
 
-        tree_content = obj_file.read_text()
         self._index = {}
 
         for line in tree_content.strip().split('\n'):
@@ -289,9 +497,17 @@ class ShadowGit:
             parts = line.split(' ', 2)
             if len(parts) == 3:
                 mode, file_hash, path = parts
-                obj_file_path = self.objects_path / file_hash[:2] / file_hash[2:]
-                if obj_file_path.exists():
-                    content = obj_file_path.read_bytes()
+                content = None
+                if self._use_lmdb:
+                    obj_data = self._get_lmdb_object(file_hash)
+                    if obj_data:
+                        content = obj_data
+                else:
+                    obj_file_path = self.objects_path / file_hash[:2] / file_hash[2:]
+                    if obj_file_path.exists():
+                        content = obj_file_path.read_bytes()
+
+                if content is not None:
                     dest = self.repo_path.parent / path
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(content)
@@ -373,6 +589,12 @@ class ShadowGit:
         return diffs
 
     def _get_object_content(self, obj_hash: str) -> str:
+        if self._use_lmdb:
+            obj_data = self._get_lmdb_object(obj_hash)
+            if obj_data:
+                return obj_data.decode(errors='ignore')
+            return ""
+
         obj_file = self.objects_path / obj_hash[:2] / obj_hash[2:]
         if obj_file.exists():
             return obj_file.read_text(errors='ignore')
@@ -393,12 +615,18 @@ class ShadowGit:
             while commit_id and len(commits) < limit:
                 commit = self._commits.get(commit_id)
                 if not commit:
-                    obj_dir = self.objects_path / commit_id[:2]
-                    obj_file = obj_dir / commit_id[2:]
-                    if obj_file.exists():
-                        data = json.loads(obj_file.read_text())
-                        commit = ShadowCommit(**data)
-                        self._commits[commit_id] = commit
+                    if self._use_lmdb:
+                        commit_data = self._get_lmdb_object(commit_id)
+                        if commit_data:
+                            commit = ShadowCommit.from_dict(json.loads(commit_data.decode()))
+                            self._commits[commit_id] = commit
+                    else:
+                        obj_dir = self.objects_path / commit_id[:2]
+                        obj_file = obj_dir / commit_id[2:]
+                        if obj_file.exists():
+                            data = json.loads(obj_file.read_text())
+                            commit = ShadowCommit(**data)
+                            self._commits[commit_id] = commit
 
                 if commit:
                     commits.append(commit)

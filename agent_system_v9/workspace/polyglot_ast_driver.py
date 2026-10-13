@@ -17,8 +17,8 @@ try:
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
-    TSLanguage = None
-    TSParser = None
+    TSLanguage = type(None)
+    TSParser = type(None)
 
 
 class Language(Enum):

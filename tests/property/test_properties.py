@@ -3,11 +3,16 @@ Property-based tests using Hypothesis for core algorithms
 """
 import pytest
 from hypothesis import given, strategies as st, settings, assume
-from hypothesis.strategies import integers, text, lists, dictionaries, booleans, floats
+from hypothesis.strategies import integers, text, lists, dictionaries, booleans, floats, sets
 
 from agent_system_v9.core.registry import SystemRegistry, ComponentMetadata, ComponentState
 from agent_system_v9.core.events import EventBus, Event, EventPriority
 from agent_system_v9.core.plugins import PluginManager, PluginMetadata, PluginState
+from agent_system_v9.shadowgit import RemoteConfig, RemoteProtocol, SyncResult, SyncDirection, SyncStatus
+from agent_system_v9.evolution import EvolutionConfig
+from agent_system_v9.workspace import WorkspaceConfig, WorkspaceType
+from agent_system_v9.distributed import LoadBalancer, Backend, BackendStatus
+from datetime import datetime, timedelta
 
 
 class TestRegistryProperties:
@@ -18,27 +23,28 @@ class TestRegistryProperties:
     def test_component_name_registration(self, name):
         """Test that any valid string can be used as component name."""
         registry = SystemRegistry()
-        metadata = ComponentMetadata(
+        component_id = registry.register(
             name=name,
+            version="1.0.0",
             section="test",
             capabilities=["test"]
         )
-        registry.register_component(metadata)
-        assert registry.get_component(name) is not None
-        assert registry.get_component(name).name == name
+        metadata = registry.get_metadata(component_id)
+        assert metadata is not None
+        assert metadata.name == name
 
-    @given(st.lists(st.text(min_size=1, max_size=20), min_size=1, max_size=5))
+    @given(st.lists(st.text(min_size=1, max_size=20), min_size=1, max_size=5, unique=True))
     @settings(max_examples=30)
     def test_capability_indexing(self, capabilities):
         """Test that components are indexed by all their capabilities."""
         registry = SystemRegistry()
-        metadata = ComponentMetadata(
+        component_id = registry.register(
             name="test_component",
+            version="1.0.0",
             section="test",
             capabilities=capabilities
         )
-        registry.register_component(metadata)
-        
+
         for cap in capabilities:
             results = registry.get_by_capability(cap)
             assert len(results) == 1
@@ -49,25 +55,29 @@ class TestRegistryProperties:
     def test_dependency_tracking(self, num_deps):
         """Test dependency tracking with multiple dependencies."""
         registry = SystemRegistry()
-        
+
         # Create dependencies first
         dep_names = [f"dep_{i}" for i in range(num_deps)]
         for dep in dep_names:
-            registry.register_component(ComponentMetadata(
-                name=dep, section="test", capabilities=[]
-            ))
-        
+            registry.register(
+                name=dep,
+                version="1.0.0",
+                section="test",
+                capabilities=[]
+            )
+
         # Create component with dependencies
-        metadata = ComponentMetadata(
+        component_id = registry.register(
             name="main",
+            version="1.0.0",
             section="test",
             capabilities=[],
             dependencies=dep_names
         )
-        registry.register_component(metadata)
-        
-        component = registry.get_component("main")
-        assert set(component.dependencies) == set(dep_names)
+
+        metadata = registry.get_metadata(component_id)
+        assert metadata is not None
+        assert set(metadata.dependencies) == set(dep_names)
 
 
 class TestEventBusProperties:
@@ -79,36 +89,36 @@ class TestEventBusProperties:
         """Test events can be created with any valid type and metadata."""
         bus = EventBus()
         received = []
-        
+
         def handler(event):
             received.append(event)
-        
+
         bus.subscribe(event_type, handler)
-        
-        event = Event(type=event_type, payload="test", metadata=metadata)
-        bus.publish_sync(event)
-        
+
+        event = Event(event_type=event_type, payload="test", metadata=metadata)
+        bus.publish(event, blocking=True)
+
         assert len(received) == 1
-        assert received[0].type == event_type
+        assert received[0].event_type == event_type
         assert received[0].metadata == metadata
 
-    @given(st.lists(st.text(min_size=1, max_size=10), min_size=1, max_size=5))
+    @given(st.sets(st.text(min_size=1, max_size=10), min_size=1, max_size=5))
     @settings(max_examples=30)
     def test_multiple_subscribers(self, event_types):
         """Test multiple subscribers receive events."""
         bus = EventBus()
         received_counts = {et: 0 for et in event_types}
-        
+
         for et in event_types:
             def make_handler(event_type):
                 def handler(event):
                     received_counts[event_type] += 1
                 return handler
             bus.subscribe(et, make_handler(et))
-        
+
         for et in event_types:
-            bus.publish_sync(Event(type=et, payload="test"))
-        
+            bus.publish(Event(event_type=et, payload="test"), blocking=True)
+
         for et in event_types:
             assert received_counts[et] == 1
 
@@ -118,17 +128,18 @@ class TestEventBusProperties:
         """Test events are processed in priority order."""
         bus = EventBus()
         processed = []
-        
+
         def handler(event):
             processed.append(event.priority)
-        
+
         bus.subscribe("priority_test", handler)
-        
-        # Publish events with random priorities
-        priorities = [EventPriority(i % 4) for i in range(num_events)]
+
+        # EventPriority values: LOW=0, NORMAL=50, HIGH=100, CRITICAL=200
+        priority_values = [EventPriority.LOW, EventPriority.NORMAL, EventPriority.HIGH, EventPriority.CRITICAL]
+        priorities = [priority_values[i % 4] for i in range(num_events)]
         for p in priorities:
-            bus.publish_sync(Event(type="priority_test", payload="test", priority=p))
-        
+            bus.publish(Event(event_type="priority_test", payload="test", priority=p), blocking=True)
+
         # High priority events should be processed first
         # Note: This depends on implementation - some buses process in subscription order
         assert len(processed) == num_events
@@ -145,7 +156,7 @@ class TestPluginManagerProperties:
             name=name,
             version=version,
             description="Test plugin",
-            author="Test",
+            entry_point="test.entry",
             capabilities=["test"]
         )
         assert metadata.name == name
@@ -159,7 +170,7 @@ class TestPluginManagerProperties:
             name="test",
             version="1.0.0",
             description="Test",
-            author="Test",
+            entry_point="test.entry",
             capabilities=capabilities
         )
         assert set(metadata.capabilities) == set(capabilities)
@@ -172,7 +183,6 @@ class TestShadowGitSyncProperties:
     @settings(max_examples=30)
     def test_remote_config_creation(self, name, url):
         """Test remote config creation with various names and URLs."""
-        from agent_system_v9.shadowgit import RemoteConfig, RemoteProtocol
         config = RemoteConfig(name=name, url=url, protocol=RemoteProtocol.HTTPS)
         assert config.name == name
         assert config.url == url
@@ -181,9 +191,6 @@ class TestShadowGitSyncProperties:
     @settings(max_examples=20)
     def test_sync_result_duration(self, duration_ms):
         """Test sync result duration calculation."""
-        from agent_system_v9.shadowgit import SyncResult, SyncDirection, SyncStatus
-        from datetime import datetime, timedelta
-        
         result = SyncResult(
             operation_id="test",
             remote_name="origin",
@@ -193,7 +200,7 @@ class TestShadowGitSyncProperties:
         # Manually set times to test duration
         result.started_at = datetime.now() - timedelta(milliseconds=duration_ms)
         result.complete(success=True)
-        
+
         # Duration should be approximately correct (within 100ms tolerance)
         assert abs(result.duration * 1000 - duration_ms) < 200
 
@@ -205,24 +212,22 @@ class TestEvolutionProperties:
     @settings(max_examples=20)
     def test_population_size_and_generations(self, pop_size, generations):
         """Test evolution config with various population sizes and generations."""
-        from agent_system_v9.evolution import EvolutionConfig
         config = EvolutionConfig(
             population_size=pop_size,
-            max_generations=generations,
+            generations=generations,
             mutation_rate=0.1,
             crossover_rate=0.7
         )
         assert config.population_size == pop_size
-        assert config.max_generations == generations
+        assert config.generations == generations
 
     @given(st.floats(min_value=0.0, max_value=1.0))
     @settings(max_examples=20)
     def test_mutation_rate_bounds(self, rate):
         """Test mutation rate accepts any valid float."""
-        from agent_system_v9.evolution import EvolutionConfig
         config = EvolutionConfig(
             population_size=10,
-            max_generations=10,
+            generations=10,
             mutation_rate=rate,
             crossover_rate=0.7
         )
@@ -232,18 +237,17 @@ class TestEvolutionProperties:
 class TestWorkspaceProperties:
     """Property-based tests for Workspace."""
 
-    @given(st.text(min_size=1, max_size=50), st.integers(min_value=0, max_value=100))
+    @given(st.text(min_size=1, max_size=50))
     @settings(max_examples=30)
-    def test_workspace_config(self, name, max_files):
+    def test_workspace_config(self, name):
         """Test workspace config with various parameters."""
-        from agent_system_v9.workspace import WorkspaceConfig, WorkspaceType
         config = WorkspaceConfig(
             name=name,
-            workspace_type=WorkspaceType.ISOLATED,
-            max_files=max_files
+            workspace_type=WorkspaceType.DEVELOPMENT,
+            base_path="./workspaces"
         )
         assert config.name == name
-        assert config.max_files == max_files
+        assert config.workspace_type == WorkspaceType.DEVELOPMENT
 
 
 class TestDistributedProperties:
@@ -253,14 +257,13 @@ class TestDistributedProperties:
     @settings(max_examples=20)
     def test_load_balancer_weights(self, weight, timeout):
         """Test load balancer backend weights."""
-        from agent_system_v9.distributed import LoadBalancer, Backend
         lb = LoadBalancer()
         backend = Backend(
-            id="test",
+            backend_id="test",
             host="localhost",
             port=8080,
             weight=weight,
-            timeout=timeout
+            max_connections=int(timeout * 10)
         )
         lb.add_backend(backend)
         assert lb.get_backend("test").weight == weight
