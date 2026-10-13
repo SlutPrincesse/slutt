@@ -78,7 +78,7 @@ class FitnessFunction(ABC):
 
 
 class EvolutionEngine:
-    def __init__(self, config: EvolutionConfig = None):
+    def __init__(self, config: EvolutionConfig | None = None) -> None:
         self.config = config or EvolutionConfig()
         self.population: list[Individual] = []
         self.generation = 0
@@ -88,7 +88,7 @@ class EvolutionEngine:
         self.best_fitness = float('-inf') if self.config.maximize else float('inf')
         self._stagnation_counter = 0
 
-    def initialize_population(self, generator: Callable[[], dict[str, Any]]):
+    def initialize_population(self, generator: Callable[[], dict[str, Any]]) -> None:
         self.population = []
         for _ in range(self.config.population_size):
             genome = generator()
@@ -126,14 +126,14 @@ class EvolutionEngine:
             convergence_generation=self.generation - self._stagnation_counter if self._stagnation_counter >= self.config.early_stopping else -1,
         )
 
-    async def _evaluate_population(self, fitness_fn: FitnessFunction):
+    async def _evaluate_population(self, fitness_fn: FitnessFunction) -> None:
         tasks = [self._evaluate_individual(ind, fitness_fn) for ind in self.population]
         await asyncio.gather(*tasks)
 
-    async def _evaluate_individual(self, individual: Individual, fitness_fn: FitnessFunction):
+    async def _evaluate_individual(self, individual: Individual, fitness_fn: FitnessFunction) -> None:
         individual.fitness = fitness_fn.evaluate(individual)
 
-    def _update_best(self):
+    def _update_best(self) -> None:
         sorted_pop = sorted(self.population, key=lambda i: i.fitness, reverse=self.config.maximize)
         current_best = sorted_pop[0]
 
@@ -146,7 +146,7 @@ class EvolutionEngine:
         else:
             self._stagnation_counter += 1
 
-    def _record_history(self):
+    def _record_history(self) -> None:
         self.fitness_history.append(self.best_fitness)
         self.population_history.append([ind.copy() for ind in self.population])
 
@@ -161,7 +161,7 @@ class EvolutionEngine:
         improvement = max(recent) - min(recent) if self.config.maximize else min(recent) - max(recent)
         return improvement < self.config.diversity_threshold
 
-    async def _selection(self):
+    async def _selection(self) -> None:
         if self.config.selection_method == SelectionMethod.TOURNAMENT:
             self.population = await self._tournament_selection()
         elif self.config.selection_method == SelectionMethod.ROULETTE:
@@ -243,7 +243,7 @@ class EvolutionEngine:
 
         return new_pop
 
-    async def _crossover(self):
+    async def _crossover(self) -> None:
         if self.config.strategy != EvolutionStrategy.GENETIC_ALGORITHM:
             return
 
@@ -261,8 +261,8 @@ class EvolutionEngine:
 
         self.population = new_pop
 
-    def _crossover_genomes(self, genome1: dict, genome2: dict) -> dict:
-        child = {}
+    def _crossover_genomes(self, genome1: dict[str, Any], genome2: dict[str, Any]) -> dict[str, Any]:
+        child: dict[str, Any] = {}
         all_keys = set(genome1.keys()) | set(genome2.keys())
 
         for key in all_keys:
@@ -278,11 +278,11 @@ class EvolutionEngine:
 
         return child
 
-    async def _mutation(self):
+    async def _mutation(self) -> None:
         for individual in self.population[self.config.elite_size:]:
             await self._mutate_individual(individual)
 
-    async def _mutate_individual(self, individual: Individual):
+    async def _mutate_individual(self, individual: Individual) -> None:
         for key, value in individual.genome.items():
             if random.random() < self.config.mutation_rate:
                 individual.genome[key] = self._mutate_value(value)
@@ -310,18 +310,17 @@ class EvolutionEngine:
             return value
         return value
 
-    def _age_population(self):
+    def _age_population(self) -> None:
         for ind in self.population:
             ind.age += 1
 
-
 class MultiObjectiveEvolution(EvolutionEngine):
-    def __init__(self, config: EvolutionConfig = None, objectives: list[FitnessFunction] = None):
+    def __init__(self, config: EvolutionConfig | None = None, objectives: list[FitnessFunction] | None = None) -> None:
         super().__init__(config)
         self.objectives = objectives or []
         self.pareto_front: list[Individual] = []
 
-    def _update_best(self):
+    def _update_best(self) -> None:
         self._compute_pareto_front()
 
         if self.pareto_front:
@@ -336,7 +335,7 @@ class MultiObjectiveEvolution(EvolutionEngine):
         else:
             self._stagnation_counter += 1
 
-    def _compute_pareto_front(self):
+    def _compute_pareto_front(self) -> None:
         self.pareto_front = []
 
         for ind in self.population:
@@ -360,12 +359,12 @@ class MultiObjectiveEvolution(EvolutionEngine):
 
 
 class AdaptiveEvolution(EvolutionEngine):
-    def __init__(self, config: EvolutionConfig = None):
+    def __init__(self, config: EvolutionConfig | None = None) -> None:
         super().__init__(config)
         self.mutation_rate_history: list[float] = []
         self.diversity_history: list[float] = []
 
-    async def _mutation(self):
+    async def _mutation(self) -> None:
         diversity = self._compute_diversity()
         self.diversity_history.append(diversity)
 
@@ -391,7 +390,7 @@ class AdaptiveEvolution(EvolutionEngine):
 
         return total_distance / count if count > 0 else 0.0
 
-    def _genome_distance(self, g1: dict, g2: dict) -> float:
+    def _genome_distance(self, g1: dict[str, Any], g2: dict[str, Any]) -> float:
         all_keys = set(g1.keys()) | set(g2.keys())
         if not all_keys:
             return 0.0
