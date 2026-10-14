@@ -69,10 +69,14 @@ class EventBus:
 
     def subscribe(self, event_type: str, handler: Callable, pattern: bool = False):
         with self._lock:
-            if pattern or "*" in event_type or "?" in event_type:
-                self._pattern_subscribers[event_type].append(handler)
-            else:
-                self._subscribers[event_type].append(handler)
+            if pattern or "*" in event_type or "?" in event_type or "[" in event_type:
+                if not pattern and "*" not in event_type and "[" not in event_type:
+                    pass
+                else:
+                    self._pattern_subscribers[event_type].append(handler)
+                    return
+            self._subscribers[event_type].append(handler)
+            return
 
     def unsubscribe(self, event_type: str, handler: Callable):
         with self._lock:
