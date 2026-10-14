@@ -543,3 +543,17 @@ def shutdown_system():
     """Gracefully shutdown all system components"""
     # Stop in reverse order
     pass
+
+# Utilities
+try:
+    from .utils import find_gguf_models, get_api_config, set_api_config
+    __all__.extend(["find_gguf_models", "get_api_config", "set_api_config"])
+except Exception:
+    pass
+
+# Launcher
+try:
+    from .launcher import launch, main, start_llama_server, discover_and_select_model
+    __all__.extend(["launch", "main", "start_llama_server", "discover_and_select_model"])
+except Exception:
+    pass
