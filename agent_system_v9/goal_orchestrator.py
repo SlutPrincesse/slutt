@@ -101,7 +101,7 @@ class GoalOrchestrator:
                     pass
             if step["name"] == "persist" and self.shadow:
                 try:
-                    self.shadow.commit(f"auto: {plan.goal[:60]}")
+                    await self.shadow.commit(f"auto: {plan.goal[:60]}")
                 except Exception:
                     pass
             self.eb.publish(Event(event_type="orchestrator.step.done", payload={"step": step}), blocking=False)
