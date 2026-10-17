@@ -599,3 +599,10 @@ try:
     __all__.extend(["AgentCore", "run_agent"])
 except Exception:
     pass
+
+# Facade
+try:
+    from .agent import Agent, create_agent
+    __all__.extend(["Agent", "create_agent"])
+except Exception:
+    pass
