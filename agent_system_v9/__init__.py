@@ -613,3 +613,10 @@ try:
     __all__.extend(["LocalInference", "get_local_inference"])
 except Exception:
     pass
+
+# Agent loop
+try:
+    from .agent_loop import AgentLoop, AgentSession, start_loop
+    __all__.extend(["AgentLoop", "AgentSession", "start_loop"])
+except Exception:
+    pass
