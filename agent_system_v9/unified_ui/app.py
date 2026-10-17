@@ -157,6 +157,10 @@ class UnifiedApp(App):
 
     def on_mount(self):
         self.bridge.start()
+        try:
+            self.bridge.wire()
+        except Exception:
+            pass
         self.log_widget.write_line(f"[{datetime.now().strftime('%H:%M:%S')}] Unified UI initialized")
         self.log_widget.write_line("All subsystems: READY")
 

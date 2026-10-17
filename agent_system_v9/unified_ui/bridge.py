@@ -62,3 +62,17 @@ class UnifiedBridge:
 
     def stop(self):
         self._running = False
+
+    def _handle_event(self, event):
+        try:
+            self.state.events.append({
+                'type': event.event_type,
+                'payload': str(event.payload)[:100] if event.payload is not None else None,
+                'timestamp': event.timestamp,
+                'source': event.source,
+            })
+        except Exception:
+            pass
+
+    def wire(self):
+        self.event_bus.subscribe_all(self._handle_event)
