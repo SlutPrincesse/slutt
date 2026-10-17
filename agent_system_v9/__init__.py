@@ -564,3 +564,10 @@ try:
     __all__.extend(["UnifiedApp", "run_unified"])
 except Exception:
     pass
+
+# Auto orchestrator
+try:
+    from .orchestrator_auto import AutoOrchestrator, run_auto
+    __all__.extend(["AutoOrchestrator", "run_auto"])
+except Exception:
+    pass
