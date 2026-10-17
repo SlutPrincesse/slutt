@@ -606,3 +606,10 @@ try:
     __all__.extend(["Agent", "create_agent"])
 except Exception:
     pass
+
+# Local inference
+try:
+    from .providers.local_inference import LocalInference, get_local_inference
+    __all__.extend(["LocalInference", "get_local_inference"])
+except Exception:
+    pass
