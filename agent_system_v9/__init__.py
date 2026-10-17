@@ -592,3 +592,10 @@ try:
     __all__.extend(["run_autonomous"])
 except Exception:
     pass
+
+# Agent core
+try:
+    from .agent_core import AgentCore, run_agent
+    __all__.extend(["AgentCore", "run_agent"])
+except Exception:
+    pass
