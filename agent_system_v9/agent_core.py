@@ -63,7 +63,7 @@ class AgentCore:
                         pass
                 if self.shadow:
                     try:
-                        self.shadow.commit(f"agent iter {i}: {goal[:40]}")
+                        await self.shadow.commit(f"agent iter {i}: {goal[:40]}")
                     except Exception:
                         pass
             except Exception as e:
