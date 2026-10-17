@@ -23,6 +23,11 @@ def create_api(bridge) -> Any:
     async def status() -> Dict[str, Any]:
         return {"status": "ok", "codename": "NEURO-CRANIAL OVERLORD", "version": "9.0.0"}
 
+    @app.get("/")
+    async def root():
+        from .web import HTML
+        return HTMLResponse(HTML)
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()

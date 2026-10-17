@@ -76,3 +76,7 @@ class UnifiedBridge:
 
     def wire(self):
         self.event_bus.subscribe_all(self._handle_event)
+
+    def update_components(self, data: Dict[str, Any]):
+        self.state.components.update(data)
+        self._notify()
