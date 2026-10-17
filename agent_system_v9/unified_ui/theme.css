@@ -1,0 +1,40 @@
+Screen {
+    background: #0a0e14;
+    color: #c9d1d9;
+}
+
+#header {
+    height: 3;
+    background: linear-gradient(90deg, #238636 0%, #1f6feb 100%);
+    color: #ffffff;
+    text-align: center;
+    padding-top: 1;
+}
+
+#sidebar {
+    width: 24;
+    background: #161b22;
+    border-right: solid #30363d;
+}
+
+#content {
+    width: 1fr;
+    background: #0a0e14;
+}
+
+#footer {
+    height: 2;
+    background: #161b22;
+    color: #8b949e;
+    padding-left: 2;
+}
+
+Panel {
+    border: solid #30363d;
+    background: #161b22;
+    margin: 1;
+}
+
+Button {
+    margin: 0 1;
+}

@@ -557,3 +557,10 @@ try:
     __all__.extend(["launch", "main", "start_llama_server", "discover_and_select_model"])
 except Exception:
     pass
+
+# Unified UI
+try:
+    from .unified_ui import UnifiedApp, run_unified
+    __all__.extend(["UnifiedApp", "run_unified"])
+except Exception:
+    pass

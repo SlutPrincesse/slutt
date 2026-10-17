@@ -82,6 +82,9 @@ async def main():
     parser.add_argument("--api-base", type=str, help="Base URL for OpenAI-compatible provider")
     parser.add_argument("--port", type=int, default=8080, help="Port for services")
     parser.add_argument("--host", type=str, default="localhost", help="Host for services")
+    parser.add_argument("--unified", action="store_true", help="Start unified UI (default)")
+    parser.add_argument("--term-only", action="store_true", help="Unified UI terminal only")
+    parser.add_argument("--web-only", action="store_true", help="Unified UI web only")
 
     args = parser.parse_args()
 
@@ -114,6 +117,12 @@ async def main():
         start_llama_server(model_path, args.host, args.port)
         return
 
+    # Unified UI (default)
+    use_unified = args.unified or (not any([args.tui, args.gui, args.llama_server]))
+    if use_unified and run_unified:
+        run_unified(term=not args.web_only, web=args.web_only or False)
+        return
+
     if args.gui:
         await run_with_gui(dev=True, tui=args.tui)
         return
@@ -124,12 +133,20 @@ async def main():
 
     print(f"{__codename__} v{__version__}")
     print("\nUsage:")
-    print("  python main.py --tui        Start TUI")
-    print("  python main.py --gui        Start GUI + webapp")
+    print("  python main.py              Start unified UI (default)")
+    print("  python main.py --unified    Start unified UI")
+    print("  python main.py --tui         Start TUI")
+    print("  python main.py --gui         Start GUI + webapp")
     print("  python main.py --gui --tui  Start GUI + TUI")
-    print("  python main.py --llama-server  Start llama-server with model selector")
-    print("  python main.py --version    Show version")
+    print("  python main.py --llama-server  Start llama-server")
+    print("  python main.py --version     Show version")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# Add unified UI support
+try:
+    from agent_system_v9 import run_unified
+except Exception:
+    run_unified = None
