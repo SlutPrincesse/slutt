@@ -571,3 +571,24 @@ try:
     __all__.extend(["AutoOrchestrator", "run_auto"])
 except Exception:
     pass
+
+# Full goal orchestrator
+try:
+    from .goal_orchestrator import GoalOrchestrator, orchestrate
+    __all__.extend(["GoalOrchestrator", "orchestrate"])
+except Exception:
+    pass
+
+# Self heal
+try:
+    from .self_heal import SelfHealer, heal
+    __all__.extend(["SelfHealer", "heal"])
+except Exception:
+    pass
+
+# Autonomy harness
+try:
+    from .autonomy import run_autonomous
+    __all__.extend(["run_autonomous"])
+except Exception:
+    pass
