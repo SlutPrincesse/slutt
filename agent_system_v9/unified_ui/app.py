@@ -181,3 +181,16 @@ def run_unified(bridge: UnifiedBridge | None = None, web: bool = False, term: bo
         app.run()
         return app
     return None
+
+class DistributedPanel(Static):
+    def render(self):
+        from rich.panel import Panel
+        return Panel("RPC • DAG • BFT • CRDT • LoadBalancer\n[dim]Distributed ready[/dim]",
+                     title="DISTRIBUTED", border_style="blue")
+
+
+class ShadowGitPanel(Static):
+    def render(self):
+        from rich.panel import Panel
+        return Panel("Index • Sync • LFS • Commits • Rollback\n[dim]Git-native state[/dim]",
+                     title="SHADOWGIT", border_style="green")
