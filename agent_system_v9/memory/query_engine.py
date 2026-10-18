@@ -337,66 +337,6 @@ class QueryEngine:
             )
             self.code_memory.add_node(node)
 
-    def ingest_ablation_findings(self, findings: list[dict[str, Any]], source: str = "ablation"):
-        for finding in findings:
-            entity = Entity(
-                id="",
-                entity_type=EntityType.FINDING,
-                name=finding.get("type", "finding"),
-                qualified_name=f"{source}:{finding.get('id', 'unknown')}",
-                properties=finding,
-                description=finding.get("description", ""),
-                source=source,
-                confidence=finding.get("confidence", 0.8),
-            )
-            self.knowledge_graph.add_entity(entity)
-
-            if "location" in finding:
-                loc_entity = Entity(
-                    id="",
-                    entity_type=EntityType.CODE_FILE,
-                    name=finding["location"].get("file", "unknown"),
-                    qualified_name=finding["location"].get("file", "unknown"),
-                    properties=finding["location"],
-                    source=source,
-                )
-                self.knowledge_graph.add_entity(loc_entity)
-
-                relation = Relation(
-                    id="",
-                    source_id=entity.id,
-                    target_id=loc_entity.id,
-                    relation_type=RelationType.REFERENCES,
-                    properties={"finding_type": finding.get("type")},
-                )
-                self.knowledge_graph.add_relation(relation)
-
-    def ingest_corecoder_result(self, task: str, result: dict[str, Any], source: str = "corecoder"):
-        episode = Episode(
-            id="",
-            episode_type=EpisodeType.TASK_EXECUTION,
-            title=f"CoreCoder: {task[:100]}",
-            description=task,
-            input_data={"task": task},
-            output_data=result,
-            status=EpisodeType.COMPLETED if result.get("success") else EpisodeType.FAILED,
-            tags=["corecoder", "code_generation"],
-            source=source,
-        )
-        self.episodic_store.add_episode(episode)
-
-        if result.get("files_modified"):
-            for file_path in result["files_modified"]:
-                entity = Entity(
-                    id="",
-                    entity_type=EntityType.CODE_FILE,
-                    name=file_path,
-                    qualified_name=file_path,
-                    properties={"modified_by": "corecoder", "task": task},
-                    source=source,
-                )
-                self.knowledge_graph.add_entity(entity)
-
     def get_stats(self) -> dict[str, Any]:
         return {
             "code_memory": self.code_memory.get_stats(),

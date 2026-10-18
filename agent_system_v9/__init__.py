@@ -274,22 +274,13 @@ from .evolution import (
     StrategyConfig, StrategyResult, StrategySelector, AdaptiveStrategySelector, PortfolioOptimizer, StrategyType,
 )
 
-# Integrations: Ablation, CoreCoder, RedAmon, Cybersec-Toolkit
+# Integrations: Cybersec-Toolkit
 from .integrations import (
-    register_ablation_tools, AblationToolSynthesizer, ABLATION_COMMANDS,
-    register_corecoder_tools, CoreCoderToolSynthesizer, CORECODER_COMMANDS,
-    # RedAmon
-    RedamonOrchestrator, AgentTask, AgentContext, AgentPhase, TaskStatus,
-    OrchestratorIntegration, get_orchestrator_integration, agent_session,
-    KnowledgeBase, Document, KBSearchResult, EmbeddingProvider, VectorStore,
-    InMemoryVectorStore, KnowledgeBaseIntegration, get_knowledge_base_integration,
-    DockerBroker, DockerBrokerConfig, DockerBrokerIntegration, get_docker_broker_integration,
-    ReconModule, ReconPipeline, ReconTarget, ReconResult, ReconModuleType,
-    SubdomainEnumModule, PortScanModule, HTTPProbeModule, NucleiScanModule,
-    KatanaCrawlModule, GraphQLScannerModule, ReconIntegration, get_recon_integration,
-    # Cybersec-Toolkit
-    ToolManager, ToolConfig, ModuleRunner,
-    CybersecToolkitIntegration, get_cybersec_toolkit_integration,
+    CybersecToolkitIntegration,
+    get_cybersec_toolkit_integration,
+    ToolManager,
+    ToolConfig,
+    ModuleRunner,
 )
 
 # TUI & GUI
@@ -456,20 +447,6 @@ __all__ = [
     "DifferentialEvolution", "EvolutionStrategyPlus", "EvolutionStrategyComma",
     "StrategyConfig", "StrategyResult", "StrategySelector", "AdaptiveStrategySelector", "PortfolioOptimizer", "StrategyType",
     # Integrations
-    "register_ablation_tools", "AblationToolSynthesizer", "ABLATION_COMMANDS",
-    "register_corecoder_tools", "CoreCoderToolSynthesizer", "CORECODER_COMMANDS",
-    # RedAmon Orchestrator
-    "RedamonOrchestrator", "AgentTask", "AgentContext", "AgentPhase", "TaskStatus",
-    "OrchestratorIntegration", "get_orchestrator_integration", "agent_session",
-    # RedAmon Knowledge Base
-    "KnowledgeBase", "Document", "KBSearchResult", "EmbeddingProvider", "VectorStore",
-    "InMemoryVectorStore", "KnowledgeBaseIntegration", "get_knowledge_base_integration",
-    # RedAmon Docker Broker
-    "DockerBroker", "DockerBrokerConfig", "DockerBrokerIntegration", "get_docker_broker_integration",
-    # RedAmon Recon
-    "ReconModule", "ReconPipeline", "ReconTarget", "ReconResult", "ReconModuleType",
-    "SubdomainEnumModule", "PortScanModule", "HTTPProbeModule", "NucleiScanModule",
-    "KatanaCrawlModule", "GraphQLScannerModule", "ReconIntegration", "get_recon_integration",
     # Cybersec-Toolkit
     "ToolManager", "ToolConfig", "ModuleRunner",
     "CybersecToolkitIntegration", "get_cybersec_toolkit_integration",
