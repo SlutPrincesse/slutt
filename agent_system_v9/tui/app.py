@@ -11,19 +11,36 @@ from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Container, Vertical
-from textual.reactive import reactive
-from textual.widgets import (
-    Button,
-    Footer,
-    Header,
-    Log,
-    Static,
-    TabbedContent,
-    TabPane,
-)
+
+try:
+    from textual.app import App, ComposeResult
+    from textual.binding import Binding
+    from textual.containers import Container, Vertical
+    from textual.reactive import reactive
+    from textual.widgets import (
+        Button,
+        Footer,
+        Header,
+        Log,
+        Static,
+        TabbedContent,
+        TabPane,
+    )
+    _TEXTUAL_OK = True
+except Exception:  # textual missing/too old in this environment
+    _TEXTUAL_OK = False
+
+    class App:  # type: ignore[no-redef]
+        """Stub so module imports without textual."""
+        def run(self):  # noqa: D401
+            raise RuntimeError("textual is not available")
+
+    ComposeResult = None  # type: ignore[assignment]
+    Binding = object  # type: ignore[assignment]
+    Container = object  # type: ignore[assignment]
+    Vertical = object  # type: ignore[assignment]
+    reactive = lambda *a, **k: None  # type: ignore[assignment]
+    Button = Footer = Header = Log = Static = TabbedContent = TabPane = object  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
