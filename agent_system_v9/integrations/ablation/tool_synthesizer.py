@@ -345,7 +345,7 @@ class AblationToolSynthesizer:
         return findings
 
 
-async def register_ablation_tools(
+def register_ablation_tools(
     registry: DynamicToolRegistry,
     sandbox: SandboxIsolator,
     query_engine: QueryEngine,

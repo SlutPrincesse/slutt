@@ -79,4 +79,32 @@ __all__ = [
     # Cybersec-Toolkit
     "ToolManager", "ToolConfig", "ModuleRunner",
     "CybersecToolkitIntegration", "get_cybersec_toolkit_integration",
+    # Convenience
+    "register_all_integrations",
 ]
+
+
+def register_all_integrations(
+    registry=None,
+    sandbox=None,
+    query_engine=None,
+) -> dict[str, int]:
+    """Register Ablation and CoreCoder tools into the DynamicToolRegistry.
+
+    Wires the SandboxIsolator and QueryEngine into both integrations and
+    returns the number of tools registered per integration.
+    """
+    from agent_system_v9.tools.tool_registry import DynamicToolRegistry
+    from agent_system_v9.kernel.sandbox_isolator import SandboxIsolator
+    from agent_system_v9.memory.query_engine import QueryEngine
+
+    registry = registry or DynamicToolRegistry.get_instance()
+    sandbox = sandbox or SandboxIsolator()
+    query_engine = query_engine or QueryEngine()
+
+    registry.set_sandbox_isolator(sandbox)
+
+    ablation_count = register_ablation_tools(registry, sandbox, query_engine)
+    corecoder_count = register_corecoder_tools(registry, sandbox, query_engine)
+
+    return {"ablation": ablation_count, "corecoder": corecoder_count}

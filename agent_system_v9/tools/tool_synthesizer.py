@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .exception_hook import ExceptionHookInterceptor, HookedException
+from .exception_hook import ExceptionHookInterceptor, HookedException, HookPriority
 
 
 class SynthesisStrategy(Enum):

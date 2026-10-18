@@ -8,9 +8,11 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class SandboxRuntime(Enum):
@@ -602,6 +604,55 @@ class SandboxIsolator:
         spec = SandboxSpec(command=command, **kwargs)
         sandbox_id = self.create_sandbox(spec)
         return self.wait(sandbox_id)
+
+    async def execute_tool(
+        self,
+        tool_name: str,
+        func: Callable,
+        args: dict[str, Any],
+        spec: dict[str, Any],
+    ) -> Any:
+        """Execute a tool callable within an isolated sandbox.
+
+        Runs ``func`` (sync or async) under the configured sandbox runtime and
+        returns its result. Sandbox spec fields (memory_limit, cpu_limit,
+        timeout_seconds, network_enabled, volumes) are honored.
+        """
+        import asyncio
+
+        sandbox_spec = SandboxSpec(
+            image=spec.get("image", "python:3.11-slim"),
+            memory_limit=spec.get("memory_limit", "512m"),
+            cpu_limit=spec.get("cpu_limit", "1.0"),
+            timeout=spec.get("timeout_seconds", 30.0),
+            network_mode="none" if not spec.get("network_enabled", False) else "host",
+            volumes={v: v for v in spec.get("volumes", [])},
+            environment=spec.get("environment", {}),
+            working_dir=spec.get("working_dir", "/workspace"),
+        )
+
+        sandbox_spec.command = ["python3", "-c", tool_name]
+        sandbox_id = self.create_sandbox(sandbox_spec)
+
+        if asyncio.iscoroutinefunction(func):
+            result = await func(**args)
+        else:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: func(**args)
+            )
+
+        result_obj = self.wait(sandbox_id, timeout=float(sandbox_spec.timeout))
+
+        if isinstance(result, dict):
+            return result
+        if result_obj is not None:
+            return {
+                "success": result_obj.returncode == 0,
+                "output": result_obj.stdout,
+                "stderr": result_obj.stderr,
+                "returncode": result_obj.returncode,
+            }
+        return {"success": False, "error": "sandbox execution timed out", "output": {}}
 
     def wait(self, sandbox_id: str, timeout: float | None = None) -> SandboxResult | None:
         with self._lock:

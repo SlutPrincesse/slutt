@@ -334,7 +334,7 @@ class CoreCoderToolSynthesizer:
         return {"passed": passed, "failed": failed, "total": passed + failed}
 
 
-async def register_corecoder_tools(
+def register_corecoder_tools(
     registry: DynamicToolRegistry,
     sandbox: SandboxIsolator,
     query_engine: QueryEngine,
