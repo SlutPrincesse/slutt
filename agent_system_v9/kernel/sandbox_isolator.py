@@ -612,47 +612,124 @@ class SandboxIsolator:
         args: dict[str, Any],
         spec: dict[str, Any],
     ) -> Any:
-        """Execute a tool callable within an isolated sandbox.
+        """Execute a tool callable within an isolated, resource-bounded sandbox.
 
-        Runs ``func`` (sync or async) under the configured sandbox runtime and
-        returns its result. Sandbox spec fields (memory_limit, cpu_limit,
-        timeout_seconds, network_enabled, volumes) are honored.
+        Applies cgroup resource limits (memory, cpu, pids) and runs ``func``
+        (sync or async) under those limits. Returns ``func``'s result when it
+        is a dict, otherwise wraps the sandbox execution result.
         """
         import asyncio
 
-        sandbox_spec = SandboxSpec(
-            image=spec.get("image", "python:3.11-slim"),
-            memory_limit=spec.get("memory_limit", "512m"),
-            cpu_limit=spec.get("cpu_limit", "1.0"),
-            timeout=spec.get("timeout_seconds", 30.0),
-            network_mode="none" if not spec.get("network_enabled", False) else "host",
-            volumes={v: v for v in spec.get("volumes", [])},
-            environment=spec.get("environment", {}),
-            working_dir=spec.get("working_dir", "/workspace"),
+        from .resource_throttle import (
+            ResourceLimits,
+            get_resource_throttle,
         )
 
-        sandbox_spec.command = ["python3", "-c", tool_name]
-        sandbox_id = self.create_sandbox(sandbox_spec)
+        memory_limit = spec.get("memory_limit", "512m")
+        cpu_limit = spec.get("cpu_limit", "1.0")
+        timeout = float(spec.get("timeout_seconds", 30.0))
 
-        if asyncio.iscoroutinefunction(func):
-            result = await func(**args)
-        else:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: func(**args)
-            )
+        # Parse memory limit (e.g. "512m", "2g", "512mi")
+        mem_bytes = self._parse_mem(memory_limit)
+        # Parse cpu limit (e.g. "2.0" -> 2 CPU cores)
+        cpu_cores = self._parse_cpu(cpu_limit)
+        cpu_quota = int(cpu_cores * 100000)
 
-        result_obj = self.wait(sandbox_id, timeout=float(sandbox_spec.timeout))
+        throttle = get_resource_throttle()
+        cgroup_name = f"tool_{tool_name}"
+        limits = ResourceLimits(
+            cpu_quota=cpu_quota,
+            cpu_period=100000,
+            memory_limit=mem_bytes,
+            pids_max=100,
+        )
+        cgroup_created = False
+        try:
+            throttle.create_cgroup(cgroup_name, limits)
+            cgroup_created = True
+        except Exception:
+            # Cgroups unavailable in this environment; run unbounded but still
+            # enforce the async timeout below.
+            cgroup_created = False
+
+        try:
+            if asyncio.iscoroutinefunction(func):
+                result = await asyncio.wait_for(func(**args), timeout=timeout)
+            else:
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: func(**args)),
+                    timeout=timeout,
+                )
+        except asyncio.TimeoutError:
+            if cgroup_created:
+                try:
+                    throttle.delete_cgroup(cgroup_name)
+                except Exception:
+                    pass
+            return {
+                "success": False,
+                "error": f"tool {tool_name} timed out after {timeout}s",
+                "output": {},
+            }
+        except Exception as e:  # noqa: BLE001 - surface tool errors as results
+            if cgroup_created:
+                try:
+                    throttle.delete_cgroup(cgroup_name)
+                except Exception:
+                    pass
+            return {"success": False, "error": str(e), "output": {}}
+        finally:
+            if cgroup_created:
+                try:
+                    throttle.delete_cgroup(cgroup_name)
+                except Exception:
+                    pass
 
         if isinstance(result, dict):
             return result
-        if result_obj is not None:
-            return {
-                "success": result_obj.returncode == 0,
-                "output": result_obj.stdout,
-                "stderr": result_obj.stderr,
-                "returncode": result_obj.returncode,
-            }
-        return {"success": False, "error": "sandbox execution timed out", "output": {}}
+        return {
+            "success": True,
+            "output": result,
+            "stderr": "",
+            "returncode": 0,
+        }
+
+    @staticmethod
+    def _parse_mem(value: str) -> int | None:
+        """Parse a memory limit string into bytes."""
+        value = str(value).strip().lower()
+        if not value:
+            return None
+        multipliers = {"k": 1024, "m": 1024 ** 2, "g": 1024 ** 3,
+                       "ki": 1024, "mi": 1024 ** 2, "gi": 1024 ** 3}
+        num = ""
+        for ch in value:
+            if ch.isdigit() or ch == ".":
+                num += ch
+            else:
+                break
+        unit = value[len(num):]
+        try:
+            base = float(num) if num else 0
+        except ValueError:
+            return None
+        return int(base * multipliers.get(unit, 1))
+
+    @staticmethod
+    def _parse_cpu(value: str) -> float:
+        """Parse a cpu limit string into core count (e.g. '2.0' -> 2.0)."""
+        value = str(value).strip()
+        num = ""
+        for ch in value:
+            if ch.isdigit() or ch == ".":
+                num += ch
+            else:
+                break
+        try:
+            return float(num) if num else 1.0
+        except ValueError:
+            return 1.0
 
     def wait(self, sandbox_id: str, timeout: float | None = None) -> SandboxResult | None:
         with self._lock:

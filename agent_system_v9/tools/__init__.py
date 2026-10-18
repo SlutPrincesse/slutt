@@ -4,7 +4,11 @@ Runtime Exception Hook Interceptor, Meta-Prompt Tool Synthesizer,
 Dynamic Tool Registry Auto-Loader
 """
 from .exception_hook import ExceptionHookInterceptor, HookedException
-from .tool_registry import DynamicToolRegistry, ToolEntry
+from .tool_registry import (
+    DynamicToolRegistry,
+    ToolEntry,
+    ToolMetrics,
+)
 from .tool_synthesizer import SynthesizedTool, ToolSynthesizer
 
 __all__ = [
@@ -14,4 +18,5 @@ __all__ = [
     "SynthesizedTool",
     "DynamicToolRegistry",
     "ToolEntry",
+    "ToolMetrics",
 ]

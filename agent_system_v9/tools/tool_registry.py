@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import inspect
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -31,6 +32,27 @@ class ToolStatus(Enum):
     DEPRECATED = "deprecated"
     ERROR = "error"
     UNLOADED = "unloaded"
+
+
+@dataclass
+class ToolMetrics:
+    total_executions: int = 0
+    total_errors: int = 0
+    total_latency_ms: float = 0.0
+    by_tool: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def record(self, name: str, success: bool, latency_ms: float) -> None:
+        self.total_executions += 1
+        if not success:
+            self.total_errors += 1
+        self.total_latency_ms += latency_ms
+        entry = self.by_tool.setdefault(
+            name, {"executions": 0, "errors": 0, "latency_ms": 0.0}
+        )
+        entry["executions"] += 1
+        if not success:
+            entry["errors"] += 1
+        entry["latency_ms"] += latency_ms
 
 
 @dataclass
@@ -144,6 +166,7 @@ class DynamicToolRegistry:
         self._event_bus = None
         self._auto_load_paths: list[Path] = []
         self._tool_loaders: dict[str, Callable] = {}
+        self.metrics = ToolMetrics()
         self._initialized = True
 
     @classmethod
@@ -288,15 +311,24 @@ class DynamicToolRegistry:
         entry.usage_count += 1
         entry.last_used = datetime.utcnow().isoformat()
 
+        start = time.monotonic()
         try:
             if sandbox and self._sandbox_isolator:
                 result = await self._execute_in_sandbox(entry, args)
             else:
                 result = await self._execute_direct(entry, args)
 
+            latency_ms = (time.monotonic() - start) * 1000
+            self.metrics.record(name, True, latency_ms)
+            entry.avg_latency_ms = (
+                (entry.avg_latency_ms * (entry.usage_count - 1) + latency_ms)
+                / entry.usage_count
+            )
             self._emit_event("tool_executed", {"tool": name, "success": True})
             return result
         except Exception as e:
+            latency_ms = (time.monotonic() - start) * 1000
+            self.metrics.record(name, False, latency_ms)
             entry.error_count += 1
             self._emit_event("tool_executed", {"tool": name, "success": False, "error": str(e)})
             raise

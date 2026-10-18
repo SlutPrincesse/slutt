@@ -10,7 +10,11 @@ from agent_system_v9.integrations import (
     ABLATION_COMMANDS,
     CORECODER_COMMANDS,
 )
-from agent_system_v9.tools.tool_registry import DynamicToolRegistry, ToolCategory
+from agent_system_v9.tools.tool_registry import (
+    DynamicToolRegistry,
+    ToolCategory,
+    ToolMetrics,
+)
 from agent_system_v9.kernel.sandbox_isolator import SandboxIsolator
 from agent_system_v9.memory.query_engine import QueryEngine
 
@@ -116,3 +120,111 @@ class TestAllIntegrations:
 
         register_all_integrations(registry=registry)
         assert registry._sandbox_isolator is not None
+
+
+class TestSandboxHardening:
+    """Test SandboxIsolator.execute_tool hardening (timeouts, error shapes)."""
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_enforces_timeout(self):
+        """A tool that runs longer than the spec timeout returns a timed-out result."""
+        sandbox = SandboxIsolator()
+
+        async def slow_tool() -> dict:
+            import asyncio
+
+            await asyncio.sleep(10)
+            return {"success": True}
+
+        result = await sandbox.execute_tool(
+            "slow_tool",
+            slow_tool,
+            {},
+            {"timeout_seconds": 0.1, "memory_limit": "512m", "cpu_limit": "1.0"},
+        )
+        assert result["success"] is False
+        assert "timed out" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_returns_dict_result(self):
+        """A tool returning a dict passes it through unchanged."""
+        sandbox = SandboxIsolator()
+
+        def add(a: int, b: int) -> dict:
+            return {"success": True, "result": a + b}
+
+        result = await sandbox.execute_tool(
+            "add",
+            add,
+            {"a": 2, "b": 3},
+            {"timeout_seconds": 30, "memory_limit": "512m", "cpu_limit": "1.0"},
+        )
+        assert result == {"success": True, "result": 5}
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_catches_exception(self):
+        """A tool that raises returns an error result rather than propagating."""
+        sandbox = SandboxIsolator()
+
+        def boom() -> dict:
+            raise RuntimeError("kaboom")
+
+        result = await sandbox.execute_tool(
+            "boom",
+            boom,
+            {},
+            {"timeout_seconds": 30, "memory_limit": "512m", "cpu_limit": "1.0"},
+        )
+        assert result["success"] is False
+        assert "kaboom" in result["error"]
+
+    def test_parse_mem_and_cpu(self):
+        """Memory/CPU spec parsing handles common suffixes."""
+        sandbox = SandboxIsolator()
+        assert sandbox._parse_mem("512m") == 512 * 1024 * 1024
+        assert sandbox._parse_mem("2g") == 2 * 1024 ** 3
+        assert sandbox._parse_mem("1mi") == 1024 ** 2
+        assert sandbox._parse_cpu("2.0") == 2.0
+        assert sandbox._parse_cpu("1") == 1.0
+
+
+class TestToolMetrics:
+    """Test DynamicToolRegistry metrics recording."""
+
+    def test_metrics_record_success_and_error(self):
+        """Metrics track executions, errors, and latency per tool."""
+        registry = DynamicToolRegistry.get_instance()
+        registry.metrics = ToolMetrics()
+
+        async def good() -> dict:
+            return {"ok": True}
+
+        async def bad() -> dict:
+            raise ValueError("nope")
+
+        registry.register(
+            "good_tool", good, "a tool", category=ToolCategory.SYSTEM
+        )
+        registry.register(
+            "bad_tool", bad, "a tool", category=ToolCategory.SYSTEM
+        )
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(
+            registry.execute("good_tool", {}, sandbox=False)
+        )
+        try:
+            asyncio.get_event_loop().run_until_complete(
+                registry.execute("bad_tool", {}, sandbox=False)
+            )
+        except ValueError:
+            pass
+
+        m = registry.metrics
+        assert m.total_executions == 2
+        assert m.total_errors == 1
+        assert m.by_tool["good_tool"]["executions"] == 1
+        assert m.by_tool["good_tool"]["errors"] == 0
+        assert m.by_tool["bad_tool"]["errors"] == 1
+        assert m.total_latency_ms >= 0
