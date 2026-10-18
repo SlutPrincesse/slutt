@@ -1,0 +1,23 @@
+# Compiled Python
+__pycache__/
+*.py[cod]
+*$py.class
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Packaging
+*.egg-info/
+dist/
+build/
