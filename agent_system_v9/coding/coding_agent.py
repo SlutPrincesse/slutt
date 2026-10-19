@@ -87,10 +87,7 @@ class CodingAgent:
     async def solve(self, task: str, workspace: str | None = None) -> CodeResult:
         self._ensure_tools()
         if workspace is None:
-            try:
-                workspace = self.workspace_manager.create_workspace("code_task")
-            except Exception:
-                workspace = tempfile.mkdtemp(prefix="v9_code_")
+            workspace = tempfile.mkdtemp(prefix="v9_code_")
         Path(workspace).mkdir(parents=True, exist_ok=True)
 
         if self.context_window is not None:
