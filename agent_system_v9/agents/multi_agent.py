@@ -52,3 +52,16 @@ class MultiAgentOrchestrator:
         # consensus: simple - success if review contains 'ok' or no provider
         success = ("ok" in review.lower()) or (self.provider is None)
         return MultiAgentResult(success=success, plan=plan, code=code, test_output=test_output, review=review, iterations=1)
+
+    async def run_with_consensus(self, task: str, votes: int = 3) -> MultiAgentResult:
+        results = []
+        for _ in range(votes):
+            results.append(await self.run(task))
+        # consensus: majority success
+        successes = sum(1 for r in results if r.success)
+        consensus = successes >= (votes // 2 + 1)
+        # pick the result with longest code
+        best = max(results, key=lambda r: len(r.code))
+        best.success = consensus
+        best.iterations = votes
+        return best

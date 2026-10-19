@@ -66,3 +66,20 @@ class UnifiedOrchestrator:
             except Exception as e:
                 return {"type": "error", "error": str(e)}
         return {"type": "echo", "result": task}
+
+    async def handle_stream(self, task: str):
+        """Yield incremental results for streaming UX."""
+        self.context_window.append("user", task)
+        provider = self.provider_registry.select_provider() if (hasattr(self.provider_registry, "get_healthy") and self.provider_registry.get_healthy()) else None
+        if provider is not None:
+            try:
+                resp = await provider.chat([{"role": "user", "content": task}])
+                content = getattr(resp, "content", None) or str(resp)
+                self.context_window.append("assistant", content)
+                for chunk in content.split():
+                    yield chunk + " "
+                return
+            except Exception as e:
+                yield f"[error] {e}"
+                return
+        yield task
