@@ -75,7 +75,13 @@ class CodingAgent:
     def _ensure_tools(self):
         if self._tools_registered:
             return
-        register_core_code_tools(self.registry, self.sandbox)
+        if "file_read" not in self.registry._tools:
+            register_core_code_tools(self.registry, self.sandbox)
+        if "code_solve" not in self.registry._tools:
+            try:
+                register_coding_tools(self.registry, self.sandbox, self.workspace_manager)
+            except Exception:
+                pass
         self._tools_registered = True
 
     async def solve(self, task: str, workspace: str | None = None) -> CodeResult:
@@ -221,6 +227,8 @@ def register_core_code_tools(
 ) -> dict[str, int]:
     registry = registry or DynamicToolRegistry.get_instance()
     sandbox = sandbox or SandboxIsolator()
+    if "file_read" in registry._tools:
+        return {"file_read": 1, "file_write": 1, "file_list": 1, "run_tests": 1}
 
     async def file_read(**kwargs) -> dict[str, Any]:
         path = Path(kwargs.get("path", ""))
