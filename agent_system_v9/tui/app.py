@@ -36,7 +36,9 @@ except Exception:  # textual missing/too old in this environment
             raise RuntimeError("textual is not available")
 
     ComposeResult = None  # type: ignore[assignment]
-    Binding = object  # type: ignore[assignment]
+    class Binding:  # type: ignore[no-redef]
+        def __init__(self, *a, **k):
+            pass
     Container = object  # type: ignore[assignment]
     Vertical = object  # type: ignore[assignment]
     reactive = lambda *a, **k: None  # type: ignore[assignment]
