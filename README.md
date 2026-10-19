@@ -161,3 +161,17 @@ instance = mgr.load_plugin(plugin_id)
 ## License
 
 MIT License - See LICENSE file for details.
+## Prompt Examples
+
+### Basic Prompt Journey
+A simple prompt (e.g. "Fix the failing test") flows through:
+entry (main.py) → agent loop → provider selection → prompt assembly (DynamicPromptAssembler) →
+context window (compress/append) → LLM call → tool execution (registry + sandbox) →
+memory (knowledge graph) → telemetry/distillation → response.
+
+### Full-Spectrum Activation Prompt
+To exercise the entire system, use a prompt such as:
+
+"Perform a full-spectrum autonomous engineering mission: ingest and semantically index this polyglot repository; detect and triage all security vulnerabilities and threat indicators; refactor affected code across Python/JS/Rust/Go using AST-aware transformations; synthesize and register new tools from recurring patterns; generate, test, and fix code in sandboxed containers with full trace telemetry; distill successful traces into improved prompts and routing policy; deploy via CI/CD to edge targets; monitor metrics and self-heal on failure; maintain a living knowledge graph and episodic memory; and produce a final audit report with pass@k and cost metrics."
+
+This cascades through analysis, threat/security, blueprint, restructure, coding, guardrails, shadowgit, cicd, storage, deployment, prometheus9, evolution, self_heal, distributed, compilation, recovery, edge, neurocranial, divergent, reactive, hud, unified_ui, memory, context, telemetry, and distillation.
