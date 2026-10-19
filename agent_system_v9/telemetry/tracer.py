@@ -90,6 +90,11 @@ class _Span:
 
     def __enter__(self):
         self.start = time.monotonic()
+        try:
+            from .otel import get_tracer as _get_otel
+            self._otel_span = _get_otel().start_span(self.name)
+        except Exception:
+            self._otel_span = None
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -103,5 +108,11 @@ class _Span:
             error=str(exc) if exc else None,
         )
         self.tracer.record(ev)
+        if getattr(self, "_otel_span", None) is not None:
+            try:
+                self._otel_span.set_attribute("success", ev.success)
+                self._otel_span.__exit__(exc_type, exc, tb)
+            except Exception:
+                pass
         self.event = ev
         return False

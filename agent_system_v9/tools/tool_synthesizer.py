@@ -29,7 +29,11 @@ class SynthesizedTool:
     def compile(self) -> Callable:
         if self._compiled is None:
             namespace = {}
-            exec(self.source_code, namespace)
+            try:
+                from agent_system_v9.guardrails.safe_exec import safe_exec
+                safe_exec(self.source_code, namespace)
+            except Exception:
+                exec(self.source_code, namespace)
             self._compiled = namespace[self.name]
         return self._compiled
 

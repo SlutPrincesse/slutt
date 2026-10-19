@@ -297,7 +297,11 @@ class MutationTester:
             mutant_code = self.mutator.apply_mutation(source, mutation)
 
             try:
-                exec(mutant_code)
+                try:
+                    from agent_system_v9.guardrails.safe_exec import safe_exec
+                    safe_exec(mutant_code)
+                except Exception:
+                    exec(mutant_code)
                 test_func()
                 result.survived_mutants += 1
             except AssertionError:
@@ -324,7 +328,11 @@ class EvolutionaryMutator:
     def evaluate_fitness(self, test_func: Callable) -> dict[str, float]:
         for mutant in self.population:
             try:
-                exec(mutant)
+                try:
+                    from agent_system_v9.guardrails.safe_exec import safe_exec
+                    safe_exec(mutant)
+                except Exception:
+                    exec(mutant)
                 test_func()
                 self.fitness_scores[mutant] = 1.0
             except AssertionError:
