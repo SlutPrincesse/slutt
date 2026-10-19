@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+try:
+    from ..context.context_window import ContextWindow
+except Exception:
+    ContextWindow = None  # type: ignore
+
 
 class SnippetType(Enum):
     SYSTEM = "system"
@@ -59,6 +64,7 @@ class DynamicPromptAssembler:
         self._type_index: dict[SnippetType, list[str]] = defaultdict(list)
         self._lock = threading.RLock()
         self._context_providers: dict[str, Callable[[], Any]] = {}
+        self._context_window = None
         self._register_default_snippets()
         self._register_default_context_providers()
 
@@ -70,6 +76,7 @@ class DynamicPromptAssembler:
         self._context_providers["python_version"] = lambda: platform.python_version()
         self._context_providers["working_dir"] = lambda: os.getcwd()
         self._context_providers["project_files"] = self._get_project_files
+        self._context_providers["memory_context"] = self._get_memory_context
 
     def _get_git_diff(self) -> str | None:
         try:
@@ -250,6 +257,11 @@ class DynamicPromptAssembler:
             "active_tools": context.active_tools,
             "memory_context": context.memory_context,
         }
+        if getattr(self, "_context_window", None) is not None:
+            try:
+                ctx["memory_context"] = self._get_memory_context()
+            except Exception:
+                pass
 
         # Add custom context
         ctx.update(context.custom)
@@ -374,6 +386,18 @@ class DynamicPromptAssembler:
         if len(text) <= max_chars:
             return text
         return text[:max_chars] + "... [truncated]"
+
+    def set_context_window(self, window) -> None:
+        self._context_window = window
+
+    def _get_memory_context(self) -> Any:
+        window = self._context_window
+        if window is None:
+            return None
+        try:
+            return window.get_messages_for_model()
+        except Exception:
+            return None
 
     def register_context_provider(self, name: str, provider: Callable[[], Any]):
         self._context_providers[name] = provider

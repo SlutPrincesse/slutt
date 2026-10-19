@@ -9,6 +9,8 @@ from .boundary_monitor import BoundaryAlert, BoundaryMonitor
 from .cache_invalidator import CacheInvalidator, InvalidationRule
 from .context_isolation import ContextIsolationLayer, IsolationBoundary
 from .context_summarizer import HierarchicalSummarizer, SummaryTier
+from .context_window import ContextWindow, ContextMessage, estimate_tokens, DEFAULT_BUDGET_TOKENS, DEFAULT_VERBATIM_TAIL
+from .context_compressor import ContextCompressor
 
 __all__ = [
     "AttentionAllocator",
@@ -21,4 +23,10 @@ __all__ = [
     "BoundaryAlert",
     "ContextIsolationLayer",
     "IsolationBoundary",
+    "ContextWindow",
+    "ContextMessage",
+    "estimate_tokens",
+    "DEFAULT_BUDGET_TOKENS",
+    "DEFAULT_VERBATIM_TAIL",
+    "ContextCompressor",
 ]
