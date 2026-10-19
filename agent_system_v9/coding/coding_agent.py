@@ -16,6 +16,11 @@ from typing import Any
 
 from agent_system_v9.kernel.sandbox_isolator import SandboxIsolator
 from agent_system_v9.workspace.workspace_manager import WorkspaceManager
+try:
+    from agent_system_v9.agents.planner import TaskPlanner
+except Exception:
+    TaskPlanner = None  # type: ignore
+
 from agent_system_v9.tools.tool_registry import (
     DynamicToolRegistry,
     ToolCategory,
@@ -62,6 +67,7 @@ class CodingAgent:
         context_window=None,
         prompt_assembler=None,
         provider_registry=None,
+        planner=None,
     ):
         self.registry = registry or DynamicToolRegistry.get_instance()
         self.sandbox = sandbox or SandboxIsolator()
@@ -70,6 +76,14 @@ class CodingAgent:
         self.context_window = context_window
         self.prompt_assembler = prompt_assembler
         self.provider_registry = provider_registry
+        self.planner = planner if planner is not None else (TaskPlanner(provider=None) if TaskPlanner else None)
+        if self.planner is not None and self.provider_registry is not None:
+            try:
+                hp = self.provider_registry.get_healthy()
+                if hp:
+                    self.planner.provider = list(hp.values())[0]
+            except Exception:
+                pass
         self._tools_registered = False
 
     def _ensure_tools(self):
@@ -93,6 +107,24 @@ class CodingAgent:
         if self.context_window is not None:
             try:
                 self.context_window.append("user", task)
+            except Exception:
+                pass
+
+        self._plan_steps = []
+        plan_steps = []
+        if self.planner is not None:
+            try:
+                import asyncio
+                ps = self.planner.plan(task)
+                if asyncio.iscoroutine(ps):
+                    ps = await ps
+                plan_steps = ps or []
+            except Exception:
+                plan_steps = []
+        self._plan_steps = plan_steps
+        if plan_steps and self.context_window is not None:
+            try:
+                self.context_window.append("assistant", "Plan: " + " | ".join(plan_steps))
             except Exception:
                 pass
 
@@ -133,6 +165,16 @@ class CodingAgent:
             last_error = test_result.get("error", test_output)
             if last_error is None:
                 last_error = test_output
+            if self.planner is not None and last_error:
+                try:
+                    import asyncio
+                    r = self.planner.reflect("", str(last_error))
+                    if asyncio.iscoroutine(r):
+                        r = await r
+                    if self.context_window is not None:
+                        self.context_window.append("assistant", f"Reflection: {str(r)[:500]}")
+                except Exception:
+                    pass
             if self.context_window is not None:
                 try:
                     self.context_window.append("user", f"Test failure: {str(last_error)[:1000]}")
@@ -165,6 +207,8 @@ class CodingAgent:
             "Write clean Python files under the workspace. "
             "Prefer standard-library-only code unless requirements.txt is present.\n"
         )
+        if getattr(self, "_plan_steps", None):
+            base += "Plan steps:\n" + "\n".join(f"- {st}" for st in self._plan_steps) + "\n"
         if memory:
             base += f"Context memory:\n{memory}\n"
         if iteration == 1:
