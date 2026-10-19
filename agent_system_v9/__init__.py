@@ -597,3 +597,12 @@ try:
     __all__.extend(["AgentLoop", "AgentSession", "start_loop"])
 except Exception:
     pass
+
+# Pentest tools (safe-by-default, network disabled)
+try:
+    from .pentest import register_pentest_tools
+    from .tools.tool_registry import DynamicToolRegistry
+    from .kernel.sandbox_isolator import SandboxIsolator
+    register_pentest_tools(DynamicToolRegistry.get_instance(), SandboxIsolator(), network_enabled=False)
+except Exception:
+    pass
