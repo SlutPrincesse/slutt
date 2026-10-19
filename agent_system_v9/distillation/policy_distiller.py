@@ -12,8 +12,7 @@ class PolicyDistiller:
     def distill(self, metrics: dict[str, Any]) -> dict[str, Any]:
         # Adjust tool priority tags based on success rate (lightweight)
         updates = {"tools": {}, "providers": {}}
-        if self.tool_registry is not None:
-            for name, m in (metrics.get("tools", {}) or {}).items():
+        for name, m in (metrics.get("tools", {}) or {}).items():
                 calls = m.get("calls", 0)
                 errors = m.get("errors", 0)
                 rate = 1.0 - (errors / max(1, calls))

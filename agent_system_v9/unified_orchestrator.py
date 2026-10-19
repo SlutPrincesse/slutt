@@ -13,6 +13,7 @@ from .prompt.dynamic_assembler import get_prompt_assembler
 from .providers.registry import ProviderRegistry
 from .memory.query_engine import QueryEngine
 from .telemetry.tracer import Tracer
+from .distillation.nightly import NightlyDistillationJob
 from .coding.coding_agent import CodingAgent
 from .pentest.pentest_tools import register_pentest_tools
 from .agents.multi_agent import MultiAgentOrchestrator
@@ -31,6 +32,7 @@ class UnifiedOrchestrator:
         self.provider_registry = ProviderRegistry.get_instance()
         self.query_engine = QueryEngine()
         self.tracer = Tracer()
+        self.nightly = NightlyDistillationJob(self.tracer, self.query_engine.episodic_store if hasattr(self.query_engine,'episodic_store') else None, self.query_engine.knowledge_graph, self.provider_registry, self.tool_registry)
         self.coding_agent = CodingAgent(context_window=self.context_window, prompt_assembler=self.prompt_assembler, provider_registry=self.provider_registry)
         self.multi_agent = MultiAgentOrchestrator(provider=None)
         try:
@@ -44,6 +46,10 @@ class UnifiedOrchestrator:
         if "code" in task.lower() or "fix" in task.lower():
             res = await self.coding_agent.solve(task)
             self.context_window.append("assistant", str(res.test_output)[:2000])
+            try:
+                await self.nightly.run()
+            except Exception:
+                pass
             return {"type": "coding", "result": res.__dict__}
         # if contains 'recon'/'pentest' -> multi-agent
         if any(k in task.lower() for k in ("recon", "pentest", "scan")):
