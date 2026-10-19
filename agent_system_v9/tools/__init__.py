@@ -10,6 +10,8 @@ from .tool_registry import (
     ToolMetrics,
 )
 from .tool_synthesizer import SynthesizedTool, ToolSynthesizer
+from .computer_use import ApprovalGuard, ComputerUseLoop
+from .mcp_server import MCPServer
 
 __all__ = [
     "ExceptionHookInterceptor",
@@ -19,4 +21,7 @@ __all__ = [
     "DynamicToolRegistry",
     "ToolEntry",
     "ToolMetrics",
+    "ApprovalGuard",
+    "ComputerUseLoop",
+    "MCPServer",
 ]

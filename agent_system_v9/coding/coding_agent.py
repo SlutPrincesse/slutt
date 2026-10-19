@@ -22,6 +22,21 @@ from agent_system_v9.tools.tool_registry import (
     ToolParameter,
 )
 
+try:
+    from agent_system_v9.context.context_window import ContextWindow
+except Exception:
+    ContextWindow = None  # type: ignore
+
+try:
+    from agent_system_v9.prompt.dynamic_assembler import get_prompt_assembler
+except Exception:
+    get_prompt_assembler = None  # type: ignore
+
+try:
+    from agent_system_v9.providers.registry import ProviderRegistry
+except Exception:
+    ProviderRegistry = None  # type: ignore
+
 
 @dataclass
 class CodeResult:
@@ -44,11 +59,17 @@ class CodingAgent:
         sandbox: SandboxIsolator | None = None,
         workspace_manager: WorkspaceManager | None = None,
         max_iterations: int = 5,
+        context_window=None,
+        prompt_assembler=None,
+        provider_registry=None,
     ):
         self.registry = registry or DynamicToolRegistry.get_instance()
         self.sandbox = sandbox or SandboxIsolator()
         self.workspace_manager = workspace_manager or WorkspaceManager()
         self.max_iterations = max_iterations
+        self.context_window = context_window
+        self.prompt_assembler = prompt_assembler
+        self.provider_registry = provider_registry
         self._tools_registered = False
 
     def _ensure_tools(self):
@@ -60,8 +81,17 @@ class CodingAgent:
     async def solve(self, task: str, workspace: str | None = None) -> CodeResult:
         self._ensure_tools()
         if workspace is None:
-            workspace = tempfile.mkdtemp(prefix="v9_code_")
+            try:
+                workspace = self.workspace_manager.create_workspace("code_task")
+            except Exception:
+                workspace = tempfile.mkdtemp(prefix="v9_code_")
         Path(workspace).mkdir(parents=True, exist_ok=True)
+
+        if self.context_window is not None:
+            try:
+                self.context_window.append("user", task)
+            except Exception:
+                pass
 
         last_error: str | None = None
         test_output = ""
@@ -69,10 +99,7 @@ class CodingAgent:
 
         for iteration in range(1, self.max_iterations + 1):
             prompt = self._build_prompt(task, workspace, last_error, iteration)
-            # Generation step (placeholder LLM generation absent; user-provided
-            # generation hook can be wired here). We attempt to write an
-            # initial solution via the model-assisted path if a provider is set.
-            result = await self._generate(prompt, workspace)
+            result = await self._generate(prompt, workspace, last_error)
             files_modified = result.get("files_modified", [])
 
             test_result = await self.registry.execute(
@@ -81,7 +108,13 @@ class CodingAgent:
                 sandbox=True,
             )
             test_output = str(test_result.get("output", ""))
-            test_passed = test_result.get("success", False)
+            test_passed = bool(test_result.get("success", False))
+
+            if self.context_window is not None:
+                try:
+                    self.context_window.append("assistant", test_output[:2000])
+                except Exception:
+                    pass
 
             if test_passed:
                 return CodeResult(
@@ -95,6 +128,13 @@ class CodingAgent:
                 )
 
             last_error = test_result.get("error", test_output)
+            if last_error is None:
+                last_error = test_output
+            if self.context_window is not None:
+                try:
+                    self.context_window.append("user", f"Test failure: {str(last_error)[:1000]}")
+                except Exception:
+                    pass
 
         return CodeResult(
             success=False,
@@ -110,11 +150,20 @@ class CodingAgent:
     def _build_prompt(
         self, task: str, workspace: str, last_error: str | None, iteration: int
     ) -> str:
+        memory = ""
+        if self.context_window is not None:
+            try:
+                msgs = self.context_window.get_messages_for_model()
+                memory = "\n".join(m.get("content", "") for m in msgs if isinstance(m, dict))
+            except Exception:
+                memory = ""
         base = (
             f"Task: {task}\nWorkspace: {workspace}\n"
             "Write clean Python files under the workspace. "
             "Prefer standard-library-only code unless requirements.txt is present.\n"
         )
+        if memory:
+            base += f"Context memory:\n{memory}\n"
         if iteration == 1:
             return base + "Return a summary of files changed."
         return (
@@ -123,9 +172,36 @@ class CodingAgent:
             "Fix the code so tests pass. Return a summary of files changed."
         )
 
-    async def _generate(self, prompt: str, workspace: str) -> dict[str, Any]:
-        # Without an LLM provider configured, produce a trivial starter file so
-        # the test loop can run and demonstrate the harness.
+    async def _generate(self, prompt: str, workspace: str, last_error: str | None = None) -> dict[str, Any]:
+        # Try LLM provider if available
+        provider = None
+        if self.provider_registry is not None:
+            try:
+                healthy = self.provider_registry.get_healthy()
+                if healthy:
+                    provider = list(healthy.values())[0]
+            except Exception:
+                provider = None
+        if provider is not None:
+            try:
+                from agent_system_v9.prompt.dynamic_assembler import AssemblyContext
+                messages = [{"role": "user", "content": prompt}]
+                if self.prompt_assembler is not None:
+                    try:
+                        ctx = AssemblyContext(memory_context={})
+                        assembled = self.prompt_assembler.assemble(ctx)
+                        messages = [{"role": "system", "content": assembled}, {"role": "user", "content": prompt}]
+                    except Exception:
+                        pass
+                resp = await provider.chat(messages)
+                content = getattr(resp, "content", None) or str(resp)
+                starter = os.path.join(workspace, "solution.py")
+                Path(starter).write_text(content, encoding="utf-8")
+                return {"files_modified": [starter], "output": "wrote llm solution"}
+            except Exception:
+                pass
+
+        # Fallback deterministic starter
         starter = os.path.join(workspace, "solution.py")
         Path(starter).write_text(
             'def answer() -> int:\n    """Placeholder solution."""\n    return 0\n',
