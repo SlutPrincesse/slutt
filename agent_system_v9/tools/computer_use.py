@@ -82,5 +82,15 @@ class ComputerUseLoop:
                 break
         return results
 
+    async def run_parallel(self, plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        import asyncio
+        async def _one(item, i):
+            tool_name = item.get("tool")
+            args = item.get("args", {})
+            approved = bool(item.get("approved", False))
+            r = await self.step(tool_name, args, approved)
+            return {"step": i, "tool": tool_name, "result": r}
+        return await asyncio.gather(*[_one(item, i) for i, item in enumerate(plan[:self.max_steps])])
+
     def to_openai_tools(self) -> list[dict[str, Any]]:
         return [e.to_openai_function() for e in self.registry._tools.values()]

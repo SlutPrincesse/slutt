@@ -203,6 +203,18 @@ class EpisodicStore:
 
         return True
 
+    def decay_importance(self, factor: float = 0.95) -> None:
+        """Decay importance of all episodes by factor."""
+        for ep in self.episodes.values():
+            ep.importance = max(0.0, ep.importance * factor)
+
+    def prune(self, threshold: float = 0.1) -> int:
+        """Remove episodes below importance threshold. Returns count."""
+        to_remove = [eid for eid, ep in self.episodes.items() if ep.importance < threshold]
+        for eid in to_remove:
+            self.remove_episode(eid)
+        return len(to_remove)
+
     def remove_episode(self, episode_id: str) -> bool:
         if episode_id not in self.episodes:
             return False
