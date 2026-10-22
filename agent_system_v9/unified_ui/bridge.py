@@ -65,9 +65,12 @@ class UnifiedBridge:
 
     def _handle_event(self, event):
         try:
+            et = getattr(event, 'event_type', None)
+            if et and 'tool' in str(et):
+                self.state.tools.setdefault(str(et), []).append({'payload': str(getattr(event,'payload',None)), 'timestamp': getattr(event,'timestamp',None), 'source': getattr(event,'source',None)})
             self.state.events.append({
                 'type': event.event_type,
-                'payload': str(event.payload)[:100] if event.payload is not None else None,
+                'payload': str(event.payload) if event.payload is not None else None,
                 'timestamp': event.timestamp,
                 'source': event.source,
             })

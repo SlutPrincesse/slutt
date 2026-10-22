@@ -33,9 +33,36 @@ HTML = '''<!DOCTYPE html>
       <a href="#">ShadowGit</a>
     </nav>
     <section>
-      <div class="card"><h3>System</h3><pre>All 122 tests PASS • 673 modules • EventBus+Registry+Plugins active</pre></div>
-      <div class="card"><h3>Agent</h3><pre>Autonomous loop • Reasoning+Memory • Evolution ready</pre></div>
+      <div class="card"><h3>Chat (verbose)</h3>
+        <div id="chatlog" style="max-height:40vh;overflow:auto;background:#0d1117;padding:8px;border-radius:8px"></div>
+        <input id="chatinput" style="width:70%;margin-top:8px" placeholder="Enter prompt..."/>
+        <button onclick="sendChat()">Send</button>
+      </div>
+      <div class="card"><h3>Real-time Events</h3>
+        <div id="eventlog" style="max-height:30vh;overflow:auto;background:#0d1117;padding:8px;border-radius:8px;font-size:12px"></div>
+      </div>
+      <div class="card"><h3>System</h3><pre>All tests PASS • modules • EventBus+Registry+Plugins active</pre></div>
     </section>
+    <script>
+      const ws = new WebSocket('ws://' + location.host + '/ws');
+      ws.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.type === 'result') {
+          document.getElementById('chatlog').innerHTML += '<pre>' + JSON.stringify(d.data, null, 2) + '</pre>';
+        } else if (d.type === 'events') {
+          const el = document.getElementById('eventlog');
+          el.innerHTML = d.data.map(ev => '[' + (ev.timestamp||'') + '] ' + ev.type + ': ' + (ev.payload||'')).join('<br/>');
+        } else if (d.type === 'error') {
+          document.getElementById('chatlog').innerHTML += '<pre style="color:red">' + d.data + '</pre>';
+        }
+      };
+      function sendChat() {
+        const inp = document.getElementById('chatinput');
+        ws.send(inp.value);
+        document.getElementById('chatlog').innerHTML += '<pre style="color:#58a6ff">> ' + inp.value + '</pre>';
+        inp.value = '';
+      }
+    </script>
   </main>
 </body>
 </html>'''
